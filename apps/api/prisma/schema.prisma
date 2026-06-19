@@ -27,19 +27,18 @@ model ApiKey {
   name      String
   key       String   @unique
   createdBy String
-  creator   User     @relation(fields: [createdBy], references: [id])
+  creator   User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   logs      RequestLog[]
 
-  @@index([key])
   @@index([isActive])
 }
 
 model RequestLog {
   id                String   @id @default(cuid())
   apiKeyId          String
-  apiKey            ApiKey   @relation(fields: [apiKeyId], references: [id])
+  apiKey            ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
 
   provider          String
   model             String
