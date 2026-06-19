@@ -1,6 +1,8 @@
 import type { ProviderAdapter, Model } from "./types";
 import { OpenAIAdapter } from "./openai";
 import { AnthropicAdapter } from "./anthropic";
+import { GoogleAdapter } from "./google";
+import { MistralAdapter } from "./mistral";
 
 const providers: Map<string, ProviderAdapter> = new Map();
 
@@ -13,10 +15,13 @@ export function initProviders() {
     providers.set("anthropic", new AnthropicAdapter(process.env.ANTHROPIC_API_KEY));
   }
 
-  // Add other providers here as they're implemented:
-  // if (process.env.GOOGLE_API_KEY) {
-  //   providers.set("google", new GoogleAdapter(process.env.GOOGLE_API_KEY));
-  // }
+  if (process.env.GOOGLE_API_KEY) {
+    providers.set("google", new GoogleAdapter(process.env.GOOGLE_API_KEY));
+  }
+
+  if (process.env.MISTRAL_API_KEY) {
+    providers.set("mistral", new MistralAdapter(process.env.MISTRAL_API_KEY));
+  }
 
   console.log(`Initialized providers: ${Array.from(providers.keys()).join(", ")}`);
 }
