@@ -5,7 +5,11 @@ const DEFAULT_TTL = 600; // 10 minutes
 export async function cacheGet<T>(key: string): Promise<T | null> {
   const data = await redis.get(key);
   if (!data) return null;
-  return JSON.parse(data) as T;
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
 }
 
 export async function cacheSet(key: string, value: unknown, ttl = DEFAULT_TTL): Promise<void> {

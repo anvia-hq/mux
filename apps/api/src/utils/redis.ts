@@ -17,3 +17,7 @@ redis.on("error", (err) => {
 redis.on("connect", () => {
   console.log("Redis connected");
 });
+
+export async function closeRedis(): Promise<void> {
+  await redis.quit();
+}
