@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export class OpenAIAdapter implements ProviderAdapter {
   name = "openai";
@@ -23,13 +24,8 @@ export class OpenAIAdapter implements ProviderAdapter {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        model: request.model,
-        messages: request.messages,
-        temperature: request.temperature,
-        max_tokens: request.max_tokens,
-        stream: false,
-      }),
+      body: this.buildRequestBody(request, false),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -47,13 +43,8 @@ export class OpenAIAdapter implements ProviderAdapter {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`,
       },
-      body: JSON.stringify({
-        model: request.model,
-        messages: request.messages,
-        temperature: request.temperature,
-        max_tokens: request.max_tokens,
-        stream: true,
-      }),
+      body: this.buildRequestBody(request, true),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -79,10 +70,26 @@ export class OpenAIAdapter implements ProviderAdapter {
         if (line.startsWith("data: ")) {
           const data = line.slice(6);
           if (data === "[DONE]") return;
-          yield JSON.parse(data);
+          try {
+            yield JSON.parse(data);
+          } catch (err) {
+            throw new Error(
+              `Failed to parse OpenAI SSE chunk: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
         }
       }
     }
+  }
+
+  private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
+    return JSON.stringify({
+      model: request.model,
+      messages: request.messages,
+      temperature: request.temperature,
+      max_tokens: request.max_tokens,
+      stream,
+    });
   }
 
   listModels(): Model[] {
