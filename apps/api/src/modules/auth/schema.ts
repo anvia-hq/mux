@@ -18,3 +18,9 @@ export const registerSchema = z.object({
   password: z.string().min(8, "password must be at least 8 characters"),
   name: z.string().nullish().transform(normalizeName),
 });
+
+export const onboardSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(8, "password must be at least 8 characters"),
+  name: z.string().nullish().transform(normalizeName),
+});

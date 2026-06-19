@@ -35,6 +35,25 @@ export async function createUserAccount(input: {
   });
 }
 
+export async function getUserCount() {
+  return prisma.user.count();
+}
+
+export async function createAdminUser(input: {
+  email: string;
+  password: string;
+  name: string | null;
+}) {
+  return prisma.user.create({
+    data: {
+      email: input.email,
+      name: input.name,
+      passwordHash: await hashPassword(input.password),
+      role: "ADMIN",
+    },
+  });
+}
+
 export async function getCurrentUser(c: Context) {
   const token = getCookie(c, authCookieName);
 

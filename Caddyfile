@@ -1,0 +1,46 @@
+# Caddy reverse proxy for Mux Gateway
+#
+# Routes:
+#   /api/*  -> Gateway API (apps/api on port 8000)
+#   /*      -> Platform UI (apps/platform on port 3000)
+#
+# The API path is stripped before forwarding so the gateway sees clean routes
+# (e.g. /api/v1/chat/completions -> /v1/chat/completions).
+
+{$CADDY_DOMAIN:localhost:80} {
+	encode gzip zstd
+
+	# Strip /api prefix when forwarding to the gateway so the gateway's
+	# existing routes (/auth, /users, /v1/chat, /logs, /api-keys, etc.)
+	# continue to work unchanged.
+	handle_path /api/* {
+		reverse_proxy gateway:8000 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			# Streaming support for LLM responses
+			flush_interval -1
+			transport http {
+				read_timeout 0
+				write_timeout 0
+				dial_timeout 30s
+			}
+		}
+	}
+
+	# Everything else goes to the platform UI
+	handle {
+		reverse_proxy platform:3000 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
