@@ -2,9 +2,10 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authRouter } from "./modules/auth/router";
-import { usersRouter } from "./modules/users/router";
 import { chatRouter } from "./modules/chat/router";
+import { keysRouter } from "./modules/keys/router";
 import { modelsRouter } from "./modules/models/router";
+import { usersRouter } from "./modules/users/router";
 import { initProviders } from "./providers/registry";
 
 // Initialize LLM provider adapters on startup. Each adapter is registered
@@ -30,7 +31,8 @@ const app = new Hono()
   .route("/auth", authRouter)
   .route("/users", usersRouter)
   .route("/v1/chat", chatRouter)
-  .route("/v1/models", modelsRouter);
+  .route("/v1/models", modelsRouter)
+  .route("/api-keys", keysRouter);
 
 const port = Number(process.env.API_PORT ?? 8000);
 
