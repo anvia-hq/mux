@@ -131,14 +131,9 @@ export class GoogleAdapter implements ProviderAdapter {
     const decoder = new TextDecoder();
     let buffer = "";
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // Google streams JSON objects (each chunk is a separate JSON object, sometimes wrapped in arrays).
-      // Extract each complete top-level JSON object emitted so far.
+    // Google streams JSON objects (each chunk is a separate JSON object, sometimes wrapped in arrays).
+    // Extract each complete top-level JSON object from the buffer and yield it.
+    function* processBuffer(): Generator<ChatCompletionChunk> {
       while (buffer.length > 0) {
         const trimmed = buffer.trimStart();
         if (trimmed.length === 0) {
@@ -196,9 +191,13 @@ export class GoogleAdapter implements ProviderAdapter {
         try {
           parsed = JSON.parse(jsonText);
         } catch (err) {
-          throw new Error(
-            `Failed to parse Google stream chunk: ${err instanceof Error ? err.message : String(err)}`,
+          // Skip non-fatal parse failures to keep the stream alive on a bad chunk
+          console.warn(
+            `Failed to parse Google stream chunk, skipping: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
           );
+          continue;
         }
 
         const chunks = Array.isArray(parsed) ? parsed : [parsed];
@@ -229,8 +228,17 @@ export class GoogleAdapter implements ProviderAdapter {
       }
     }
 
-    // Flush any remaining bytes from the decoder
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      yield* processBuffer();
+    }
+
+    // Flush any remaining bytes from the decoder and process any trailing JSON
     buffer += decoder.decode();
+    yield* processBuffer();
   }
 
   listModels(): Model[] {
