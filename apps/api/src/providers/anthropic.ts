@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export class AnthropicAdapter implements ProviderAdapter {
   name = "anthropic";
@@ -22,23 +23,35 @@ export class AnthropicAdapter implements ProviderAdapter {
     return { system, messages: nonSystem };
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
     const { system, messages } = this.convertMessages(request.messages);
+    const body: Record<string, unknown> = {
+      model: request.model,
+      max_tokens: request.max_tokens ?? 4096,
+      system,
+      messages,
+      stream,
+    };
+    if (request.temperature !== undefined) {
+      body.temperature = request.temperature;
+    }
+    return JSON.stringify(body);
+  }
 
+  private buildHeaders(): Record<string, string> {
+    return {
+      "Content-Type": "application/json",
+      "x-api-key": this.apiKey,
+      "anthropic-version": "2023-06-01",
+    };
+  }
+
+  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: request.model,
-        max_tokens: request.max_tokens ?? 4096,
-        system,
-        messages,
-        stream: false,
-      }),
+      headers: this.buildHeaders(),
+      body: this.buildRequestBody(request, false),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -63,7 +76,7 @@ export class AnthropicAdapter implements ProviderAdapter {
           index: 0,
           message: {
             role: "assistant",
-            content: data.content[0].text,
+            content: data.content?.[0]?.text ?? "",
           },
           finish_reason: data.stop_reason,
         },
@@ -77,22 +90,11 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
-    const { system, messages } = this.convertMessages(request.messages);
-
     const response = await fetch(ANTHROPIC_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: request.model,
-        max_tokens: request.max_tokens ?? 4096,
-        system,
-        messages,
-        stream: true,
-      }),
+      headers: this.buildHeaders(),
+      body: this.buildRequestBody(request, true),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
@@ -116,11 +118,19 @@ export class AnthropicAdapter implements ProviderAdapter {
 
       for (const line of lines) {
         if (line.startsWith("data: ")) {
-          const data = JSON.parse(line.slice(6)) as {
+          let data: {
             type: string;
             id: string;
             delta?: { text?: string };
+            error?: { type?: string; message?: string };
           };
+          try {
+            data = JSON.parse(line.slice(6));
+          } catch (err) {
+            throw new Error(
+              `Failed to parse Anthropic SSE chunk: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
 
           // Convert Anthropic events to OpenAI format
           if (data.type === "content_block_delta") {
@@ -147,10 +157,16 @@ export class AnthropicAdapter implements ProviderAdapter {
                 },
               ],
             };
+          } else if (data.type === "error") {
+            const message = data.error?.message ?? "Unknown Anthropic stream error";
+            throw new Error(`Anthropic stream error: ${message}`);
           }
         }
       }
     }
+
+    // Flush any remaining bytes from the decoder
+    buffer += decoder.decode();
   }
 
   listModels(): Model[] {
