@@ -70,7 +70,11 @@ export async function revokeApiKey(id: string) {
   });
 
   // Set cache to revoked state to prevent race condition
-  await cacheSet(`apikey:${apiKey.key}`, { ...apiKey, isActive: false }, 300);
+  try {
+    await cacheSet(`apikey:${apiKey.key}`, { ...apiKey, isActive: false }, 300);
+  } catch {
+    // Cache unavailable, DB revocation still succeeded
+  }
 
   return apiKey;
 }
