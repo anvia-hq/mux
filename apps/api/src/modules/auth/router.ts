@@ -52,6 +52,9 @@ export const authRouter = new Hono()
       return c.json({ error: "invalid email or password" }, 401);
     }
 
+    // Clear any existing cookie (including stale Secure cookies that the browser
+    // may be holding from a previous deployment) before issuing a fresh one.
+    clearAuthCookie(c);
     await setAuthCookie(c, user);
 
     return c.json({ user: sanitizeUser(user) });

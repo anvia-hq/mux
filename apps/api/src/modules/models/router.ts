@@ -1,7 +1,7 @@
 import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth } from "../../middleware/api-key";
 import { listAllModels } from "../../providers/registry";
-import { requireRole } from "../auth/services";
+import { getCurrentUser } from "../auth/services";
 
 /**
  * Formats a provider model into the OpenAI `GET /v1/models` response shape.
@@ -41,20 +41,20 @@ modelsRouter.get("/", (c) => {
  * Router exposing the same model catalog for the dashboard UI.
  *
  * Mounted at `/dashboard/models`. Authentication is the dashboard session
- * cookie (validated by `requireRole`), not an API key, so the UI can render
- * the catalog without having to mint a dummy bearer token.
+ * cookie (any logged-in user), not an API key, so the UI can render the
+ * catalog without having to mint a dummy bearer token.
  */
 export const modelsDashboardRouter = new Hono();
 
-async function requireAdmin(c: Context, next: Next) {
-  const user = await requireRole(c, "ADMIN");
+async function requireUser(c: Context, next: Next) {
+  const user = await getCurrentUser(c);
   if (!user) {
-    return c.json({ error: "forbidden" }, 403);
+    return c.json({ error: "unauthorized" }, 401);
   }
   await next();
 }
 
-modelsDashboardRouter.use("*", requireAdmin);
+modelsDashboardRouter.use("*", requireUser);
 
 modelsDashboardRouter.get("/", (c) => {
   try {
