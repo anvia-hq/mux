@@ -78,6 +78,9 @@ importers:
       '@tanstack/router-devtools':
         specifier: ^1.167.0
         version: 1.167.0(@tanstack/react-router@1.170.16(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(@tanstack/router-core@1.171.13)(csstype@3.2.3)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      lucide-react:
+        specifier: ^1.21.0
+        version: 1.21.0(react@19.2.7)
       react:
         specifier: ^19.2.7
         version: 19.2.7

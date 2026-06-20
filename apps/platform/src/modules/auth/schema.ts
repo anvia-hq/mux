@@ -5,4 +5,6 @@ export const authApiPaths = {
   logout: "/auth/logout",
   me: "/auth/me",
   register: "/auth/register",
+  onboard: "/auth/onboard",
+  onboardingStatus: "/auth/onboarding-status",
 } as const;

@@ -10,12 +10,24 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as OnboardRouteImport } from './routes/onboard'
 import { Route as LoginRouteImport } from './routes/login'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as AuthedIndexRouteImport } from './routes/_authed.index'
+import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
+import { Route as AuthedPromptsRouteImport } from './routes/_authed.prompts'
+import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
+import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
+import { Route as AuthedApiKeysRouteImport } from './routes/_authed.api-keys'
 
 const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
   path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardRoute = OnboardRouteImport.update({
+  id: '/onboard',
+  path: '/onboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -23,39 +35,117 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
+const AuthedRoute = AuthedRouteImport.update({
+  id: '/_authed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedIndexRoute = AuthedIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedPromptsRoute = AuthedPromptsRouteImport.update({
+  id: '/prompts',
+  path: '/prompts',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedModelsRoute = AuthedModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedLogsRoute = AuthedLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedApiKeysRoute = AuthedApiKeysRouteImport.update({
+  id: '/api-keys',
+  path: '/api-keys',
+  getParentRoute: () => AuthedRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AuthedIndexRoute
   '/login': typeof LoginRoute
+  '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
+  '/api-keys': typeof AuthedApiKeysRoute
+  '/logs': typeof AuthedLogsRoute
+  '/models': typeof AuthedModelsRoute
+  '/prompts': typeof AuthedPromptsRoute
+  '/settings': typeof AuthedSettingsRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/login': typeof LoginRoute
+  '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
+  '/api-keys': typeof AuthedApiKeysRoute
+  '/logs': typeof AuthedLogsRoute
+  '/models': typeof AuthedModelsRoute
+  '/prompts': typeof AuthedPromptsRoute
+  '/settings': typeof AuthedSettingsRoute
+  '/': typeof AuthedIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_authed': typeof AuthedRouteWithChildren
   '/login': typeof LoginRoute
+  '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
+  '/_authed/api-keys': typeof AuthedApiKeysRoute
+  '/_authed/logs': typeof AuthedLogsRoute
+  '/_authed/models': typeof AuthedModelsRoute
+  '/_authed/prompts': typeof AuthedPromptsRoute
+  '/_authed/settings': typeof AuthedSettingsRoute
+  '/_authed/': typeof AuthedIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/register'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/onboard'
+    | '/register'
+    | '/api-keys'
+    | '/logs'
+    | '/models'
+    | '/prompts'
+    | '/settings'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/register'
-  id: '__root__' | '/' | '/login' | '/register'
+  to:
+    | '/login'
+    | '/onboard'
+    | '/register'
+    | '/api-keys'
+    | '/logs'
+    | '/models'
+    | '/prompts'
+    | '/settings'
+    | '/'
+  id:
+    | '__root__'
+    | '/_authed'
+    | '/login'
+    | '/onboard'
+    | '/register'
+    | '/_authed/api-keys'
+    | '/_authed/logs'
+    | '/_authed/models'
+    | '/_authed/prompts'
+    | '/_authed/settings'
+    | '/_authed/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AuthedRoute: typeof AuthedRouteWithChildren
   LoginRoute: typeof LoginRoute
+  OnboardRoute: typeof OnboardRoute
   RegisterRoute: typeof RegisterRoute
 }
 
@@ -68,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/onboard': {
+      id: '/onboard'
+      path: '/onboard'
+      fullPath: '/onboard'
+      preLoaderRoute: typeof OnboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/login': {
       id: '/login'
       path: '/login'
@@ -75,19 +172,83 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
+    '/_authed': {
+      id: '/_authed'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authed/': {
+      id: '/_authed/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AuthedIndexRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/settings': {
+      id: '/_authed/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AuthedSettingsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/prompts': {
+      id: '/_authed/prompts'
+      path: '/prompts'
+      fullPath: '/prompts'
+      preLoaderRoute: typeof AuthedPromptsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/models': {
+      id: '/_authed/models'
+      path: '/models'
+      fullPath: '/models'
+      preLoaderRoute: typeof AuthedModelsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/logs': {
+      id: '/_authed/logs'
+      path: '/logs'
+      fullPath: '/logs'
+      preLoaderRoute: typeof AuthedLogsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/api-keys': {
+      id: '/_authed/api-keys'
+      path: '/api-keys'
+      fullPath: '/api-keys'
+      preLoaderRoute: typeof AuthedApiKeysRouteImport
+      parentRoute: typeof AuthedRoute
     }
   }
 }
 
+interface AuthedRouteChildren {
+  AuthedApiKeysRoute: typeof AuthedApiKeysRoute
+  AuthedLogsRoute: typeof AuthedLogsRoute
+  AuthedModelsRoute: typeof AuthedModelsRoute
+  AuthedPromptsRoute: typeof AuthedPromptsRoute
+  AuthedSettingsRoute: typeof AuthedSettingsRoute
+  AuthedIndexRoute: typeof AuthedIndexRoute
+}
+
+const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedApiKeysRoute: AuthedApiKeysRoute,
+  AuthedLogsRoute: AuthedLogsRoute,
+  AuthedModelsRoute: AuthedModelsRoute,
+  AuthedPromptsRoute: AuthedPromptsRoute,
+  AuthedSettingsRoute: AuthedSettingsRoute,
+  AuthedIndexRoute: AuthedIndexRoute,
+}
+
+const AuthedRouteWithChildren =
+  AuthedRoute._addFileChildren(AuthedRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AuthedRoute: AuthedRouteWithChildren,
   LoginRoute: LoginRoute,
+  OnboardRoute: OnboardRoute,
   RegisterRoute: RegisterRoute,
 }
 export const routeTree = rootRouteImport

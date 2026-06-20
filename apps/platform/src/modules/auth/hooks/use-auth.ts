@@ -1,11 +1,17 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { authQueryKey } from "../schema";
-import { getCurrentUser, login, logout, register } from "../services";
+import { getCurrentUser, login, logout, onboard, onboardingStatus, register } from "../services";
 
 export const meQueryOptions = queryOptions({
   queryKey: [...authQueryKey, "me"],
   queryFn: getCurrentUser,
+  retry: false,
+});
+
+export const onboardingStatusQueryOptions = queryOptions({
+  queryKey: [...authQueryKey, "onboarding-status"],
+  queryFn: onboardingStatus,
   retry: false,
 });
 
@@ -28,6 +34,19 @@ export function useRegisterMutation() {
 
   return useMutation({
     mutationFn: register,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: authQueryKey });
+      await navigate({ to: "/" });
+    },
+  });
+}
+
+export function useOnboardMutation() {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: onboard,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: authQueryKey });
       await navigate({ to: "/" });

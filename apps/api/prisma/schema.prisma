@@ -20,6 +20,8 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
+  prompts      Prompt[]
+  versions     PromptVersion[]
 }
 
 model ApiKey {
@@ -61,4 +63,37 @@ model RequestLog {
   @@index([provider])
   @@index([model])
   @@index([createdAt])
+}
+
+model Prompt {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  description     String?
+  activeVersionId String?         @unique
+  activeVersion   PromptVersion?  @relation("ActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
+  versions        PromptVersion[] @relation("PromptVersions")
+  createdBy       String
+  creator         User            @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([name])
+}
+
+model PromptVersion {
+  id          String   @id @default(cuid())
+  promptId    String
+  prompt      Prompt   @relation("PromptVersions", fields: [promptId], references: [id], onDelete: Cascade)
+  version     Int
+  content     String
+  model       String?
+  temperature Float?
+  notes       String?
+  createdBy   String
+  creator     User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  activeOf    Prompt?  @relation("ActiveVersion")
+
+  @@unique([promptId, version])
+  @@index([promptId])
 }

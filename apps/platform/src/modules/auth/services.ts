@@ -1,67 +1,45 @@
+import { apiFetch, UnauthorizedError } from "../../lib/api-client";
 import { authApiPaths } from "./schema";
 import type { AuthResponse, AuthUser, LoginInput, RegisterInput } from "./types";
 
-const apiBaseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export { UnauthorizedError };
 
-export class UnauthorizedError extends Error {
-  constructor() {
-    super("Unauthorized");
-    this.name = "UnauthorizedError";
+export async function getCurrentUser(): Promise<AuthUser> {
+  try {
+    const data = await apiFetch<AuthResponse>(authApiPaths.me);
+    return data.user;
+  } catch (error) {
+    if (error instanceof UnauthorizedError) throw error;
+    throw error;
   }
 }
 
-export async function getCurrentUser() {
-  const response = await fetch(`${apiBaseUrl}${authApiPaths.me}`, {
-    credentials: "include",
-  });
-
-  if (response.status === 401) {
-    throw new UnauthorizedError();
-  }
-
-  if (!response.ok) {
-    throw new Error("Failed to load current user.");
-  }
-
-  const data = (await response.json()) as { user: AuthUser };
-
+export async function login(input: LoginInput): Promise<AuthUser> {
+  const data = await apiFetch<AuthResponse>(authApiPaths.login, { method: "POST", body: input });
   return data.user;
 }
 
-export async function login(input: LoginInput) {
-  return authRequest(authApiPaths.login, input);
-}
-
-export async function register(input: RegisterInput) {
-  return authRequest(authApiPaths.register, input);
-}
-
-export async function logout() {
-  const response = await fetch(`${apiBaseUrl}${authApiPaths.logout}`, {
+export async function register(input: RegisterInput): Promise<AuthUser> {
+  const data = await apiFetch<AuthResponse>(authApiPaths.register, {
     method: "POST",
-    credentials: "include",
+    body: input,
   });
-
-  if (!response.ok) {
-    throw new Error("Failed to log out.");
-  }
+  return data.user;
 }
 
-async function authRequest(path: string, input: LoginInput | RegisterInput) {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input),
-  });
+export async function logout(): Promise<void> {
+  await apiFetch<{ ok: true }>(authApiPaths.logout, { method: "POST" });
+}
 
-  const data = (await response.json().catch(() => null)) as AuthResponse | null;
+export async function onboardingStatus(): Promise<{ needsOnboarding: boolean }> {
+  return apiFetch<{ needsOnboarding: boolean }>("/auth/onboarding-status");
+}
 
-  if (!response.ok || !data?.user) {
-    throw new Error(data?.error ?? "Authentication failed.");
-  }
-
+export async function onboard(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<AuthUser> {
+  const data = await apiFetch<AuthResponse>("/auth/onboard", { method: "POST", body: input });
   return data.user;
 }
