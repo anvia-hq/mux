@@ -5,8 +5,8 @@ export type Model = { id: string; object: string; created: number; owned_by: str
 
 export function useModelsQuery() {
   return useQuery({
-    queryKey: ["v1", "models"] as const,
-    queryFn: () => apiFetch<{ data: Model[] }>("/v1/models"),
+    queryKey: ["dashboard", "models"] as const,
+    queryFn: () => apiFetch<{ data: Model[] }>("/dashboard/models"),
   });
 }
 

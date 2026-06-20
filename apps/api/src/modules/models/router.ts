@@ -1,6 +1,19 @@
-import { Hono } from "hono";
+import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth } from "../../middleware/api-key";
 import { listAllModels } from "../../providers/registry";
+import { requireRole } from "../auth/services";
+
+/**
+ * Formats a provider model into the OpenAI `GET /v1/models` response shape.
+ */
+function toOpenAIModel(model: ReturnType<typeof listAllModels>[number]) {
+  return {
+    id: model.id,
+    object: "model",
+    created: Date.now(),
+    owned_by: model.provider,
+  };
+}
 
 /**
  * Router exposing the OpenAI-compatible `/v1/models` endpoint.
@@ -17,16 +30,36 @@ modelsRouter.use("*", apiKeyAuth);
 modelsRouter.get("/", (c) => {
   try {
     const models = listAllModels();
+    return c.json({ object: "list", data: models.map(toOpenAIModel) });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
 
-    return c.json({
-      object: "list",
-      data: models.map((model) => ({
-        id: model.id,
-        object: "model",
-        created: Date.now(),
-        owned_by: model.provider,
-      })),
-    });
+/**
+ * Router exposing the same model catalog for the dashboard UI.
+ *
+ * Mounted at `/dashboard/models`. Authentication is the dashboard session
+ * cookie (validated by `requireRole`), not an API key, so the UI can render
+ * the catalog without having to mint a dummy bearer token.
+ */
+export const modelsDashboardRouter = new Hono();
+
+async function requireAdmin(c: Context, next: Next) {
+  const user = await requireRole(c, "ADMIN");
+  if (!user) {
+    return c.json({ error: "forbidden" }, 403);
+  }
+  await next();
+}
+
+modelsDashboardRouter.use("*", requireAdmin);
+
+modelsDashboardRouter.get("/", (c) => {
+  try {
+    const models = listAllModels();
+    return c.json({ data: models.map(toOpenAIModel) });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
     return c.json({ error: errorMessage }, 500);
