@@ -3,27 +3,77 @@ import { OpenAIAdapter } from "./openai";
 import { AnthropicAdapter } from "./anthropic";
 import { GoogleAdapter } from "./google";
 import { MistralAdapter } from "./mistral";
+import { prisma } from "../utils/prisma";
+import { decrypt } from "../modules/providers/crypto";
 
 const providers: Map<string, ProviderAdapter> = new Map();
 
-export function initProviders() {
-  if (process.env.OPENAI_API_KEY) {
-    providers.set("openai", new OpenAIAdapter(process.env.OPENAI_API_KEY));
+function buildAdapter(provider: string, apiKey: string): ProviderAdapter | null {
+  switch (provider) {
+    case "openai":
+      return new OpenAIAdapter(apiKey);
+    case "anthropic":
+      return new AnthropicAdapter(apiKey);
+    case "google":
+      return new GoogleAdapter(apiKey);
+    case "mistral":
+      return new MistralAdapter(apiKey);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Reads provider keys from the database and seeds the in-memory adapter cache.
+ * Also falls back to environment variables for any provider that isn't yet in
+ * the DB (useful for the very first boot before anyone has visited the UI).
+ */
+export async function initProviders() {
+  const envFallback: Record<string, string | undefined> = {
+    openai: process.env.OPENAI_API_KEY,
+    anthropic: process.env.ANTHROPIC_API_KEY,
+    google: process.env.GOOGLE_API_KEY,
+    mistral: process.env.MISTRAL_API_KEY,
+  };
+
+  // Seed from env first so the gateway works even if the DB hasn't been
+  // populated yet. DB-loaded keys override env on top.
+  for (const [name, key] of Object.entries(envFallback)) {
+    if (key) {
+      const adapter = buildAdapter(name, key);
+      if (adapter) providers.set(name, adapter);
+    }
   }
 
-  if (process.env.ANTHROPIC_API_KEY) {
-    providers.set("anthropic", new AnthropicAdapter(process.env.ANTHROPIC_API_KEY));
+  try {
+    const rows = await prisma.providerKey.findMany();
+    for (const row of rows) {
+      const apiKey = decrypt(row.ciphertext);
+      const adapter = buildAdapter(row.provider, apiKey);
+      if (adapter) providers.set(row.provider, adapter);
+    }
+  } catch (error) {
+    console.warn("ProviderKey table not available yet:", error instanceof Error ? error.message : error);
   }
 
-  if (process.env.GOOGLE_API_KEY) {
-    providers.set("google", new GoogleAdapter(process.env.GOOGLE_API_KEY));
-  }
+  console.log(`Initialized providers: ${Array.from(providers.keys()).join(", ") || "(none)"}`);
+}
 
-  if (process.env.MISTRAL_API_KEY) {
-    providers.set("mistral", new MistralAdapter(process.env.MISTRAL_API_KEY));
+/**
+ * Loads a single provider from the database, replacing any cached instance.
+ * Called after PUT/DELETE on the providers API so changes apply immediately.
+ */
+export async function reloadProvider(name: string): Promise<void> {
+  const row = await prisma.providerKey.findUnique({ where: { provider: name } });
+  if (!row) {
+    providers.delete(name);
+    return;
   }
-
-  console.log(`Initialized providers: ${Array.from(providers.keys()).join(", ")}`);
+  const apiKey = decrypt(row.ciphertext);
+  const adapter = buildAdapter(name, apiKey);
+  if (adapter) {
+    providers.set(name, adapter);
+  }
 }
 
 export function getProvider(model: string): ProviderAdapter | null {
@@ -42,4 +92,8 @@ export function listAllModels(): Model[] {
     models.push(...provider.listModels());
   }
   return models;
+}
+
+export function listConfiguredProviders(): string[] {
+  return Array.from(providers.keys());
 }

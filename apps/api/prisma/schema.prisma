@@ -22,6 +22,7 @@ model User {
   apiKeys      ApiKey[]
   prompts      Prompt[]
   versions     PromptVersion[]
+  providerKeys ProviderKey[]
 }
 
 model ApiKey {
@@ -96,4 +97,19 @@ model PromptVersion {
 
   @@unique([promptId, version])
   @@index([promptId])
+}
+
+/// Provider API keys configured for the gateway. Stored encrypted at rest
+/// using AES-256-GCM with a key derived from `PROVIDER_KEYS_ENCRYPTION_KEY`.
+/// The `provider` field is the primary key (one key per provider).
+model ProviderKey {
+  provider    String   @id
+  /// Base64-encoded ciphertext (IV || authTag || encrypted).
+  ciphertext  String
+  /// Last 4 characters of the plaintext key, for display in the UI only.
+  lastFour    String
+  updatedBy   String
+  updater     User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
 }

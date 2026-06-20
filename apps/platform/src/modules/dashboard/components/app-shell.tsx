@@ -24,6 +24,7 @@ import {
   SettingsIcon,
   SparklesIcon,
   BoxesIcon,
+  PlugIcon,
 } from "lucide-react";
 import { meQueryOptions, useLogoutMutation } from "../../auth/hooks/use-auth";
 
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { to: "/api-keys", label: "API keys", icon: KeyRoundIcon, adminOnly: true },
   { to: "/logs", label: "Logs", icon: ScrollTextIcon },
   { to: "/models", label: "Models", icon: BoxesIcon },
+  { to: "/providers", label: "Providers", icon: PlugIcon, adminOnly: true },
   { to: "/prompts", label: "Prompts", icon: SparklesIcon, adminOnly: true },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

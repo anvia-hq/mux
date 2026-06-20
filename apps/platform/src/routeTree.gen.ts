@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed.index'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
+import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
 import { Route as AuthedPromptsRouteImport } from './routes/_authed.prompts'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
@@ -49,6 +50,11 @@ const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedProvidersRoute = AuthedProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedPromptsRoute = AuthedPromptsRouteImport.update({
   id: '/prompts',
   path: '/prompts',
@@ -79,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/prompts': typeof AuthedPromptsRoute
+  '/providers': typeof AuthedProvidersRoute
   '/settings': typeof AuthedSettingsRoute
 }
 export interface FileRoutesByTo {
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/prompts': typeof AuthedPromptsRoute
+  '/providers': typeof AuthedProvidersRoute
   '/settings': typeof AuthedSettingsRoute
   '/': typeof AuthedIndexRoute
 }
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/_authed/logs': typeof AuthedLogsRoute
   '/_authed/models': typeof AuthedModelsRoute
   '/_authed/prompts': typeof AuthedPromptsRoute
+  '/_authed/providers': typeof AuthedProvidersRoute
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/': typeof AuthedIndexRoute
 }
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/logs'
     | '/models'
     | '/prompts'
+    | '/providers'
     | '/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/logs'
     | '/models'
     | '/prompts'
+    | '/providers'
     | '/settings'
     | '/'
   id:
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/_authed/logs'
     | '/_authed/models'
     | '/_authed/prompts'
+    | '/_authed/providers'
     | '/_authed/settings'
     | '/_authed/'
   fileRoutesById: FileRoutesById
@@ -193,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedSettingsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/providers': {
+      id: '/_authed/providers'
+      path: '/providers'
+      fullPath: '/providers'
+      preLoaderRoute: typeof AuthedProvidersRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/prompts': {
       id: '/_authed/prompts'
       path: '/prompts'
@@ -229,6 +248,7 @@ interface AuthedRouteChildren {
   AuthedLogsRoute: typeof AuthedLogsRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
   AuthedPromptsRoute: typeof AuthedPromptsRoute
+  AuthedProvidersRoute: typeof AuthedProvidersRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
@@ -238,6 +258,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedLogsRoute: AuthedLogsRoute,
   AuthedModelsRoute: AuthedModelsRoute,
   AuthedPromptsRoute: AuthedPromptsRoute,
+  AuthedProvidersRoute: AuthedProvidersRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }

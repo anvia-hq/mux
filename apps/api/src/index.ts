@@ -7,12 +7,13 @@ import { keysRouter } from "./modules/keys/router";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
 import { promptsRouter } from "./modules/prompts/router";
+import { providersRouter } from "./modules/providers/router";
 import { usersRouter } from "./modules/users/router";
 import { initProviders } from "./providers/registry";
 
-// Initialize LLM provider adapters on startup. Each adapter is registered
-// only if the corresponding API key environment variable is set.
-initProviders();
+// Initialize LLM provider adapters on startup. Reads keys from the DB
+// (set via the dashboard), falling back to env vars for first boot.
+await initProviders();
 
 const clientOrigins = (process.env.CLIENT_ORIGINS ?? "http://localhost:3000")
   .split(",")
@@ -37,7 +38,8 @@ const app = new Hono()
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
   .route("/logs", logsRouter)
-  .route("/prompts", promptsRouter);
+  .route("/prompts", promptsRouter)
+  .route("/providers", providersRouter);
 
 const port = Number(process.env.API_PORT ?? 8000);
 
