@@ -22,6 +22,8 @@ import {
   useEnableAllMutation,
   useDisableAllMutation,
 } from "./hooks";
+import { ModelIdCopyButton } from "../models/model-id-copy-button";
+import { ModalityIcons } from "../models/modality-icons";
 
 function formatTokens(n: number) {
   if (!n) return "-";
@@ -35,10 +37,6 @@ function formatPrice(price: number) {
   if (price < 0.01) return `$${price.toFixed(4)}`;
   if (price < 1) return `$${price.toFixed(2)}`;
   return `$${price.toFixed(2)}`;
-}
-
-function formatList(items: string[]) {
-  return items.length ? items.join(", ") : "-";
 }
 
 function matchesSearch(model: ProviderModel, query: string) {
@@ -234,7 +232,7 @@ export function ProviderModelsPage({ provider }: { provider: ProviderName }) {
                 filteredModels.map((model) => (
                   <TableRow key={model.id}>
                     <TableCell className="min-w-72 whitespace-normal py-3">
-                      <code className="font-medium text-xs">{model.id}</code>
+                      <ModelIdCopyButton modelId={model.id} />
                       <div className="mt-1 text-muted-foreground text-xs">
                         {model.name === model.id ? PROVIDER_LABELS[provider] : model.name}
                       </div>
@@ -264,14 +262,14 @@ export function ProviderModelsPage({ provider }: { provider: ProviderName }) {
                       </div>
                     </TableCell>
                     <TableCell className="min-w-44 whitespace-normal py-3">
-                      <div className="grid gap-1 text-xs">
-                        <div>
-                          <span className="text-muted-foreground">In: </span>
-                          {formatList(model.inputModalities)}
+                      <div className="grid gap-2 text-xs">
+                        <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-2">
+                          <span className="text-muted-foreground">In</span>
+                          <ModalityIcons modalities={model.inputModalities} />
                         </div>
-                        <div>
-                          <span className="text-muted-foreground">Out: </span>
-                          {formatList(model.outputModalities)}
+                        <div className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-center gap-2">
+                          <span className="text-muted-foreground">Out</span>
+                          <ModalityIcons modalities={model.outputModalities} />
                         </div>
                       </div>
                     </TableCell>

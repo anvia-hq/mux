@@ -11,6 +11,8 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { useModelsQuery, type Model } from "./hooks";
+import { ModelIdCopyButton } from "./model-id-copy-button";
+import { ModalityIcons } from "./modality-icons";
 
 function formatTokens(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -120,9 +122,9 @@ export function ModelsPage() {
             <TableBody>
               {filteredModels.length ? (
                 filteredModels.map((m) => (
-                  <TableRow key={`${m.provider}:${m.id}`}>
+                  <TableRow key={m.id}>
                     <TableCell>
-                      <code className="text-xs font-medium">{m.id}</code>
+                      <ModelIdCopyButton modelId={m.id} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 text-muted-foreground">
@@ -130,11 +132,11 @@ export function ModelsPage() {
                         <span className="capitalize">{m.provider}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">
-                      {m.inputModalities.join(", ")}
+                    <TableCell>
+                      <ModalityIcons modalities={m.inputModalities} />
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-xs">
-                      {m.outputModalities.join(", ")}
+                    <TableCell>
+                      <ModalityIcons modalities={m.outputModalities} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {m.contextWindow > 0 ? formatTokens(m.contextWindow) : "-"}

@@ -148,7 +148,7 @@ const completionSamples: CodeSample[] = [
     label: "TypeScript SDK",
     language: "typescript",
     code: `const response = await client.chat.completions.create({
-  model: "gpt-5.5",
+  model: "openai:gpt-5.5",
   messages: [
     { role: "system", content: "You are a helpful assistant." },
     { role: "user", content: "Hello!" },
@@ -164,7 +164,7 @@ console.log(response.choices[0].message.content);`,
     label: "Python",
     language: "python",
     code: `response = client.chat.completions.create(
-    model="gpt-5.5",
+    model="openai:gpt-5.5",
     messages=[
         {"role": "system", "content": "You are a helpful assistant."},
         {"role": "user", "content": "Hello!"},
@@ -186,7 +186,7 @@ print(response.choices[0].message.content)`,
     Authorization: "Bearer mux_live_xxxxxxxxxxxxxxxx",
   },
   body: JSON.stringify({
-    model: "gpt-5.5",
+    model: "openai:gpt-5.5",
     messages: [{ role: "user", content: "Hello!" }],
   }),
 });`,
@@ -199,7 +199,7 @@ const streamingSamples: CodeSample[] = [
     label: "TypeScript SDK",
     language: "typescript",
     code: `const stream = await client.chat.completions.create({
-  model: "claude-sonnet-4-6",
+  model: "anthropic:claude-sonnet-4-6",
   messages: [{ role: "user", content: "Tell me a story" }],
   stream: true,
 });
@@ -213,7 +213,7 @@ for await (const chunk of stream) {
     label: "Python",
     language: "python",
     code: `stream = client.chat.completions.create(
-    model="claude-sonnet-4-6",
+    model="anthropic:claude-sonnet-4-6",
     messages=[{"role": "user", "content": "Tell me a story"}],
     stream=True,
 )
@@ -420,15 +420,17 @@ export function DocsPage() {
           <Section id="list-models" title="List models">
             <p>
               Retrieve all enabled models across configured providers. Each model includes an{" "}
-              <code>id</code> and <code>owned_by</code> field matching the OpenAI format.
+              <code>id</code> in <code>provider:model</code> format and an <code>owned_by</code>{" "}
+              field matching the OpenAI format.
             </p>
             <CodeTabs samples={modelSamples} />
           </Section>
 
           <Section id="chat-completions" title="Chat completions">
             <p>
-              Send a chat request using any model id from the model list. The gateway returns the
-              same response shape whether OpenAI, Anthropic, Google, or Mistral handles the request.
+              Send a chat request using the full <code>provider:model</code> id from the model list.
+              The gateway returns the same response shape whether OpenAI, Anthropic, Google, or
+              Mistral handles the request.
             </p>
             <CodeTabs samples={completionSamples} />
           </Section>

@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import { Toaster } from "@repo/ui/components/sonner";
 import { Outlet } from "@tanstack/react-router";
 import { createRootRouteWithContext } from "@tanstack/react-router";
 
@@ -10,6 +11,7 @@ function RootLayout() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Outlet />
+      <Toaster />
     </div>
   );
 }

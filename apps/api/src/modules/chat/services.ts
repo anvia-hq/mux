@@ -3,7 +3,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
 } from "../../providers/types";
-import { estimateCost, getModelPricing, getProvider } from "../../providers/registry";
+import { estimateCost, getModelPricing, resolveProviderModel } from "../../providers/registry";
 import { logRequest } from "../../middleware/logger";
 
 /**
@@ -50,9 +50,9 @@ export async function handleChatCompletion(
   apiKeyId: string,
   options: { requireBillableUsage?: boolean } = {},
 ): Promise<ChatCompletionResult> {
-  const provider = getProvider(request.model);
+  const resolved = resolveProviderModel(request.model);
 
-  if (!provider) {
+  if (!resolved) {
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
@@ -60,6 +60,7 @@ export async function handleChatCompletion(
     throw new ApiKeyUnbillableUsageError();
   }
 
+  const providerRequest = { ...request, model: resolved.modelId };
   const startTime = Date.now();
 
   try {
@@ -69,14 +70,17 @@ export async function handleChatCompletion(
       // stream finishes (or fails) so usage can be recorded.
       return {
         kind: "stream",
-        stream: provider.chatCompletionStream(request),
-        provider: provider.name,
-        model: request.model,
+        stream: prefixStreamModel(
+          resolved.provider.chatCompletionStream(providerRequest),
+          resolved.publicModelId,
+        ),
+        provider: resolved.provider.name,
+        model: resolved.publicModelId,
         startTime,
       };
     }
 
-    const response = await provider.chatCompletion(request);
+    const response = await resolved.provider.chatCompletion(providerRequest);
     const latencyMs = Date.now() - startTime;
     const estimatedCost = estimateCost(
       request.model,
@@ -91,8 +95,8 @@ export async function handleChatCompletion(
     // Buffer log entry; flushed asynchronously by the logger middleware.
     logRequest({
       apiKeyId,
-      provider: provider.name,
-      model: request.model,
+      provider: resolved.provider.name,
+      model: resolved.publicModelId,
       endpoint: "/v1/chat/completions",
       latencyMs,
       promptTokens: response.usage?.prompt_tokens,
@@ -102,7 +106,7 @@ export async function handleChatCompletion(
       statusCode: 200,
     });
 
-    return { kind: "complete", response };
+    return { kind: "complete", response: { ...response, model: resolved.publicModelId } };
   } catch (error) {
     const latencyMs = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -111,8 +115,8 @@ export async function handleChatCompletion(
     // also logged by the router when the iterable errors mid-flight.
     logRequest({
       apiKeyId,
-      provider: provider.name,
-      model: request.model,
+      provider: resolved.provider.name,
+      model: resolved.publicModelId,
       endpoint: "/v1/chat/completions",
       latencyMs,
       statusCode: 500,
@@ -120,5 +124,14 @@ export async function handleChatCompletion(
     });
 
     throw error;
+  }
+}
+
+async function* prefixStreamModel(
+  stream: AsyncIterable<ChatCompletionChunk>,
+  publicModelId: string,
+): AsyncIterable<ChatCompletionChunk> {
+  for await (const chunk of stream) {
+    yield { ...chunk, model: publicModelId };
   }
 }

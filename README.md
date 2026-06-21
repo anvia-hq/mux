@@ -79,7 +79,7 @@ Authorization: Bearer mux_live_...
 Content-Type: application/json
 
 {
-  "model": "gpt-4o",
+  "model": "openai:gpt-4o",
   "messages": [
     { "role": "user", "content": "Summarize this RFC in three bullets." }
   ],
@@ -87,7 +87,7 @@ Content-Type: application/json
 }
 ```
 
-Swap `gpt-4o` for any enabled model from a configured provider. The response remains OpenAI-compatible for both streamed and non-streamed requests.
+Swap `openai:gpt-4o` for any enabled `provider:model` id returned by the model list. The response remains OpenAI-compatible for both streamed and non-streamed requests.
 
 List the models exposed by the gateway:
 

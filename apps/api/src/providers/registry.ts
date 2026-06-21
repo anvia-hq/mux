@@ -339,14 +339,54 @@ export async function reloadProvider(name: string): Promise<void> {
   }
 }
 
-export function getProvider(model: string): ProviderAdapter | null {
-  for (const provider of providers.values()) {
-    if (provider.listModels().some((m) => m.id === model)) {
-      return provider;
-    }
+export type ResolvedProviderModel = {
+  provider: ProviderAdapter;
+  providerName: string;
+  modelId: string;
+  publicModelId: string;
+};
+
+export function toPublicModelId(provider: string, modelId: string): string {
+  return `${provider}:${modelId}`;
+}
+
+function parsePublicModelId(model: string): { providerName: string; modelId: string } | null {
+  const separatorIndex = model.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === model.length - 1) {
+    return null;
   }
 
-  return null;
+  return {
+    providerName: model.slice(0, separatorIndex),
+    modelId: model.slice(separatorIndex + 1),
+  };
+}
+
+export function resolveProviderModel(model: string): ResolvedProviderModel | null {
+  const parsed = parsePublicModelId(model);
+  if (!parsed) {
+    return null;
+  }
+
+  const provider = providers.get(parsed.providerName);
+  if (!provider) {
+    return null;
+  }
+
+  if (!provider.listModels().some((m) => m.id === parsed.modelId)) {
+    return null;
+  }
+
+  return {
+    provider,
+    providerName: parsed.providerName,
+    modelId: parsed.modelId,
+    publicModelId: toPublicModelId(parsed.providerName, parsed.modelId),
+  };
+}
+
+export function getProvider(model: string): ProviderAdapter | null {
+  return resolveProviderModel(model)?.provider ?? null;
 }
 
 export function listAllModels(): Model[] {
@@ -362,15 +402,14 @@ export function listConfiguredProviders(): string[] {
 }
 
 /**
- * Returns the pricing for a specific model id by searching all configured
- * providers' model lists. Returns null if the model is unknown.
+ * Returns pricing for a provider-qualified model id. Returns null if the id is
+ * not in `provider:model` format, the provider is not configured, or the model
+ * is not exposed by that provider.
  */
 export function getModelPricing(modelId: string): Model | null {
-  for (const provider of providers.values()) {
-    const found = provider.listModels().find((m) => m.id === modelId);
-    if (found) return found;
-  }
-  return null;
+  const resolved = resolveProviderModel(modelId);
+  if (!resolved) return null;
+  return resolved.provider.listModels().find((m) => m.id === resolved.modelId) ?? null;
 }
 
 /**

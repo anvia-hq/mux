@@ -1,6 +1,6 @@
 import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth } from "../../middleware/api-key";
-import { listAllModels } from "../../providers/registry";
+import { listAllModels, toPublicModelId } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
 import { prisma } from "../../utils/prisma";
 
@@ -9,10 +9,17 @@ import { prisma } from "../../utils/prisma";
  */
 function toOpenAIModel(model: ReturnType<typeof listAllModels>[number]) {
   return {
-    id: model.id,
+    id: toPublicModelId(model.provider, model.id),
     object: "model",
     created: Date.now(),
     owned_by: model.provider,
+  };
+}
+
+function toDashboardModel(model: ReturnType<typeof listAllModels>[number]) {
+  return {
+    ...model,
+    id: toPublicModelId(model.provider, model.id),
   };
 }
 
@@ -65,7 +72,9 @@ modelsDashboardRouter.get("/", async (c) => {
         (r) => `${r.provider}:${r.modelId}`,
       ),
     );
-    return c.json({ data: models.filter((m) => !disabled.has(`${m.provider}:${m.id}`)) });
+    return c.json({
+      data: models.filter((m) => !disabled.has(`${m.provider}:${m.id}`)).map(toDashboardModel),
+    });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
     return c.json({ error: errorMessage }, 500);
