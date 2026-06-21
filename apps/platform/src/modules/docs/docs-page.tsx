@@ -15,6 +15,16 @@ type CodeSample = {
   code: string;
 };
 
+const BASE_URL_PLACEHOLDER = "__MUX_GATEWAY_BASE_URL__";
+
+function getGatewayBaseUrl() {
+  if (typeof window === "undefined") {
+    return "http://localhost/v1";
+  }
+
+  return `${window.location.origin}/v1`;
+}
+
 const codeTheme = {
   'code[class*="language-"]': {
     color: "#d8d4cc",
@@ -67,7 +77,7 @@ const setupSamples: CodeSample[] = [
     code: `import OpenAI from "openai";
 
 const client = new OpenAI({
-  baseURL: "http://localhost/v1",
+  baseURL: "__MUX_GATEWAY_BASE_URL__",
   apiKey: "mux_live_xxxxxxxxxxxxxxxx",
 });`,
   },
@@ -78,7 +88,7 @@ const client = new OpenAI({
     code: `from openai import OpenAI
 
 client = OpenAI(
-    base_url="http://localhost/v1",
+    base_url="__MUX_GATEWAY_BASE_URL__",
     api_key="mux_live_xxxxxxxxxxxxxxxx",
 )`,
   },
@@ -86,7 +96,7 @@ client = OpenAI(
     value: "fetch",
     label: "TypeScript (fetch)",
     language: "typescript",
-    code: `const response = await fetch("http://localhost/v1/models", {
+    code: `const response = await fetch("__MUX_GATEWAY_BASE_URL__/models", {
   headers: {
     Authorization: "Bearer mux_live_xxxxxxxxxxxxxxxx",
   },
@@ -98,7 +108,7 @@ const models = await response.json();`,
     value: "curl",
     label: "cURL",
     language: "bash",
-    code: `curl http://localhost/v1/models \\
+    code: `curl __MUX_GATEWAY_BASE_URL__/models \\
   -H "Authorization: Bearer mux_live_xxxxxxxxxxxxxxxx"`,
   },
 ];
@@ -127,7 +137,7 @@ for model in models.data:
     value: "curl",
     label: "cURL",
     language: "bash",
-    code: `curl http://localhost/v1/models \\
+    code: `curl __MUX_GATEWAY_BASE_URL__/models \\
   -H "Authorization: Bearer $MUX_API_KEY"`,
   },
 ];
@@ -169,7 +179,7 @@ print(response.choices[0].message.content)`,
     value: "fetch",
     label: "TypeScript (fetch)",
     language: "typescript",
-    code: `const response = await fetch("http://localhost/v1/chat/completions", {
+    code: `const response = await fetch("__MUX_GATEWAY_BASE_URL__/chat/completions", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -244,9 +254,12 @@ except AuthenticationError as error:
 
 function CodeTabs({ samples }: { samples: CodeSample[] }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const gatewayBaseUrl = getGatewayBaseUrl();
+
+  const resolveCode = (code: string) => code.replaceAll(BASE_URL_PLACEHOLDER, gatewayBaseUrl);
 
   const copySample = async (sample: CodeSample) => {
-    await navigator.clipboard.writeText(sample.code);
+    await navigator.clipboard.writeText(resolveCode(sample.code));
     setCopied(sample.value);
     window.setTimeout(() => setCopied(null), 1400);
   };
@@ -291,7 +304,7 @@ function CodeTabs({ samples }: { samples: CodeSample[] }) {
               }}
               codeTagProps={{ className: "font-mono", style: { background: "transparent" } }}
             >
-              {sample.code}
+              {resolveCode(sample.code)}
             </SyntaxHighlighter>
           </div>
         </TabsContent>
@@ -314,6 +327,8 @@ function Section({ id, title, children }: { id: string; title: string; children:
 }
 
 export function DocsPage() {
+  const gatewayBaseUrl = getGatewayBaseUrl();
+
   return (
     <div className="grid gap-8">
       <Card className="overflow-hidden p-0">
@@ -338,7 +353,7 @@ export function DocsPage() {
                 <span>Base URL</span>
               </div>
               <code className="min-w-0 truncate font-mono text-xs text-foreground">
-                http://localhost/v1
+                {gatewayBaseUrl}
               </code>
             </div>
           </div>

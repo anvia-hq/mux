@@ -1,4 +1,7 @@
+import { useMemo, useState } from "react";
 import { Badge } from "@repo/ui/components/badge";
+import { Card } from "@repo/ui/components/card";
+import { Input } from "@repo/ui/components/input";
 import {
   Table,
   TableBody,
@@ -7,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@repo/ui/components/table";
-import { useModelsQuery } from "./hooks";
+import { useModelsQuery, type Model } from "./hooks";
 
 function formatTokens(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -30,17 +33,60 @@ function CapBadge({ enabled }: { enabled: boolean }) {
   );
 }
 
+function ProviderLogo({ provider }: { provider: string }) {
+  return (
+    <img
+      src={`https://models.dev/logos/${provider}.svg`}
+      alt={`${provider} logo`}
+      className="size-5 object-contain brightness-0 invert"
+      loading="lazy"
+    />
+  );
+}
+
+function matchesSearch(model: Model, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+
+  return [
+    model.id,
+    model.name,
+    model.provider,
+    model.weights,
+    model.inputModalities.join(" "),
+    model.outputModalities.join(" "),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalized);
+}
+
 export function ModelsPage() {
   const query = useModelsQuery();
   const models = query.data?.data ?? [];
+  const [search, setSearch] = useState("");
+  const filteredModels = useMemo(
+    () => models.filter((model) => matchesSearch(model, search)),
+    [models, search],
+  );
 
   return (
     <div className="grid gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Available models</h1>
-        <p className="text-sm text-muted-foreground">
-          Aggregated across every provider that has an API key configured.
-        </p>
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Available models</h1>
+          <p className="text-sm text-muted-foreground">
+            Aggregated across every provider that has an API key configured.
+          </p>
+        </div>
+        <div className="w-full lg:w-80">
+          <Input
+            type="search"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search models or providers..."
+          />
+        </div>
       </div>
 
       {query.isLoading ? (
@@ -55,7 +101,7 @@ export function ModelsPage() {
           </p>
         </div>
       ) : (
-        <div className="rounded-md border">
+        <Card className="gap-0 overflow-hidden p-0">
           <Table>
             <TableHeader>
               <TableRow>
@@ -74,49 +120,62 @@ export function ModelsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {models.map((m) => (
-                <TableRow key={m.id}>
-                  <TableCell>
-                    <code className="text-xs font-medium">{m.id}</code>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground capitalize">{m.provider}</TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {m.inputModalities.join(", ")}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-xs">
-                    {m.outputModalities.join(", ")}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {m.contextWindow > 0 ? formatTokens(m.contextWindow) : "-"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {m.maxOutputTokens > 0 ? formatTokens(m.maxOutputTokens) : "-"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {m.inputPricePer1M > 0 ? formatPrice(m.inputPricePer1M) : "-"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {m.outputPricePer1M > 0 ? formatPrice(m.outputPricePer1M) : "-"}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <CapBadge enabled={m.reasoning} />
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <CapBadge enabled={m.toolCall} />
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <CapBadge enabled={m.structuredOutput} />
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={m.weights === "open" ? "default" : "secondary"}>
-                      {m.weights}
-                    </Badge>
+              {filteredModels.length ? (
+                filteredModels.map((m) => (
+                  <TableRow key={m.id}>
+                    <TableCell>
+                      <code className="text-xs font-medium">{m.id}</code>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <ProviderLogo provider={m.provider} />
+                        <span className="capitalize">{m.provider}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {m.inputModalities.join(", ")}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-xs">
+                      {m.outputModalities.join(", ")}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {m.contextWindow > 0 ? formatTokens(m.contextWindow) : "-"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {m.maxOutputTokens > 0 ? formatTokens(m.maxOutputTokens) : "-"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {m.inputPricePer1M > 0 ? formatPrice(m.inputPricePer1M) : "-"}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {m.outputPricePer1M > 0 ? formatPrice(m.outputPricePer1M) : "-"}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <CapBadge enabled={m.reasoning} />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <CapBadge enabled={m.toolCall} />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <CapBadge enabled={m.structuredOutput} />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge variant={m.weights === "open" ? "default" : "secondary"}>
+                        {m.weights}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
+                    No models match your search.
                   </TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
-        </div>
+        </Card>
       )}
     </div>
   );

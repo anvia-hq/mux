@@ -6,6 +6,7 @@ import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -36,14 +37,34 @@ type NavItem = {
   adminOnly?: boolean;
 };
 
-const navItems: NavItem[] = [
-  { to: "/", label: "Overview", icon: DashboardSquare01Icon },
-  { to: "/api-keys", label: "API keys", icon: Key01Icon, adminOnly: true },
-  { to: "/logs", label: "Logs", icon: Scroll01Icon },
-  { to: "/models", label: "Models", icon: BoxesIcon },
-  { to: "/docs", label: "Docs", icon: BookOpen01Icon },
-  { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
-  { to: "/settings", label: "Settings", icon: Settings01Icon },
+type NavGroup = {
+  label?: string;
+  items: NavItem[];
+};
+
+const navGroups: NavGroup[] = [
+  {
+    label: "Dashboard",
+    items: [
+      { to: "/", label: "Overview", icon: DashboardSquare01Icon },
+      { to: "/api-keys", label: "API keys", icon: Key01Icon, adminOnly: true },
+      { to: "/logs", label: "Logs", icon: Scroll01Icon },
+    ],
+  },
+  {
+    label: "Connection",
+    items: [
+      { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
+      { to: "/models", label: "Models", icon: BoxesIcon },
+    ],
+  },
+  {
+    label: "Docs",
+    items: [{ to: "/docs", label: "Documentation", icon: BookOpen01Icon }],
+  },
+  {
+    items: [{ to: "/settings", label: "Settings", icon: Settings01Icon }],
+  },
 ];
 
 export function AppShell() {
@@ -56,7 +77,11 @@ export function AppShell() {
     return null;
   }
 
-  const visibleItems = navItems.filter((item) => !item.adminOnly || user.role === "ADMIN");
+  const isVisible = (item: NavItem) => !item.adminOnly || user.role === "ADMIN";
+  const visibleGroups = navGroups
+    .map((group) => ({ ...group, items: group.items.filter(isVisible) }))
+    .filter((group) => group.items.length > 0);
+  const visibleItems = visibleGroups.flatMap((group) => group.items);
 
   return (
     <SidebarProvider>
@@ -74,22 +99,28 @@ export function AppShell() {
           </Link>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {visibleItems.map((item) => (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton asChild isActive={location.pathname === item.to}>
-                      <Link to={item.to}>
-                        <HugeiconsIcon icon={item.icon} className="size-4" />
-                        <span>{item.label}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {visibleGroups.map((group, index) => (
+            <SidebarGroup
+              key={group.label ?? "settings"}
+              className={index === visibleGroups.length - 1 && !group.label ? "border-t pt-4" : ""}
+            >
+              {group.label ? <SidebarGroupLabel>{group.label}</SidebarGroupLabel> : null}
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {group.items.map((item) => (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarMenuButton asChild isActive={location.pathname === item.to}>
+                        <Link to={item.to}>
+                          <HugeiconsIcon icon={item.icon} className="size-4" />
+                          <span>{item.label}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
         </SidebarContent>
         <SidebarFooter>
           <Card className="flex-row items-center gap-2 p-2">

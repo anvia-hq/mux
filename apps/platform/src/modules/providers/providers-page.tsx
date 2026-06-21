@@ -1,13 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-  AlertCircleIcon,
-  BadgeCheckIcon,
-  Delete01Icon,
-  Key01Icon,
-  Settings01Icon,
-} from "@hugeicons/core-free-icons";
+import { Delete01Icon, Key01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Card, CardDescription, CardTitle } from "@repo/ui/components/card";
@@ -86,6 +80,19 @@ export function ProvidersList() {
   );
 }
 
+function ProviderLogo({ name }: { name: ProviderName }) {
+  return (
+    <div className="flex size-10 shrink-0 items-center justify-center">
+      <img
+        src={`https://models.dev/logos/${name}.svg`}
+        alt={`${PROVIDER_LABELS[name]} logo`}
+        className="size-8 object-contain brightness-0 invert"
+        loading="lazy"
+      />
+    </div>
+  );
+}
+
 function ProviderCard({
   name,
   row,
@@ -116,14 +123,9 @@ function ProviderCard({
 
   return (
     <Card className="gap-0 overflow-hidden p-0">
-      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)_auto] lg:items-center">
+      <div className="grid gap-4 p-4 lg:grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)] lg:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-secondary/50">
-            <HugeiconsIcon
-              icon={configured ? BadgeCheckIcon : AlertCircleIcon}
-              className={configured ? "size-4 text-foreground" : "size-4 text-muted-foreground"}
-            />
-          </div>
+          <ProviderLogo name={name} />
           <div className="min-w-0">
             <CardTitle className="truncate text-sm font-semibold">
               {PROVIDER_LABELS[name]}
@@ -153,7 +155,7 @@ function ProviderCard({
               </span>
             )}
           </div>
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
             <Input
               type="password"
               placeholder={configured ? "Paste replacement key" : "Paste provider API key"}
@@ -168,33 +170,34 @@ function ProviderCard({
             >
               {setKey.isPending ? "Saving..." : configured ? "Replace" : "Save key"}
             </Button>
+            {configured ? (
+              <div className="flex items-center gap-2">
+                <Button asChild size="icon" variant="outline" aria-label="Manage models">
+                  <Link
+                    to="/providers/$name/models"
+                    params={{ name }}
+                    className="flex items-center justify-center"
+                  >
+                    <HugeiconsIcon icon={Settings01Icon} className="size-4 shrink-0" />
+                  </Link>
+                </Button>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  aria-label={`Remove ${PROVIDER_LABELS[name]} key`}
+                  onClick={onRemove}
+                  disabled={deleteKey.isPending || setKey.isPending}
+                >
+                  <HugeiconsIcon icon={Delete01Icon} className="size-4 shrink-0" />
+                </Button>
+              </div>
+            ) : null}
           </div>
           {(setKey.error || deleteKey.error) && (
             <p className="text-xs text-destructive">
               {(setKey.error || deleteKey.error)?.message ?? "Request failed"}
             </p>
           )}
-        </div>
-
-        <div className="flex items-center gap-2 lg:justify-end">
-          {configured ? (
-            <>
-              <Button asChild size="icon-sm" variant="outline" aria-label="Manage models">
-                <Link to="/providers/$name/models" params={{ name }}>
-                  <HugeiconsIcon icon={Settings01Icon} className="size-4" />
-                </Link>
-              </Button>
-              <Button
-                size="icon-sm"
-                variant="outline"
-                aria-label={`Remove ${PROVIDER_LABELS[name]} key`}
-                onClick={onRemove}
-                disabled={deleteKey.isPending || setKey.isPending}
-              >
-                <HugeiconsIcon icon={Delete01Icon} className="size-4" />
-              </Button>
-            </>
-          ) : null}
         </div>
       </div>
     </Card>
