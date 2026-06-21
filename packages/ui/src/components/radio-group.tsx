@@ -1,5 +1,6 @@
 import * as React from "react";
-import { CircleIcon } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { CircleIcon } from "@hugeicons/core-free-icons";
 import { RadioGroup as RadioGroupPrimitive } from "radix-ui";
 
 import { cn } from "@repo/ui/lib/utils";
@@ -34,7 +35,10 @@ function RadioGroupItem({
         data-slot="radio-group-indicator"
         className="relative flex items-center justify-center"
       >
-        <CircleIcon className="absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 fill-primary" />
+        <HugeiconsIcon
+          icon={CircleIcon}
+          className="absolute top-1/2 left-1/2 size-2 -translate-x-1/2 -translate-y-1/2 fill-primary"
+        />
       </RadioGroupPrimitive.Indicator>
     </RadioGroupPrimitive.Item>
   );

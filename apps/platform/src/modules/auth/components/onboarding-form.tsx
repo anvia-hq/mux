@@ -1,5 +1,11 @@
 import { Button } from "@repo/ui/components/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { useState } from "react";
@@ -19,7 +25,8 @@ export function OnboardingForm() {
         <CardHeader>
           <CardTitle>Welcome to Mux Gateway</CardTitle>
           <CardDescription>
-            Create the first administrator account. This screen only appears when the database has no users yet.
+            Create the first administrator account. This screen only appears when the database has
+            no users yet.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -31,7 +38,8 @@ export function OnboardingForm() {
               onboardMutation.mutate(
                 { email, password, name: name.trim() || undefined },
                 {
-                  onError: (err) => setError(err instanceof Error ? err.message : "Onboarding failed."),
+                  onError: (err) =>
+                    setError(err instanceof Error ? err.message : "Onboarding failed."),
                 },
               );
             }}

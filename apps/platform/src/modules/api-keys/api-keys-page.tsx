@@ -26,7 +26,8 @@ import {
   TableHeader,
   TableRow,
 } from "@repo/ui/components/table";
-import { CopyIcon, KeyRoundIcon } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Copy01Icon, Key01Icon } from "@hugeicons/core-free-icons";
 import { useState } from "react";
 import {
   isForbiddenError,
@@ -75,7 +76,7 @@ export function ApiKeysPage() {
         >
           <DialogTrigger asChild>
             <Button>
-              <KeyRoundIcon className="size-4" />
+              <HugeiconsIcon icon={Key01Icon} className="size-4" />
               New API key
             </Button>
           </DialogTrigger>
@@ -96,7 +97,7 @@ export function ApiKeysPage() {
                     variant="outline"
                     onClick={() => navigator.clipboard.writeText(revealed.key)}
                   >
-                    <CopyIcon className="size-4" /> Copy
+                    <HugeiconsIcon icon={Copy01Icon} className="size-4" /> Copy
                   </Button>
                   <Button onClick={() => setRevealed(null)}>Done</Button>
                 </DialogFooter>

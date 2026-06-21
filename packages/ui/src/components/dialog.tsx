@@ -1,5 +1,6 @@
 import * as React from "react";
-import { XIcon } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { Dialog as DialogPrimitive } from "radix-ui";
 
 import { cn } from "@repo/ui/lib/utils";
@@ -62,7 +63,7 @@ function DialogContent({
             data-slot="dialog-close"
             className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
-            <XIcon />
+            <HugeiconsIcon icon={Cancel01Icon} />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}

@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import { Combobox as ComboboxPrimitive } from "@base-ui/react";
-import { CheckIcon, ChevronDownIcon, XIcon } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Tick02Icon, ArrowDown01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 
 import { cn } from "@repo/ui/lib/utils";
 import { Button } from "@repo/ui/components/button";
@@ -27,7 +28,8 @@ function ComboboxTrigger({ className, children, ...props }: ComboboxPrimitive.Tr
       {...props}
     >
       {children}
-      <ChevronDownIcon
+      <HugeiconsIcon
+        icon={ArrowDown01Icon}
         data-slot="combobox-trigger-icon"
         className="pointer-events-none size-4 text-muted-foreground"
       />
@@ -43,7 +45,7 @@ function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
       className={cn(className)}
       {...props}
     >
-      <XIcon className="pointer-events-none" />
+      <HugeiconsIcon icon={Cancel01Icon} className="pointer-events-none" />
     </ComboboxPrimitive.Clear>
   );
 }
@@ -149,7 +151,10 @@ function ComboboxItem({ className, children, ...props }: ComboboxPrimitive.Item.
           <span className="pointer-events-none absolute right-2 flex size-4 items-center justify-center" />
         }
       >
-        <CheckIcon className="pointer-events-none size-4 pointer-coarse:size-5" />
+        <HugeiconsIcon
+          icon={Tick02Icon}
+          className="pointer-events-none size-4 pointer-coarse:size-5"
+        />
       </ComboboxPrimitive.ItemIndicator>
     </ComboboxPrimitive.Item>
   );
@@ -241,7 +246,7 @@ function ComboboxChip({
           className="-ml-1 opacity-50 hover:opacity-100"
           data-slot="combobox-chip-remove"
         >
-          <XIcon className="pointer-events-none" />
+          <HugeiconsIcon icon={Cancel01Icon} className="pointer-events-none" />
         </ComboboxPrimitive.ChipRemove>
       )}
     </ComboboxPrimitive.Chip>

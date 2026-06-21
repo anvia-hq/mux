@@ -16,33 +16,34 @@ import {
 } from "@repo/ui/components/sidebar";
 import { Link, Outlet, useLocation } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
-  KeyRoundIcon,
-  LayoutDashboardIcon,
-  LineChartIcon,
-  ScrollTextIcon,
-  SettingsIcon,
+  BookOpen01Icon,
   BoxesIcon,
-  PlugIcon,
-  BookOpenIcon,
-} from "lucide-react";
+  ChartLineIcon,
+  DashboardSquare01Icon,
+  Key01Icon,
+  Plug01Icon,
+  Scroll01Icon,
+  Settings01Icon,
+} from "@hugeicons/core-free-icons";
 import { meQueryOptions, useLogoutMutation } from "../../auth/hooks/use-auth";
 
 type NavItem = {
   to: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconSvgElement;
   adminOnly?: boolean;
 };
 
 const navItems: NavItem[] = [
-  { to: "/", label: "Overview", icon: LayoutDashboardIcon },
-  { to: "/api-keys", label: "API keys", icon: KeyRoundIcon, adminOnly: true },
-  { to: "/logs", label: "Logs", icon: ScrollTextIcon },
+  { to: "/", label: "Overview", icon: DashboardSquare01Icon },
+  { to: "/api-keys", label: "API keys", icon: Key01Icon, adminOnly: true },
+  { to: "/logs", label: "Logs", icon: Scroll01Icon },
   { to: "/models", label: "Models", icon: BoxesIcon },
-  { to: "/docs", label: "Docs", icon: BookOpenIcon },
-  { to: "/providers", label: "Providers", icon: PlugIcon, adminOnly: true },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
+  { to: "/docs", label: "Docs", icon: BookOpen01Icon },
+  { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
+  { to: "/settings", label: "Settings", icon: Settings01Icon },
 ];
 
 export function AppShell() {
@@ -63,7 +64,7 @@ export function AppShell() {
         <SidebarHeader>
           <div className="flex items-center gap-2 px-2 py-1.5">
             <div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-              <LineChartIcon className="size-4" />
+              <HugeiconsIcon icon={ChartLineIcon} className="size-4" />
             </div>
             <span className="truncate font-semibold">Mux Gateway</span>
           </div>
@@ -76,7 +77,7 @@ export function AppShell() {
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton asChild isActive={location.pathname === item.to}>
                       <Link to={item.to}>
-                        <item.icon className="size-4" />
+                        <HugeiconsIcon icon={item.icon} className="size-4" />
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>

@@ -19,7 +19,15 @@ function Code({ children, lang }: { children: string; lang?: string }) {
   );
 }
 
-function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <section id={id} className="grid gap-3 scroll-mt-8">
       <h2 className="text-lg font-semibold">{title}</h2>
@@ -58,23 +66,21 @@ export function DocsPage() {
       <div className="grid gap-10">
         <Section id="overview" title="Overview">
           <p>
-            Mux Gateway is a self-hosted, unified API for LLM providers. It
-            exposes an <strong>OpenAI-compatible</strong> endpoint so any
-            OpenAI SDK client works out of the box. Under the hood it routes
-            requests to OpenAI, Anthropic, Google Gemini, and Mistral,
+            Mux Gateway is a self-hosted, unified API for LLM providers. It exposes an{" "}
+            <strong>OpenAI-compatible</strong> endpoint so any OpenAI SDK client works out of the
+            box. Under the hood it routes requests to OpenAI, Anthropic, Google Gemini, and Mistral,
             normalizing all responses back to the OpenAI format.
           </p>
           <p>
-            Every request is <strong>logged</strong> with latency, token usage,
-            and estimated cost — no need for separate monitoring.
+            Every request is <strong>logged</strong> with latency, token usage, and estimated cost —
+            no need for separate monitoring.
           </p>
         </Section>
 
         <Section id="setup" title="Setup">
           <p>
-            The gateway runs at <code>http://localhost</code> when deployed
-            via Docker Compose. Configure the OpenAI SDK with the gateway base
-            URL and your API key:
+            The gateway runs at <code>http://localhost</code> when deployed via Docker Compose.
+            Configure the OpenAI SDK with the gateway base URL and your API key:
           </p>
           <Code lang="python">{`from openai import OpenAI
 
@@ -96,37 +102,34 @@ const client = new OpenAI({
             <Link to="/api-keys" className="underline underline-offset-4">
               API keys
             </Link>{" "}
-            page (admin only). Keys are <strong>hashed at rest</strong> and
-            cached in Redis. Revoking a key takes effect immediately.
+            page (admin only). Keys are <strong>hashed at rest</strong> and cached in Redis.
+            Revoking a key takes effect immediately.
           </p>
           <p className="mt-2">
-            Pass the key when initializing the client (shown above), or
-            set the <code>MUX_API_KEY</code> environment variable:
+            Pass the key when initializing the client (shown above), or set the{" "}
+            <code>MUX_API_KEY</code> environment variable:
           </p>
           <Code lang="bash">export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx</Code>
         </Section>
 
         <Section id="list-models" title="List Models">
-          <p>
-            Retrieve all available (enabled) models across every configured
-            provider:
-          </p>
+          <p>Retrieve all available (enabled) models across every configured provider:</p>
           <Code lang="python">{`models = client.models.list()
 for model in models.data:
     print(model.id)  # e.g. "gpt-5.5", "claude-opus-4-8"`}</Code>
           <Code lang="js">{`const models = await client.models.list();
 models.data.forEach(m => console.log(m.id));`}</Code>
           <p className="mt-2">
-            Every model in the response has an <code>id</code> and{" "}
-            <code>owned_by</code> field matching the OpenAI format.
+            Every model in the response has an <code>id</code> and <code>owned_by</code> field
+            matching the OpenAI format.
           </p>
         </Section>
 
         <Section id="chat-completions" title="Chat Completions">
           <p>
-            Send a chat request using any model id from the models list.
-            The response follows the OpenAI format regardless of which
-            provider (OpenAI, Anthropic, Google, Mistral) handles it:
+            Send a chat request using any model id from the models list. The response follows the
+            OpenAI format regardless of which provider (OpenAI, Anthropic, Google, Mistral) handles
+            it:
           </p>
           <Code lang="python">{`response = client.chat.completions.create(
     model="gpt-5.5",
@@ -151,17 +154,15 @@ print(response.choices[0].message.content)`}</Code>
 
 console.log(response.choices[0].message.content);`}</Code>
           <p className="mt-2">
-            Response object includes <code>usage</code> (prompt_tokens,
-            completion_tokens, total_tokens) and a standard{" "}
-            <code>choices</code> array.
+            Response object includes <code>usage</code> (prompt_tokens, completion_tokens,
+            total_tokens) and a standard <code>choices</code> array.
           </p>
         </Section>
 
         <Section id="streaming" title="Streaming">
           <p>
-            Set <code>stream: True</code> (Python) or{" "}
-            <code>stream: true</code> (JS) to receive tokens as they are
-            generated:
+            Set <code>stream: True</code> (Python) or <code>stream: true</code> (JS) to receive
+            tokens as they are generated:
           </p>
           <Code lang="python">{`stream = client.chat.completions.create(
     model="claude-sonnet-4-6",
@@ -184,26 +185,21 @@ for await (const chunk of stream) {
         </Section>
 
         <Section id="errors" title="Errors">
-          <p>
-            The gateway returns standard HTTP status codes:
-          </p>
+          <p>The gateway returns standard HTTP status codes:</p>
           <div className="mt-2 grid gap-2">
             <div>
-              <span className="font-mono font-medium">401</span> — Missing or
-              invalid API key.
+              <span className="font-mono font-medium">401</span> — Missing or invalid API key.
             </div>
             <div>
-              <span className="font-mono font-medium">403</span> — The API key
-              is valid but has been revoked or disabled.
+              <span className="font-mono font-medium">403</span> — The API key is valid but has been
+              revoked or disabled.
             </div>
             <div>
-              <span className="font-mono font-medium">500</span> — Internal
-              error. Check the gateway logs or contact your administrator.
+              <span className="font-mono font-medium">500</span> — Internal error. Check the gateway
+              logs or contact your administrator.
             </div>
           </div>
-          <p className="mt-2">
-            The OpenAI SDK surfaces these as typed exceptions:
-          </p>
+          <p className="mt-2">The OpenAI SDK surfaces these as typed exceptions:</p>
           <Code lang="python">{`from openai import AuthenticationError
 
 try:

@@ -1,4 +1,10 @@
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
 import { meQueryOptions } from "../../auth/hooks/use-auth";
 import { apiFetch } from "../../../lib/api-client";
@@ -76,7 +82,8 @@ export function OverviewPage() {
                   <li key={row.provider} className="flex items-center justify-between">
                     <span className="font-medium">{row.provider}</span>
                     <span className="text-muted-foreground tabular-nums">
-                      {row.requests} req · {row.tokens.toLocaleString()} tok · ${row.cost.toFixed(4)}
+                      {row.requests} req · {row.tokens.toLocaleString()} tok · $
+                      {row.cost.toFixed(4)}
                     </span>
                   </li>
                 ))}

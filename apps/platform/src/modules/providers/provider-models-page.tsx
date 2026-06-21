@@ -34,8 +34,8 @@ export function ProviderModelsPage({ provider }: { provider: ProviderName }) {
           <p className="text-sm text-muted-foreground">
             <Link to="/providers" className="underline underline-offset-4 hover:text-foreground">
               Providers
-            </Link>
-            {" "}&rarr; Manage models. Disabled models won't appear on the models page.
+            </Link>{" "}
+            &rarr; Manage models. Disabled models won't appear on the models page.
           </p>
         </div>
         <div className="flex gap-2">

@@ -24,12 +24,7 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { useState } from "react";
-import {
-  useLogsQuery,
-  useLogsStatsQuery,
-  type LogsStats,
-  type RequestLog,
-} from "./hooks";
+import { useLogsQuery, useLogsStatsQuery, type LogsStats, type RequestLog } from "./hooks";
 
 const PAGE_SIZE = 25;
 

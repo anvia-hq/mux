@@ -49,10 +49,9 @@ export function ModelsPage() {
         <div className="flex flex-col items-center justify-center rounded-md border py-12">
           <p className="text-sm font-medium">No providers configured</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Set <code>OPENAI_API_KEY</code>,{" "}
-            <code>ANTHROPIC_API_KEY</code>, <code>GOOGLE_API_KEY</code>, or{" "}
-            <code>MISTRAL_API_KEY</code> in the gateway environment to enable
-            models.
+            Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>,{" "}
+            <code>GOOGLE_API_KEY</code>, or <code>MISTRAL_API_KEY</code> in the gateway environment
+            to enable models.
           </p>
         </div>
       ) : (
@@ -80,9 +79,7 @@ export function ModelsPage() {
                   <TableCell>
                     <code className="text-xs font-medium">{m.id}</code>
                   </TableCell>
-                  <TableCell className="text-muted-foreground capitalize">
-                    {m.provider}
-                  </TableCell>
+                  <TableCell className="text-muted-foreground capitalize">{m.provider}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {m.inputModalities.join(", ")}
                   </TableCell>
@@ -93,19 +90,13 @@ export function ModelsPage() {
                     {m.contextWindow > 0 ? formatTokens(m.contextWindow) : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {m.maxOutputTokens > 0
-                      ? formatTokens(m.maxOutputTokens)
-                      : "-"}
+                    {m.maxOutputTokens > 0 ? formatTokens(m.maxOutputTokens) : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {m.inputPricePer1M > 0
-                      ? formatPrice(m.inputPricePer1M)
-                      : "-"}
+                    {m.inputPricePer1M > 0 ? formatPrice(m.inputPricePer1M) : "-"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {m.outputPricePer1M > 0
-                      ? formatPrice(m.outputPricePer1M)
-                      : "-"}
+                    {m.outputPricePer1M > 0 ? formatPrice(m.outputPricePer1M) : "-"}
                   </TableCell>
                   <TableCell className="text-center">
                     <CapBadge enabled={m.reasoning} />

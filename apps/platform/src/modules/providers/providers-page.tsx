@@ -2,7 +2,13 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import {
   PROVIDER_LABELS,
@@ -22,7 +28,8 @@ export function ProvidersList() {
       <div>
         <h1 className="text-2xl font-semibold">Providers</h1>
         <p className="text-sm text-muted-foreground">
-          Set the LLM provider API keys the gateway should use. Keys are encrypted at rest and applied immediately, no restart required.
+          Set the LLM provider API keys the gateway should use. Keys are encrypted at rest and
+          applied immediately, no restart required.
         </p>
       </div>
 
@@ -95,16 +102,15 @@ function ProviderCard({
           disabled={disabled || setKey.isPending}
         />
         <div className="flex gap-2">
-          <Button size="sm" onClick={onSave} disabled={!value || value.length < 8 || setKey.isPending}>
+          <Button
+            size="sm"
+            onClick={onSave}
+            disabled={!value || value.length < 8 || setKey.isPending}
+          >
             {setKey.isPending ? "Saving..." : configured ? "Replace key" : "Save key"}
           </Button>
           {configured ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onRemove}
-              disabled={deleteKey.isPending}
-            >
+            <Button size="sm" variant="outline" onClick={onRemove} disabled={deleteKey.isPending}>
               {deleteKey.isPending ? "Removing..." : "Remove"}
             </Button>
           ) : null}
