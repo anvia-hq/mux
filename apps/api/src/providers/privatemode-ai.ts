@@ -1,0 +1,86 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "qwen3-embedding-4b",
+    name: "Qwen3-Embedding 4B",
+    provider: "privatemode-ai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32000,
+    maxOutputTokens: 2560,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "gemma-3-27b",
+    name: "Gemma 3 27B",
+    provider: "privatemode-ai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 128000,
+    maxOutputTokens: 8192,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "gpt-oss-120b",
+    name: "gpt-oss-120b",
+    provider: "privatemode-ai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 128000,
+    maxOutputTokens: 128000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "whisper-large-v3",
+    name: "Whisper large-v3",
+    provider: "privatemode-ai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 4096,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "qwen3-coder-30b-a3b",
+    name: "Qwen3-Coder 30B-A3B",
+    provider: "privatemode-ai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 128000,
+    maxOutputTokens: 32768,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+];
+
+export class PrivatemodeAiAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({ name: "privatemode-ai", apiKey, models: MODELS, apiBase: "http://localhost:8080/v1" });
+  }
+}

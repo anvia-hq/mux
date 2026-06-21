@@ -61,9 +61,11 @@ modelsDashboardRouter.get("/", async (c) => {
   try {
     const models = listAllModels();
     const disabled = new Set(
-      (await prisma.disabledModel.findMany({ select: { modelId: true } })).map((r) => r.modelId),
+      (await prisma.disabledModel.findMany({ select: { modelId: true, provider: true } })).map(
+        (r) => `${r.provider}:${r.modelId}`,
+      ),
     );
-    return c.json({ data: models.filter((m) => !disabled.has(m.id)) });
+    return c.json({ data: models.filter((m) => !disabled.has(`${m.provider}:${m.id}`)) });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
     return c.json({ error: errorMessage }, 500);

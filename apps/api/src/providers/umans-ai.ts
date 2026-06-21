@@ -1,0 +1,86 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "umans-kimi-k2.7",
+    name: "Kimi K2.7 Code",
+    provider: "umans-ai",
+    inputPricePer1M: 0.95,
+    outputPricePer1M: 4,
+    contextWindow: 262144,
+    maxOutputTokens: 32768,
+    inputModalities: ["text", "image", "video"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "umans-glm-5.1",
+    name: "GLM 5.1",
+    provider: "umans-ai",
+    inputPricePer1M: 1.4,
+    outputPricePer1M: 4.4,
+    contextWindow: 204800,
+    maxOutputTokens: 131072,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "umans-coder",
+    name: "Umans Coder",
+    provider: "umans-ai",
+    inputPricePer1M: 0.95,
+    outputPricePer1M: 4,
+    contextWindow: 262144,
+    maxOutputTokens: 32768,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "umans-flash",
+    name: "Umans Flash",
+    provider: "umans-ai",
+    inputPricePer1M: 0.15,
+    outputPricePer1M: 1,
+    contextWindow: 262144,
+    maxOutputTokens: 32768,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "umans-glm-5.2",
+    name: "GLM 5.2",
+    provider: "umans-ai",
+    inputPricePer1M: 1.4,
+    outputPricePer1M: 4.4,
+    contextWindow: 405504,
+    maxOutputTokens: 131072,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+];
+
+export class UmansAiAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({ name: "umans-ai", apiKey, models: MODELS, apiBase: "https://api.code.umans.ai/v1" });
+  }
+}

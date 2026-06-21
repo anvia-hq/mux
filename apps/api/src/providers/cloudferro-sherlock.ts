@@ -1,0 +1,91 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "meta-llama/Llama-3.3-70B-Instruct",
+    name: "Llama 3.3 70B Instruct",
+    provider: "cloudferro-sherlock",
+    inputPricePer1M: 2.92,
+    outputPricePer1M: 2.92,
+    contextWindow: 70000,
+    maxOutputTokens: 70000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    name: "OpenAI GPT OSS 120B",
+    provider: "cloudferro-sherlock",
+    inputPricePer1M: 2.92,
+    outputPricePer1M: 2.92,
+    contextWindow: 131000,
+    maxOutputTokens: 131000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "speakleash/Bielik-11B-v3.0-Instruct",
+    name: "Bielik 11B v3.0 Instruct",
+    provider: "cloudferro-sherlock",
+    inputPricePer1M: 0.67,
+    outputPricePer1M: 0.67,
+    contextWindow: 32000,
+    maxOutputTokens: 32000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "speakleash/Bielik-11B-v2.6-Instruct",
+    name: "Bielik 11B v2.6 Instruct",
+    provider: "cloudferro-sherlock",
+    inputPricePer1M: 0.67,
+    outputPricePer1M: 0.67,
+    contextWindow: 32000,
+    maxOutputTokens: 32000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "MiniMaxAI/MiniMax-M2.5",
+    name: "MiniMax-M2.5",
+    provider: "cloudferro-sherlock",
+    inputPricePer1M: 0.3,
+    outputPricePer1M: 1.2,
+    contextWindow: 196000,
+    maxOutputTokens: 16000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+];
+
+export class CloudferroSherlockAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({
+      name: "cloudferro-sherlock",
+      apiKey,
+      models: MODELS,
+      apiBase: "https://api-sherlock.cloudferro.com/openai/v1/",
+    });
+  }
+}

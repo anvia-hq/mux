@@ -95,9 +95,7 @@ export function ModelsPage() {
         <div className="flex flex-col items-center justify-center rounded-md border py-12">
           <p className="text-sm font-medium">No providers configured</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Set <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>,{" "}
-            <code>GOOGLE_API_KEY</code>, or <code>MISTRAL_API_KEY</code> in the gateway environment
-            to enable models.
+            Save a provider key from the Providers page to enable models.
           </p>
         </div>
       ) : (
@@ -122,7 +120,7 @@ export function ModelsPage() {
             <TableBody>
               {filteredModels.length ? (
                 filteredModels.map((m) => (
-                  <TableRow key={m.id}>
+                  <TableRow key={`${m.provider}:${m.id}`}>
                     <TableCell>
                       <code className="text-xs font-medium">{m.id}</code>
                     </TableCell>

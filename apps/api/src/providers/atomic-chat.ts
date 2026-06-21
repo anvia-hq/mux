@@ -1,0 +1,86 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "gemma-4-E4B-it-IQ4_XS",
+    name: "Gemma 4 E4B Instruct (IQ4_XS)",
+    provider: "atomic-chat",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 8192,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "Meta-Llama-3_1-8B-Instruct-GGUF",
+    name: "Meta Llama 3.1 8B Instruct (GGUF)",
+    provider: "atomic-chat",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 131072,
+    maxOutputTokens: 4096,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "Qwen3_5-9B-MLX-4bit",
+    name: "Qwen 3.5 9B (MLX 4-bit)",
+    provider: "atomic-chat",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 8192,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "gemma-4-E4B-it-MLX-4bit",
+    name: "Gemma 4 E4B Instruct (MLX 4-bit)",
+    provider: "atomic-chat",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 8192,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "Qwen3_5-9B-Q4_K_M",
+    name: "Qwen 3.5 9B (Q4_K_M)",
+    provider: "atomic-chat",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 8192,
+    inputModalities: ["text", "image"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+];
+
+export class AtomicChatAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({ name: "atomic-chat", apiKey, models: MODELS, apiBase: "http://127.0.0.1:1337/v1" });
+  }
+}

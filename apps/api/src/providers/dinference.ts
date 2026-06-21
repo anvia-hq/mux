@@ -1,0 +1,86 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "minimax-m2.5",
+    name: "MiniMax-M2.5",
+    provider: "dinference",
+    inputPricePer1M: 0.22,
+    outputPricePer1M: 0.88,
+    contextWindow: 200000,
+    maxOutputTokens: 32000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "glm-4.7",
+    name: "GLM-4.7",
+    provider: "dinference",
+    inputPricePer1M: 0.45,
+    outputPricePer1M: 1.65,
+    contextWindow: 200000,
+    maxOutputTokens: 128000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "glm-5.1",
+    name: "GLM-5.1",
+    provider: "dinference",
+    inputPricePer1M: 1.25,
+    outputPricePer1M: 3.89,
+    contextWindow: 200000,
+    maxOutputTokens: 128000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: true,
+    weights: "open",
+  },
+  {
+    id: "gpt-oss-120b",
+    name: "GPT OSS 120B",
+    provider: "dinference",
+    inputPricePer1M: 0.0675,
+    outputPricePer1M: 0.27,
+    contextWindow: 131072,
+    maxOutputTokens: 32768,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "glm-5",
+    name: "GLM-5",
+    provider: "dinference",
+    inputPricePer1M: 0.75,
+    outputPricePer1M: 2.4,
+    contextWindow: 200000,
+    maxOutputTokens: 128000,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+];
+
+export class DinferenceAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({ name: "dinference", apiKey, models: MODELS, apiBase: "https://api.dinference.com/v1" });
+  }
+}

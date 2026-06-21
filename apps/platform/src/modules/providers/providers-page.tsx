@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Delete01Icon, Key01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { Delete01Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Card, CardDescription, CardTitle } from "@repo/ui/components/card";
@@ -18,44 +18,15 @@ import {
 export function ProvidersList() {
   const query = useProvidersQuery();
   const configured = new Map((query.data?.providers ?? []).map((p) => [p.provider, p]));
-  const configuredCount = configured.size;
-  const totalProviders = PROVIDER_NAMES.length;
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">Providers</h1>
-          <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-            Set the LLM provider keys the gateway can use. Keys are encrypted at rest and applied as
-            soon as they are saved.
-          </p>
-        </div>
-        <Card className="gap-3 p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <div className="text-2xl font-semibold tabular-nums">
-                {configuredCount}/{totalProviders}
-              </div>
-              <div className="text-xs text-muted-foreground">providers configured</div>
-            </div>
-            <div className="flex size-10 items-center justify-center rounded-md border bg-secondary/60 text-sidebar-accent-foreground">
-              <HugeiconsIcon icon={Key01Icon} className="size-5" />
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-1">
-            {PROVIDER_NAMES.map((name) => (
-              <div
-                key={name}
-                className={
-                  configured.has(name)
-                    ? "h-1.5 rounded-sm bg-primary"
-                    : "h-1.5 rounded-sm bg-secondary"
-                }
-              />
-            ))}
-          </div>
-        </Card>
+      <div className="min-w-0">
+        <h1 className="text-2xl font-semibold">Providers</h1>
+        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+          Set the LLM provider keys the gateway can use. Keys are encrypted at rest and applied as
+          soon as they are saved.
+        </p>
       </div>
 
       {query.isLoading ? (

@@ -1,0 +1,86 @@
+import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
+import type { Model } from "./types";
+
+const MODELS: Model[] = [
+  {
+    id: "qwen/qwen3.5-27b",
+    name: "Qwen3.5 27B",
+    provider: "mixlayer",
+    inputPricePer1M: 0.3,
+    outputPricePer1M: 2.4,
+    contextWindow: 262144,
+    maxOutputTokens: 262144,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "qwen/qwen3.5-35b-a3b",
+    name: "Qwen3.5 35B A3B",
+    provider: "mixlayer",
+    inputPricePer1M: 0.25,
+    outputPricePer1M: 1.3,
+    contextWindow: 262144,
+    maxOutputTokens: 262144,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "qwen/qwen3.5-9b",
+    name: "Qwen3.5 9B",
+    provider: "mixlayer",
+    inputPricePer1M: 0.1,
+    outputPricePer1M: 0.4,
+    contextWindow: 262144,
+    maxOutputTokens: 262144,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "qwen/qwen3.5-397b-a17b",
+    name: "Qwen3.5 397B A17B",
+    provider: "mixlayer",
+    inputPricePer1M: 0.6,
+    outputPricePer1M: 3.6,
+    contextWindow: 262144,
+    maxOutputTokens: 262144,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+  {
+    id: "qwen/qwen3.5-122b-a10b",
+    name: "Qwen3.5 122B A10B",
+    provider: "mixlayer",
+    inputPricePer1M: 0.4,
+    outputPricePer1M: 3.2,
+    contextWindow: 262144,
+    maxOutputTokens: 262144,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: true,
+    toolCall: true,
+    structuredOutput: false,
+    weights: "open",
+  },
+];
+
+export class MixlayerAdapter extends ModelsDevProviderAdapter {
+  constructor(apiKey: string) {
+    super({ name: "mixlayer", apiKey, models: MODELS, apiBase: "https://models.mixlayer.ai/v1" });
+  }
+}
