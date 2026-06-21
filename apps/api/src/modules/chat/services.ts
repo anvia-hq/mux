@@ -9,7 +9,8 @@ import {
   resolveChatModel,
   type ResolvedProviderModel,
 } from "../../providers/registry";
-import { logRequest } from "../../middleware/logger";
+import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
+import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
 /**
  * Result of a chat completion call.
@@ -76,8 +77,8 @@ export async function handleChatCompletion(
     const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, startTime);
 
     // For streaming, hand off the async iterable to the router. The router
-    // owns writing chunks to the wire and will call logRequest() once the
-    // stream finishes (or fails) so usage can be recorded.
+    // owns the stream audit lifecycle because usage is only known after chunks
+    // have been written to the client.
     return {
       kind: "stream",
       stream: prefixStreamModel(selected.stream, resolved.requestedModelId),
@@ -120,11 +121,26 @@ async function handleNonStreamingCompletion(
       );
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
+        await logRequest({
+          apiKeyId,
+          provider: target.provider.name,
+          model: target.publicModelId,
+          endpoint: "/v1/chat/completions",
+          latencyMs,
+          promptTokens: response.usage?.prompt_tokens,
+          completionTokens: response.usage?.completion_tokens,
+          totalTokens: response.usage?.total_tokens,
+          statusCode: 429,
+          errorMessage: "Billable usage could not be determined",
+        });
         throw new ApiKeyUnbillableUsageError();
       }
 
-      // Buffer log entry; flushed asynchronously by the logger middleware.
-      logRequest({
+      if (options.requireBillableUsage && estimatedCost !== undefined) {
+        await addApiKeySpendUsd(apiKeyId, estimatedCost);
+      }
+
+      await logRequest({
         apiKeyId,
         provider: target.provider.name,
         model: target.publicModelId,
@@ -139,12 +155,24 @@ async function handleNonStreamingCompletion(
 
       return { kind: "complete", response: { ...response, model: responseModelId } };
     } catch (error) {
+      if (error instanceof RequestLoggingUnavailableError) {
+        throw error;
+      }
+
+      if (error instanceof ApiKeySpendLedgerUnavailableError) {
+        throw error;
+      }
+
+      if (error instanceof ApiKeyUnbillableUsageError) {
+        throw error;
+      }
+
       lastError = error;
       const latencyMs = Date.now() - options.startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       // Log the failed concrete attempt before trying the next fallback target.
-      logRequest({
+      await logRequest({
         apiKeyId,
         provider: target.provider.name,
         model: target.publicModelId,
@@ -176,7 +204,7 @@ async function resolveStreamingTarget(
       const latencyMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
-      logRequest({
+      await logRequest({
         apiKeyId,
         provider: target.provider.name,
         model: target.publicModelId,

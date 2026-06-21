@@ -70,6 +70,22 @@ services:
     networks:
       - internal
 
+  worker:
+    <<: *app
+    container_name: mux-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/mux_gateway?schema=public}"
+      REDIS_URL: "${DOCKER_REDIS_URL:-redis://redis:6379}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: sh -c "pnpm --filter @repo/api db:push && pnpm --filter @repo/worker start"
+    networks:
+      - internal
+
   platform:
     <<: *app
     container_name: mux-platform

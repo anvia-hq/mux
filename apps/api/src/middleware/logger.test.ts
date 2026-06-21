@@ -1,43 +1,64 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { mockPrisma, mockEstimateCost } = vi.hoisted(() => ({
-  mockPrisma: {
-    requestLog: { createMany: vi.fn() },
-  },
-  mockEstimateCost: vi.fn().mockReturnValue(0.01),
+const { mockEnqueueRequestLog } = vi.hoisted(() => ({
+  mockEnqueueRequestLog: vi.fn(),
 }));
 
-vi.mock("../utils/prisma", () => ({ prisma: mockPrisma }));
-vi.mock("../providers/registry", () => ({ estimateCost: mockEstimateCost }));
+vi.mock("@repo/worker", () => ({
+  enqueueRequestLog: mockEnqueueRequestLog,
+}));
 
-import { flushLogBuffer, logRequest, stopLogFlushTimer } from "./logger";
+import {
+  logRequest,
+  logStreamFinal,
+  logStreamStart,
+  RequestLoggingUnavailableError,
+} from "./logger";
 
 describe("logger", () => {
   afterEach(() => {
-    vi.restoreAllMocks();
-    stopLogFlushTimer();
+    vi.clearAllMocks();
   });
 
-  it("flushLogBuffer drains buffer", async () => {
-    mockPrisma.requestLog.createMany.mockResolvedValueOnce({ count: 1 });
-    logRequest({
-      apiKeyId: "key-1", provider: "openai", model: "gpt-4",
-      endpoint: "/v1/chat/completions", latencyMs: 100, statusCode: 200,
-    });
-    await flushLogBuffer();
-    expect(mockPrisma.requestLog.createMany).toHaveBeenCalled();
+  const baseEntry = {
+    apiKeyId: "key-1",
+    provider: "openai",
+    model: "gpt-4",
+    endpoint: "/v1/chat/completions",
+    latencyMs: 100,
+    statusCode: 200,
+  };
+
+  it("enqueues final request logs", async () => {
+    mockEnqueueRequestLog.mockResolvedValueOnce(undefined);
+
+    const logId = await logRequest(baseEntry);
+
+    expect(logId).toEqual(expect.any(String));
+    expect(mockEnqueueRequestLog).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "final", logId, statusCode: 200 }),
+    );
   });
 
-  it("re-adds entries on DB write failure", async () => {
-    mockPrisma.requestLog.createMany.mockRejectedValueOnce(new Error("DB down"));
-    logRequest({
-      apiKeyId: "key-1", provider: "openai", model: "gpt-4",
-      endpoint: "/v1/chat/completions", latencyMs: 100, statusCode: 200,
-    });
-    await flushLogBuffer();
+  it("enqueues stream start and finalize jobs with the same log id", async () => {
+    mockEnqueueRequestLog.mockResolvedValue(undefined);
 
-    mockPrisma.requestLog.createMany.mockResolvedValueOnce({ count: 1 });
-    await flushLogBuffer();
-    expect(mockPrisma.requestLog.createMany).toHaveBeenCalled();
+    const logId = await logStreamStart(baseEntry);
+    await logStreamFinal({ ...baseEntry, logId, latencyMs: 250 });
+
+    expect(mockEnqueueRequestLog).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ kind: "stream-start", logId, statusCode: 102 }),
+    );
+    expect(mockEnqueueRequestLog).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ kind: "stream-finalize", logId, latencyMs: 250 }),
+    );
+  });
+
+  it("throws a typed error when enqueue fails", async () => {
+    mockEnqueueRequestLog.mockRejectedValueOnce(new Error("redis down"));
+
+    await expect(logRequest(baseEntry)).rejects.toBeInstanceOf(RequestLoggingUnavailableError);
   });
 });

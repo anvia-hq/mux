@@ -1,12 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockAssertApiKeyCanSpend, mockFlushLogBuffer, mockHandleChatCompletion, mockSpendLimit } =
-  vi.hoisted(() => ({
-    mockAssertApiKeyCanSpend: vi.fn(),
-    mockFlushLogBuffer: vi.fn().mockResolvedValue(undefined),
-    mockHandleChatCompletion: vi.fn(),
-    mockSpendLimit: { value: null as number | null },
-  }));
+const {
+  mockAssertApiKeyCanSpend,
+  mockEstimateCost,
+  mockHandleChatCompletion,
+  mockLogStreamFinal,
+  mockLogStreamStart,
+  mockSpendLimit,
+} = vi.hoisted(() => ({
+  mockAssertApiKeyCanSpend: vi.fn(),
+  mockEstimateCost: vi.fn(),
+  mockHandleChatCompletion: vi.fn(),
+  mockLogStreamFinal: vi.fn(),
+  mockLogStreamStart: vi.fn(),
+  mockSpendLimit: { value: null as number | null },
+}));
 
 vi.mock("./services", () => {
   class ApiKeyUnbillableUsageError extends Error {
@@ -31,10 +39,21 @@ vi.mock("../../middleware/api-key", () => ({
       },
     ),
 }));
-vi.mock("../../middleware/logger", () => ({
-  flushLogBuffer: mockFlushLogBuffer,
-  logRequest: vi.fn(),
-}));
+vi.mock("../../middleware/logger", () => {
+  class RequestLoggingUnavailableError extends Error {
+    constructor() {
+      super("request logging unavailable");
+      this.name = "RequestLoggingUnavailableError";
+    }
+  }
+
+  return {
+    RequestLoggingUnavailableError,
+    logStreamFinal: mockLogStreamFinal,
+    logStreamStart: mockLogStreamStart,
+  };
+});
+vi.mock("../../providers/registry", () => ({ estimateCost: mockEstimateCost }));
 vi.mock("../keys/services", () => {
   class ApiKeySpendLimitExceededError extends Error {
     constructor() {
@@ -42,8 +61,15 @@ vi.mock("../keys/services", () => {
       this.name = "ApiKeySpendLimitExceededError";
     }
   }
+  class ApiKeySpendLedgerUnavailableError extends Error {
+    constructor() {
+      super("API key spend ledger unavailable");
+      this.name = "ApiKeySpendLedgerUnavailableError";
+    }
+  }
 
   return {
+    ApiKeySpendLedgerUnavailableError,
     ApiKeySpendLimitExceededError,
     assertApiKeyCanSpend: mockAssertApiKeyCanSpend,
   };
@@ -52,12 +78,19 @@ vi.mock("../keys/services", () => {
 import { Hono } from "hono";
 import { chatRouter } from "./router";
 import { ApiKeyUnbillableUsageError } from "./services";
-import { ApiKeySpendLimitExceededError } from "../keys/services";
+import { RequestLoggingUnavailableError } from "../../middleware/logger";
+import { ApiKeySpendLedgerUnavailableError, ApiKeySpendLimitExceededError } from "../keys/services";
 
 describe("chat router", () => {
+  beforeEach(() => {
+    mockSpendLimit.value = null;
+    mockLogStreamStart.mockResolvedValue("log-1");
+    mockLogStreamFinal.mockResolvedValue(undefined);
+    mockEstimateCost.mockReturnValue(0.01);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
-    mockSpendLimit.value = null;
   });
 
   it("POST /completions 400 invalid json", async () => {
@@ -139,7 +172,6 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(200);
-    expect(mockFlushLogBuffer).toHaveBeenCalled();
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
     expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
       requireBillableUsage: true,
@@ -185,6 +217,79 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(429);
+  });
+
+  it("POST /completions pre-enqueues and finalizes streaming logs", async () => {
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      };
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      startTime: Date.now(),
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(mockLogStreamStart).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai", model: "gpt-4", statusCode: 102 }),
+    );
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logId: "log-1",
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+        estimatedCost: 0.01,
+        statusCode: 200,
+      }),
+    );
+  });
+
+  it("POST /completions 503 when request logging is unavailable", async () => {
+    mockHandleChatCompletion.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(503);
+  });
+
+  it("POST /completions 503 when spend ledger is unavailable", async () => {
+    mockSpendLimit.value = 10;
+    mockAssertApiKeyCanSpend.mockRejectedValueOnce(
+      new ApiKeySpendLedgerUnavailableError(new Error()),
+    );
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(503);
+    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
   });
 
   it("POST /completions 500 generic error", async () => {

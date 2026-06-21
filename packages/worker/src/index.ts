@@ -1,44 +1,39 @@
 import "./env";
-import { Queue, QueueEvents, Worker } from "bullmq";
-import IORedis from "ioredis";
 
-export const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
-
-export const connection = new IORedis(redisUrl, {
-  maxRetriesPerRequest: null,
-});
-
-export type ExampleJob = {
-  message: string;
-};
-
-export const exampleQueue = new Queue<ExampleJob>("example", {
-  connection,
-});
-
-export const exampleQueueEvents = new QueueEvents("example", {
-  connection,
-});
-
-export function startExampleWorker() {
-  return new Worker<ExampleJob>(
-    "example",
-    async (job) => {
-      console.log(`Processing job ${job.id}: ${job.data.message}`);
-      return { processedAt: new Date().toISOString() };
-    },
-    { connection },
-  );
-}
+export {
+  closeRequestLogQueue,
+  enqueueRequestLog,
+  REQUEST_LOG_QUEUE_NAME,
+  requestLogQueue,
+  type RequestLogJob,
+  type RequestLogPayload,
+} from "./request-log-queue";
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const worker = startExampleWorker();
+  const [{ startRequestLogWorker }, { closeRequestLogQueue }] = await Promise.all([
+    import("./request-log-worker"),
+    import("./request-log-queue"),
+  ]);
+  const worker = await startRequestLogWorker();
 
   worker.on("completed", (job) => {
-    console.log(`Job ${job.id} completed`);
+    console.log(`Request log job ${job.id} completed`);
   });
 
   worker.on("failed", (job, error) => {
-    console.error(`Job ${job?.id} failed`, error);
+    console.error(`Request log job ${job?.id} failed`, error);
+  });
+
+  const shutdown = async () => {
+    await worker.close();
+    await closeRequestLogQueue();
+  };
+
+  process.on("SIGTERM", () => {
+    void shutdown();
+  });
+
+  process.on("SIGINT", () => {
+    void shutdown();
   });
 }

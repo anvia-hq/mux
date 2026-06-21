@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "../../utils/prisma";
 import { cacheGet, cacheSet } from "../../utils/cache";
+import { redis } from "../../utils/redis";
 
 const API_KEY_PREFIX = "mux_live_";
 
@@ -8,6 +9,14 @@ export class ApiKeySpendLimitExceededError extends Error {
   constructor() {
     super("API key spend limit exceeded");
     this.name = "ApiKeySpendLimitExceededError";
+  }
+}
+
+export class ApiKeySpendLedgerUnavailableError extends Error {
+  constructor(cause: unknown) {
+    super("API key spend ledger unavailable");
+    this.name = "ApiKeySpendLedgerUnavailableError";
+    this.cause = cause;
   }
 }
 
@@ -139,16 +148,12 @@ export async function listApiKeys() {
 }
 
 export async function getApiKeySpentUsd(apiKeyId: string): Promise<number> {
-  const result = await prisma.requestLog.aggregate({
-    where: {
-      apiKeyId,
-      statusCode: { gte: 200, lt: 300 },
-      estimatedCost: { not: null },
-    },
-    _sum: { estimatedCost: true },
-  });
-
-  return result._sum.estimatedCost ?? 0;
+  try {
+    const value = await redis.get(apiKeySpendLedgerKey(apiKeyId));
+    return value ? Number(value) : 0;
+  } catch (error) {
+    throw new ApiKeySpendLedgerUnavailableError(error);
+  }
 }
 
 export async function assertApiKeyCanSpend(
@@ -163,4 +168,21 @@ export async function assertApiKeyCanSpend(
   if (spentUsd >= spendLimitUsd) {
     throw new ApiKeySpendLimitExceededError();
   }
+}
+
+export async function addApiKeySpendUsd(apiKeyId: string, spendUsd: number): Promise<number> {
+  if (!Number.isFinite(spendUsd) || spendUsd <= 0) {
+    return getApiKeySpentUsd(apiKeyId);
+  }
+
+  try {
+    const value = await redis.incrbyfloat(apiKeySpendLedgerKey(apiKeyId), spendUsd);
+    return Number(value);
+  } catch (error) {
+    throw new ApiKeySpendLedgerUnavailableError(error);
+  }
+}
+
+function apiKeySpendLedgerKey(apiKeyId: string): string {
+  return `apikey_spend:${apiKeyId}`;
 }

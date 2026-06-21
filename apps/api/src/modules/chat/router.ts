@@ -1,8 +1,17 @@
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { apiKeyAuth } from "../../middleware/api-key";
-import { flushLogBuffer, logRequest } from "../../middleware/logger";
-import { ApiKeySpendLimitExceededError, assertApiKeyCanSpend } from "../keys/services";
+import {
+  logStreamFinal,
+  logStreamStart,
+  RequestLoggingUnavailableError,
+} from "../../middleware/logger";
+import { estimateCost } from "../../providers/registry";
+import {
+  ApiKeySpendLedgerUnavailableError,
+  ApiKeySpendLimitExceededError,
+  assertApiKeyCanSpend,
+} from "../keys/services";
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
 import type { ChatCompletionRequest } from "../../providers/types";
 
@@ -40,7 +49,6 @@ chatRouter.post("/completions", async (c) => {
 
   try {
     if (isLimitedKey) {
-      await flushLogBuffer();
       await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
     }
 
@@ -51,6 +59,15 @@ chatRouter.post("/completions", async (c) => {
     // Streaming response: pipe provider chunks to the client as SSE.
     if (result.kind === "stream") {
       const { stream: streamIterable, provider, model, startTime } = result;
+      const logId = await logStreamStart({
+        apiKeyId,
+        provider,
+        model,
+        endpoint: "/v1/chat/completions",
+        latencyMs: 0,
+        statusCode: 102,
+        errorMessage: "stream pending",
+      });
 
       c.header("Content-Type", "text/event-stream");
       c.header("Cache-Control", "no-cache");
@@ -90,30 +107,41 @@ chatRouter.post("/completions", async (c) => {
           await streamWriter.write("data: [DONE]\n\n");
 
           const latencyMs = Date.now() - startTime;
-          logRequest({
-            apiKeyId,
-            provider,
-            model,
-            endpoint: "/v1/chat/completions",
-            latencyMs,
-            promptTokens,
-            completionTokens,
-            totalTokens,
-            statusCode: 200,
-          });
+          try {
+            await logStreamFinal({
+              logId,
+              apiKeyId,
+              provider,
+              model,
+              endpoint: "/v1/chat/completions",
+              latencyMs,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+              estimatedCost: estimateCost(model, promptTokens, completionTokens),
+              statusCode: 200,
+            });
+          } catch (logError) {
+            console.error("Failed to finalize request log:", logError);
+          }
         } catch (streamError) {
           const latencyMs = Date.now() - startTime;
           const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
-          logRequest({
-            apiKeyId,
-            provider,
-            model,
-            endpoint: "/v1/chat/completions",
-            latencyMs,
-            statusCode: 500,
-            errorMessage,
-          });
+          try {
+            await logStreamFinal({
+              logId,
+              apiKeyId,
+              provider,
+              model,
+              endpoint: "/v1/chat/completions",
+              latencyMs,
+              statusCode: 500,
+              errorMessage,
+            });
+          } catch (logError) {
+            console.error("Failed to finalize failed request log:", logError);
+          }
 
           throw streamError;
         }
@@ -135,6 +163,13 @@ chatRouter.post("/completions", async (c) => {
 
     if (error instanceof ApiKeyUnbillableUsageError) {
       return c.json({ error: errorMessage }, 429);
+    }
+
+    if (
+      error instanceof RequestLoggingUnavailableError ||
+      error instanceof ApiKeySpendLedgerUnavailableError
+    ) {
+      return c.json({ error: errorMessage }, 503);
     }
 
     return c.json({ error: errorMessage }, 500);

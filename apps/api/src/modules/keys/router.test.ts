@@ -23,6 +23,12 @@ vi.mock("../../utils/cache", () => ({
   cacheGet: vi.fn().mockResolvedValue(null),
   cacheSet: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../../utils/redis", () => ({
+  redis: {
+    get: vi.fn(),
+    incrbyfloat: vi.fn(),
+  },
+}));
 
 import { keysRouter } from "./router";
 

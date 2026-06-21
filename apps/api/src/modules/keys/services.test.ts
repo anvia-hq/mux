@@ -20,10 +20,20 @@ const { mockCacheGet, mockCacheSet } = vi.hoisted(() => ({
   mockCacheSet: vi.fn().mockResolvedValue(undefined),
 }));
 
+const { mockRedis } = vi.hoisted(() => ({
+  mockRedis: {
+    get: vi.fn(),
+    incrbyfloat: vi.fn(),
+  },
+}));
+
 vi.mock("../../utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../utils/cache", () => ({ cacheGet: mockCacheGet, cacheSet: mockCacheSet }));
+vi.mock("../../utils/redis", () => ({ redis: mockRedis }));
 
 import {
+  addApiKeySpendUsd,
+  ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
   assertApiKeyCanSpend,
   createApiKey,
@@ -125,20 +135,33 @@ describe("keys services", () => {
   });
 
   describe("spend limits", () => {
-    it("returns summed successful spend", async () => {
-      mockPrisma.requestLog.aggregate.mockResolvedValueOnce({ _sum: { estimatedCost: 3.25 } });
+    it("returns Redis ledger spend", async () => {
+      mockRedis.get.mockResolvedValueOnce("3.25");
       await expect(getApiKeySpentUsd("k1")).resolves.toBe(3.25);
     });
 
     it("allows unlimited keys without querying spend", async () => {
       await assertApiKeyCanSpend("k1", null);
-      expect(mockPrisma.requestLog.aggregate).not.toHaveBeenCalled();
+      expect(mockRedis.get).not.toHaveBeenCalled();
     });
 
     it("throws when spend reaches the limit", async () => {
-      mockPrisma.requestLog.aggregate.mockResolvedValueOnce({ _sum: { estimatedCost: 10 } });
+      mockRedis.get.mockResolvedValueOnce("10");
       await expect(assertApiKeyCanSpend("k1", 10)).rejects.toBeInstanceOf(
         ApiKeySpendLimitExceededError,
+      );
+    });
+
+    it("increments Redis ledger spend", async () => {
+      mockRedis.incrbyfloat.mockResolvedValueOnce("3.75");
+      await expect(addApiKeySpendUsd("k1", 1.25)).resolves.toBe(3.75);
+      expect(mockRedis.incrbyfloat).toHaveBeenCalledWith("apikey_spend:k1", 1.25);
+    });
+
+    it("throws typed error when Redis ledger is unavailable", async () => {
+      mockRedis.get.mockRejectedValueOnce(new Error("redis down"));
+      await expect(getApiKeySpentUsd("k1")).rejects.toBeInstanceOf(
+        ApiKeySpendLedgerUnavailableError,
       );
     });
   });

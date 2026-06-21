@@ -1,0 +1,109 @@
+import { Worker } from "bullmq";
+import IORedis from "ioredis";
+import { prisma } from "./prisma";
+import {
+  REQUEST_LOG_QUEUE_NAME,
+  type RequestLogJob,
+  type RequestLogPayload,
+} from "./request-log-queue";
+
+const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+
+const workerConnection = new IORedis(redisUrl, {
+  maxRetriesPerRequest: null,
+});
+
+workerConnection.on("error", (error) => {
+  console.error("Request log worker Redis error:", error.message);
+});
+
+function toRequestLogCreateInput(entry: RequestLogPayload) {
+  return {
+    id: entry.logId,
+    apiKeyId: entry.apiKeyId,
+    provider: entry.provider,
+    model: entry.model,
+    endpoint: entry.endpoint,
+    latencyMs: entry.latencyMs,
+    providerLatencyMs: entry.providerLatencyMs,
+    promptTokens: entry.promptTokens,
+    completionTokens: entry.completionTokens,
+    totalTokens: entry.totalTokens,
+    estimatedCost: entry.estimatedCost,
+    statusCode: entry.statusCode,
+    errorMessage: entry.errorMessage,
+  };
+}
+
+async function createLogIfMissing(entry: RequestLogPayload): Promise<void> {
+  await prisma.requestLog.createMany({
+    data: [toRequestLogCreateInput(entry)],
+    skipDuplicates: true,
+  });
+}
+
+async function finalizeStreamLog(entry: RequestLogPayload): Promise<void> {
+  const update = await prisma.requestLog.updateMany({
+    where: { id: entry.logId },
+    data: {
+      provider: entry.provider,
+      model: entry.model,
+      endpoint: entry.endpoint,
+      latencyMs: entry.latencyMs,
+      providerLatencyMs: entry.providerLatencyMs,
+      promptTokens: entry.promptTokens,
+      completionTokens: entry.completionTokens,
+      totalTokens: entry.totalTokens,
+      estimatedCost: entry.estimatedCost,
+      statusCode: entry.statusCode,
+      errorMessage: entry.errorMessage,
+    },
+  });
+
+  if (update.count === 0) {
+    await createLogIfMissing(entry);
+  }
+}
+
+export async function processRequestLogJob(job: RequestLogJob): Promise<void> {
+  if (job.kind === "stream-finalize") {
+    await finalizeStreamLog(job);
+    return;
+  }
+
+  await createLogIfMissing(job);
+}
+
+export async function initializeSpendLedgerFromRequestLogs(): Promise<void> {
+  const rows = await prisma.requestLog.groupBy({
+    by: ["apiKeyId"],
+    where: {
+      statusCode: { gte: 200, lt: 300 },
+      estimatedCost: { not: null },
+    },
+    _sum: { estimatedCost: true },
+  });
+
+  for (const row of rows) {
+    await workerConnection.set(
+      `apikey_spend:${row.apiKeyId}`,
+      String(row._sum.estimatedCost ?? 0),
+      "NX",
+    );
+  }
+}
+
+export async function startRequestLogWorker(): Promise<Worker<RequestLogJob>> {
+  await initializeSpendLedgerFromRequestLogs();
+
+  return new Worker<RequestLogJob>(
+    REQUEST_LOG_QUEUE_NAME,
+    async (job) => {
+      await processRequestLogJob(job.data);
+    },
+    {
+      connection: workerConnection,
+      concurrency: Number(process.env.REQUEST_LOG_WORKER_CONCURRENCY ?? 10),
+    },
+  );
+}

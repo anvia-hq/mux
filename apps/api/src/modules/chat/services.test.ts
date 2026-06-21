@@ -1,15 +1,45 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { mockEstimateCost, mockGetModelPricing, mockLogRequest, mockResolveChatModel } = vi.hoisted(
-  () => ({
-    mockEstimateCost: vi.fn(),
-    mockGetModelPricing: vi.fn(),
-    mockLogRequest: vi.fn(),
-    mockResolveChatModel: vi.fn(),
-  }),
-);
+const {
+  mockAddApiKeySpendUsd,
+  mockEstimateCost,
+  mockGetModelPricing,
+  mockLogRequest,
+  mockResolveChatModel,
+} = vi.hoisted(() => ({
+  mockAddApiKeySpendUsd: vi.fn(),
+  mockEstimateCost: vi.fn(),
+  mockGetModelPricing: vi.fn(),
+  mockLogRequest: vi.fn(),
+  mockResolveChatModel: vi.fn(),
+}));
 
-vi.mock("../../middleware/logger", () => ({ logRequest: mockLogRequest }));
+vi.mock("../keys/services", () => {
+  class ApiKeySpendLedgerUnavailableError extends Error {
+    constructor() {
+      super("API key spend ledger unavailable");
+      this.name = "ApiKeySpendLedgerUnavailableError";
+    }
+  }
+
+  return {
+    ApiKeySpendLedgerUnavailableError,
+    addApiKeySpendUsd: mockAddApiKeySpendUsd,
+  };
+});
+vi.mock("../../middleware/logger", () => {
+  class RequestLoggingUnavailableError extends Error {
+    constructor() {
+      super("request logging unavailable");
+      this.name = "RequestLoggingUnavailableError";
+    }
+  }
+
+  return {
+    RequestLoggingUnavailableError,
+    logRequest: mockLogRequest,
+  };
+});
 vi.mock("../../providers/registry", () => ({
   estimateCost: mockEstimateCost,
   getModelPricing: mockGetModelPricing,
@@ -126,6 +156,32 @@ describe("chat services", () => {
     await expect(
       handleChatCompletion(createRequest(), "key-1", { requireBillableUsage: true }),
     ).rejects.toBeInstanceOf(ApiKeyUnbillableUsageError);
+  });
+
+  it("records spend for limited successful requests before returning", async () => {
+    const chatCompletion = vi.fn().mockResolvedValueOnce({
+      id: "chat-1",
+      model: "gpt-4",
+      choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    });
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4",
+      targets: [createResolvedModel("openai", "gpt-4", { chatCompletion })],
+    });
+    mockGetModelPricing.mockReturnValueOnce({ id: "gpt-4" });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    const result = await handleChatCompletion(createRequest(), "key-1", {
+      requireBillableUsage: true,
+    });
+
+    expect(result).toMatchObject({ kind: "complete" });
+    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatedCost: 0.01, statusCode: 200 }),
+    );
   });
 
   it("logs error on provider failure", async () => {
