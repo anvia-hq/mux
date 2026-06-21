@@ -93,7 +93,6 @@ export function LogsPage() {
           </div>
           <Button
             variant="outline"
-            size="sm"
             onClick={() => {
               setProvider("");
               setModel("");

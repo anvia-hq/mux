@@ -1,7 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { Badge } from "@repo/ui/components/badge";
+import { Button } from "@repo/ui/components/button";
 import { meQueryOptions, useLogoutMutation } from "../modules/auth/hooks/use-auth";
 
 export const Route = createFileRoute("/_authed/settings")({
@@ -40,13 +47,9 @@ function SettingsPage() {
           <CardDescription>Sign out from this device.</CardDescription>
         </CardHeader>
         <CardContent>
-          <button
-            className="rounded-md border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-          >
+          <Button variant="outline" disabled={logout.isPending} onClick={() => logout.mutate()}>
             {logout.isPending ? "Signing out..." : "Sign out"}
-          </button>
+          </Button>
         </CardContent>
       </Card>
     </div>

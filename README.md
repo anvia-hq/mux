@@ -1,36 +1,80 @@
-# Mux
+# Mux Gateway
 
-> One endpoint. Every model. Full visibility.
+> One OpenAI-compatible endpoint for every model your team uses.
 
-Mux is a self-hosted LLM gateway that gives your team a single, OpenAI-compatible API for OpenAI, Anthropic, Google, and Mistral, with built-in observability and key management. Point your services at one URL, and Mux handles authentication, model routing, streaming, and request logging.
+Mux is a self-hosted LLM gateway with a dark, operator-focused dashboard. It gives your services one API surface for OpenAI, Anthropic, Google, Mistral, and other provider catalogs, while keeping provider keys, API keys, request logs, costs, and model availability in one place.
 
-It's a deliberately small alternative to LiteLLM: no routing rules, no fallbacks, no load balancing. Just a fast proxy, clean logs, and a dashboard that answers "who spent what on which model, when?"
+Mux is intentionally small. It is not a policy engine, router, or load balancer. It is a fast gateway for teams that want clean provider management, OpenAI-shaped chat completions, streaming support, and enough visibility to answer: who called which model, when, how long did it take, and what did it cost?
+
+## Screenshots
+
+### Provider configuration
+
+Store provider credentials once, keep them encrypted at rest, and see which providers still need keys.
+
+![Mux provider configuration dashboard](docs/screenshots/providers.png)
+
+### Admin model catalog
+
+Review provider models, compare context windows and pricing, and decide which models are exposed by the gateway.
+
+![Mux admin model catalog](docs/screenshots/model-catalog.png)
+
+### Available models
+
+Users see only the enabled models available through configured providers.
+
+![Mux available models table](docs/screenshots/available-models.png)
 
 ## Why Mux
 
-- **Unified API.** One `POST /v1/chat/completions` endpoint, OpenAI-shaped, works with every provider you connect. Drop-in for tools and SDKs that already speak OpenAI.
-- **Provider freedom.** Configure OpenAI, Anthropic, Google, and Mistral. Switch models without changing your code or your client's config.
-- **Streaming by default.** Server-sent events, no buffering, identical chunk shape across providers. Token usage parsed and logged automatically.
-- **Observability built in.** Every request is captured with provider, model, latency, prompt/completion tokens, estimated cost, and status. No external logging pipeline required.
-- **Encrypted at rest.** Provider API keys are stored encrypted (AES-256-GCM). Only the last four characters are ever shown in the UI.
-- **Role-based dashboard.** Admins manage keys, users, and providers. Users browse models and inspect logs. Authenticated sessions, scoped views.
-- **Self-hosted, single command.** `docker compose up` and you have a gateway, a dashboard, Postgres, and Redis running together behind Caddy.
+- **One endpoint.** Point OpenAI-compatible clients at Mux and call `/v1/chat/completions`.
+- **Provider freedom.** Configure provider keys centrally and switch models without changing client code.
+- **Streaming support.** Stream chat completions as server-sent events with OpenAI-shaped chunks.
+- **Request visibility.** Capture provider, model, status, latency, prompt tokens, completion tokens, total tokens, and estimated cost.
+- **Encrypted provider keys.** Provider API keys are encrypted with AES-256-GCM and are never shown in full after saving.
+- **Admin dashboard.** Manage providers, model exposure, gateway API keys, logs, and account sessions from the platform UI.
+- **Self-hosted stack.** Run the gateway, dashboard, Postgres, Redis, and Caddy with Docker Compose.
 
-## What you get
+## What is included
 
-| Surface | What it does |
-| --- | --- |
-| Gateway API (`apps/api`) | Hono server. OpenAI-compatible chat completions, model listing, auth, async metadata logging. |
-| Platform dashboard (`apps/platform`) | React + TanStack Router. Login, model browser, API key admin, request logs, provider management, model enable/disable. |
-| Shared UI (`packages/ui`) | shadcn-based component library used by the dashboard. |
-| Background worker (`packages/worker`) | Redis + BullMQ primitives for async jobs. |
+| Surface | Path | Purpose |
+| --- | --- | --- |
+| Gateway API | `apps/api` | Hono server for auth, provider management, logs, API keys, models, and OpenAI-compatible chat completions. |
+| Platform dashboard | `apps/platform` | React, Vite, TanStack Router, and TanStack Query dashboard. |
+| Shared UI | `packages/ui` | Shared component library and global styles used by the dashboard. |
+| Worker primitives | `packages/worker` | Redis and BullMQ primitives for async jobs. |
+| Reverse proxy | `Caddyfile` | Routes `/api/*` to the gateway and everything else to the platform. |
 
-## Use Mux
+## Quick start
 
-Bring your own provider keys, then point your code at the gateway.
+```sh
+cp .env.example .env
+docker compose up -d --build
+```
+
+Open the dashboard:
+
+```text
+http://localhost
+```
+
+On a fresh database, the platform redirects to onboarding so you can create the first admin account. After signing in, add at least one provider key under **Providers**, then enable the models you want to expose from the provider's model catalog.
+
+When running through Caddy, the public gateway API is available under:
+
+```text
+http://localhost/api
+```
+
+For local development with the API and platform running directly on the host, see [CONTRIBUTING.md](./CONTRIBUTING.md).
+
+## Use the gateway
+
+Create a Mux API key in the dashboard, then send OpenAI-compatible requests through the gateway.
 
 ```http
-POST /v1/chat/completions
+POST /api/v1/chat/completions
 Authorization: Bearer mux_live_...
 Content-Type: application/json
 
@@ -43,67 +87,87 @@ Content-Type: application/json
 }
 ```
 
-Swap `gpt-4o` for `claude-sonnet-4-20250514`, `gemini-...`, or `mistral-...`. The response shape stays OpenAI-compatible. Streamed chunks arrive as SSE; non-streamed requests get a regular JSON response.
+Swap `gpt-4o` for any enabled model from a configured provider. The response remains OpenAI-compatible for both streamed and non-streamed requests.
 
-List every model you can use:
+List the models exposed by the gateway:
 
 ```http
-GET /v1/models
+GET /api/v1/models
 Authorization: Bearer mux_live_...
 ```
 
-Only providers with configured keys are returned, and disabled models are filtered out.
+Only enabled models from configured providers are returned.
 
-## The dashboard
+## Dashboard areas
 
-- **Overview** — request volume, latency, and cost at a glance.
-- **Models** — browse the catalog across providers, see enabled and disabled state.
-- **Providers** — add and rotate provider API keys. Encrypted, never displayed in full.
-- **API keys** — issue keys for your internal services, revoke instantly, watch usage.
-- **Logs** — filter by provider, model, status, time range. Inspect latency, token usage, estimated cost, and error messages.
-- **Settings** — manage your account and session.
-- **Docs** — inline reference for the gateway API.
+- **Overview** - high-level usage, latency, and cost.
+- **API keys** - issue and revoke gateway keys for internal services.
+- **Logs** - inspect request history with provider, model, status, latency, token usage, and estimated cost.
+- **Providers** - add, replace, or remove provider API keys.
+- **Models** - browse enabled models across configured providers.
+- **Provider model catalog** - enable or disable individual models exposed through the gateway.
+- **Documentation** - inline API reference for gateway usage.
+- **Account Settings** - view account details and manage the current session.
 
-## Roles
+## Environment
 
-- **Admin** — full access. Manage providers, API keys, users, and inspect everything.
-- **User** — browse models, inspect logs, manage their own account.
+The default `.env.example` is enough for local Docker usage. The important settings are:
 
-## API at a glance
+| Variable | Purpose |
+| --- | --- |
+| `AUTH_SECRET` | Secret used for authenticated sessions. Change it outside local development. |
+| `AUTH_COOKIE_SECURE` | Set to `true` when serving over HTTPS. |
+| `PROVIDER_KEYS_ENCRYPTION_KEY` | Encryption material for provider API keys. Use a long secret or a 64-character hex key. |
+| `CLIENT_ORIGINS` | Origins allowed by CORS when the API is not only accessed behind Caddy. |
+| `VITE_API_URL` | Platform API base path. Defaults to `/api` for the Caddy setup. |
+| `CADDY_DOMAIN` | Host and port served by Caddy. Defaults to `localhost:80`. |
+
+## API surface
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/v1/chat/completions` | Chat completion, streaming or non-streaming |
-| `GET` | `/v1/models` | List available models |
-| `POST` | `/auth/login` | Email/password session login |
-| `POST` | `/auth/logout` | End session |
-| `GET` | `/api-keys` | List API keys (admin) |
-| `POST` | `/api-keys` | Create API key (admin) |
-| `DELETE` | `/api-keys/:id` | Revoke API key (admin) |
-| `GET` | `/logs` | Request log browser |
-| `GET` | `/logs/stats` | Aggregated cost, volume, latency |
-| `GET` | `/providers` | Configured providers and status |
-| `GET` | `/health` | Health check |
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completion, streaming or non-streaming. |
+| `GET` | `/v1/models` | List models currently exposed by the gateway. |
+| `POST` | `/auth/onboard` | Create the first admin user on a fresh install. |
+| `POST` | `/auth/login` | Email/password dashboard login. |
+| `POST` | `/auth/logout` | End the current dashboard session. |
+| `GET` | `/api-keys` | List gateway API keys. |
+| `POST` | `/api-keys` | Create a gateway API key. |
+| `DELETE` | `/api-keys/:id` | Revoke a gateway API key. |
+| `GET` | `/logs` | Browse request logs. |
+| `GET` | `/logs/stats` | Aggregate request, token, latency, and cost statistics. |
+| `GET` | `/providers` | List provider catalog and configured key status. |
+| `GET` | `/models` | List enabled models available to users. |
+| `GET` | `/health` | Gateway health check. |
 
-## What Mux deliberately does not do
+When using the Docker Compose Caddy setup, prefix API paths with `/api`, for example `/api/v1/models`. Caddy strips that prefix before forwarding to the gateway.
 
-To stay fast and small, Mux does not include:
+## Roles
 
-- Request routing or load balancing across providers
-- Automatic fallbacks when a provider errors
-- Rate limiting or token budgets
-- Embeddings proxy or function-call normalization
+- **Admin** - manage providers, model exposure, API keys, users, logs, and account settings.
+- **User** - browse available models, inspect logs, and manage their own session.
+
+## Deliberate non-goals
+
+Mux stays focused by leaving these concerns to your edge layer or application code:
+
+- Load balancing across providers
+- Automatic fallback routing
+- Budget enforcement and rate limiting
+- Embeddings proxying
+- Function-call normalization between providers
 - Multi-tenant isolation
 
-Add these at the edge or in your application layer when you need them.
+## Development
 
-## Run it
+Common commands:
 
 ```sh
-cp .env.example .env
-docker compose up -d
+pnpm install
+pnpm --filter @repo/api dev
+pnpm --filter @repo/platform dev
+pnpm typecheck
+pnpm check
 ```
 
-The gateway comes up on `http://localhost:8000`, the dashboard on `http://localhost:3000`. Postgres and Redis stay on the internal network. Use `docker-compose.dev.yaml` when you want to reach the database or cache from your host.
-
-For local development outside Docker, see the developer notes in the package READMEs.
+Additional setup, contribution workflow, and database notes live in [CONTRIBUTING.md](./CONTRIBUTING.md).
