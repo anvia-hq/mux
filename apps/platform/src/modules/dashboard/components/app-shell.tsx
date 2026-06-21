@@ -63,7 +63,7 @@ const navGroups: NavGroup[] = [
     items: [{ to: "/docs", label: "Documentation", icon: BookOpen01Icon }],
   },
   {
-    items: [{ to: "/settings", label: "Settings", icon: Settings01Icon }],
+    items: [{ to: "/settings", label: "Account Settings", icon: Settings01Icon }],
   },
 ];
 
@@ -90,12 +90,15 @@ export function AppShell() {
           <Link
             to="/"
             aria-label="Mux Gateway"
-            className="flex h-10 items-center px-2 text-sm font-semibold tracking-normal group-data-[collapsible=icon]:justify-center"
+            className="flex h-10 items-center gap-2 px-2 text-sm font-semibold tracking-normal group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
-            <span className="truncate group-data-[collapsible=icon]:hidden">Mux Gateway</span>
-            <span aria-hidden="true" className="hidden group-data-[collapsible=icon]:block">
+            <span
+              aria-hidden="true"
+              className="flex size-6 shrink-0 items-center justify-center rounded-[6px] bg-white font-black text-[15px] text-black leading-none shadow-[inset_0_0_0_1px_rgb(255_255_255_/_0.45),0_1px_2px_rgb(0_0_0_/_0.18)]"
+            >
               M
             </span>
+            <span className="truncate group-data-[collapsible=icon]:hidden">Mux Gateway</span>
           </Link>
         </SidebarHeader>
         <SidebarContent>
