@@ -18,6 +18,7 @@ import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
+import { Route as AuthedFallbackGroupsRouteImport } from './routes/_authed.fallback-groups'
 import { Route as AuthedDocsRouteImport } from './routes/_authed.docs'
 import { Route as AuthedApiKeysRouteImport } from './routes/_authed.api-keys'
 import { Route as AuthedProvidersIndexRouteImport } from './routes/_authed.providers.index'
@@ -67,6 +68,11 @@ const AuthedLogsRoute = AuthedLogsRouteImport.update({
   path: '/logs',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedFallbackGroupsRoute = AuthedFallbackGroupsRouteImport.update({
+  id: '/fallback-groups',
+  path: '/fallback-groups',
+  getParentRoute: () => AuthedRoute,
+} as any)
 const AuthedDocsRoute = AuthedDocsRouteImport.update({
   id: '/docs',
   path: '/docs',
@@ -96,6 +102,7 @@ export interface FileRoutesByFullPath {
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
   '/docs': typeof AuthedDocsRoute
+  '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/providers': typeof AuthedProvidersRouteWithChildren
@@ -109,6 +116,7 @@ export interface FileRoutesByTo {
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
   '/docs': typeof AuthedDocsRoute
+  '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/settings': typeof AuthedSettingsRoute
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/register': typeof RegisterRoute
   '/_authed/api-keys': typeof AuthedApiKeysRoute
   '/_authed/docs': typeof AuthedDocsRoute
+  '/_authed/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/_authed/logs': typeof AuthedLogsRoute
   '/_authed/models': typeof AuthedModelsRoute
   '/_authed/providers': typeof AuthedProvidersRouteWithChildren
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/api-keys'
     | '/docs'
+    | '/fallback-groups'
     | '/logs'
     | '/models'
     | '/providers'
@@ -154,6 +164,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/api-keys'
     | '/docs'
+    | '/fallback-groups'
     | '/logs'
     | '/models'
     | '/settings'
@@ -168,6 +179,7 @@ export interface FileRouteTypes {
     | '/register'
     | '/_authed/api-keys'
     | '/_authed/docs'
+    | '/_authed/fallback-groups'
     | '/_authed/logs'
     | '/_authed/models'
     | '/_authed/providers'
@@ -249,6 +261,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedLogsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/fallback-groups': {
+      id: '/_authed/fallback-groups'
+      path: '/fallback-groups'
+      fullPath: '/fallback-groups'
+      preLoaderRoute: typeof AuthedFallbackGroupsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/docs': {
       id: '/_authed/docs'
       path: '/docs'
@@ -297,6 +316,7 @@ const AuthedProvidersRouteWithChildren = AuthedProvidersRoute._addFileChildren(
 interface AuthedRouteChildren {
   AuthedApiKeysRoute: typeof AuthedApiKeysRoute
   AuthedDocsRoute: typeof AuthedDocsRoute
+  AuthedFallbackGroupsRoute: typeof AuthedFallbackGroupsRoute
   AuthedLogsRoute: typeof AuthedLogsRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
   AuthedProvidersRoute: typeof AuthedProvidersRouteWithChildren
@@ -307,6 +327,7 @@ interface AuthedRouteChildren {
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApiKeysRoute: AuthedApiKeysRoute,
   AuthedDocsRoute: AuthedDocsRoute,
+  AuthedFallbackGroupsRoute: AuthedFallbackGroupsRoute,
   AuthedLogsRoute: AuthedLogsRoute,
   AuthedModelsRoute: AuthedModelsRoute,
   AuthedProvidersRoute: AuthedProvidersRouteWithChildren,

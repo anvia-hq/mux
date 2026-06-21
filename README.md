@@ -4,7 +4,7 @@
 
 Mux is a self-hosted LLM gateway with a dark, operator-focused dashboard. It gives your services one API surface for OpenAI, Anthropic, Google, Mistral, and other provider catalogs, while keeping provider keys, API keys, request logs, costs, and model availability in one place.
 
-Mux is intentionally small. It is not a policy engine, router, or load balancer. It is a fast gateway for teams that want clean provider management, OpenAI-shaped chat completions, streaming support, and enough visibility to answer: who called which model, when, how long did it take, and what did it cost?
+Mux is intentionally small. It is not a policy engine or load balancer. It is a fast gateway for teams that want clean provider management, simple fallback routing, OpenAI-shaped chat completions, streaming support, and enough visibility to answer: who called which model, when, how long did it take, and what did it cost?
 
 ## Screenshots
 
@@ -30,6 +30,7 @@ Users see only the enabled models available through configured providers.
 
 - **One endpoint.** Point OpenAI-compatible clients at Mux and call `/v1/chat/completions`.
 - **Provider freedom.** Configure provider keys centrally and switch models without changing client code.
+- **Fallback groups.** Create virtual `mux:<group>` models that try ordered provider/model targets when an upstream call fails.
 - **Streaming support.** Stream chat completions as server-sent events with OpenAI-shaped chunks.
 - **Request visibility.** Capture provider, model, status, latency, prompt tokens, completion tokens, total tokens, and estimated cost.
 - **Encrypted provider keys.** Provider API keys are encrypted with AES-256-GCM and are never shown in full after saving.
@@ -87,7 +88,7 @@ Content-Type: application/json
 }
 ```
 
-Swap `openai:gpt-4o` for any enabled `provider:model` id returned by the model list. The response remains OpenAI-compatible for both streamed and non-streamed requests.
+Swap `openai:gpt-4o` for any enabled `provider:model` id returned by the model list. Admins can also create fallback groups and expose virtual model IDs such as `mux:fast-chat`, which try ordered provider/model targets when an upstream call fails. The response remains OpenAI-compatible for both streamed and non-streamed requests.
 
 List the models exposed by the gateway:
 
@@ -96,7 +97,7 @@ GET /api/v1/models
 Authorization: Bearer mux_live_...
 ```
 
-Only enabled models from configured providers are returned.
+Only enabled models from configured providers and enabled fallback groups are returned.
 
 ## Dashboard areas
 
@@ -104,7 +105,8 @@ Only enabled models from configured providers are returned.
 - **API keys** - issue and revoke gateway keys for internal services.
 - **Logs** - inspect request history with provider, model, status, latency, token usage, and estimated cost.
 - **Providers** - add, replace, or remove provider API keys.
-- **Models** - browse enabled models across configured providers.
+- **Models** - browse enabled models across configured providers and virtual fallback groups.
+- **Fallbacks** - create virtual `mux:<group>` models with ordered provider/model targets.
 - **Provider model catalog** - enable or disable individual models exposed through the gateway.
 - **Documentation** - inline API reference for gateway usage.
 - **Account Settings** - view account details and manage the current session.
@@ -136,6 +138,10 @@ The default `.env.example` is enough for local Docker usage. The important setti
 | `DELETE` | `/api-keys/:id` | Revoke a gateway API key. |
 | `GET` | `/logs` | Browse request logs. |
 | `GET` | `/logs/stats` | Aggregate request, token, latency, and cost statistics. |
+| `GET` | `/fallback-groups` | List configured fallback groups. |
+| `POST` | `/fallback-groups` | Create a fallback group. |
+| `PUT` | `/fallback-groups/:id` | Update a fallback group. |
+| `DELETE` | `/fallback-groups/:id` | Delete a fallback group. |
 | `GET` | `/providers` | List provider catalog and configured key status. |
 | `GET` | `/models` | List enabled models available to users. |
 | `GET` | `/health` | Gateway health check. |
@@ -151,8 +157,8 @@ When using the Docker Compose Caddy setup, prefix API paths with `/api`, for exa
 
 Mux stays focused by leaving these concerns to your edge layer or application code:
 
-- Load balancing across providers
-- Automatic fallback routing
+- Weighted load balancing across providers
+- Provider-wide fallback rules
 - Budget enforcement and rate limiting
 - Embeddings proxying
 - Function-call normalization between providers

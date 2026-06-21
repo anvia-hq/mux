@@ -5,6 +5,7 @@ export interface Model {
   id: string;
   name: string;
   provider: string;
+  type?: "provider" | "fallback-group";
   inputPricePer1M: number;
   outputPricePer1M: number;
   contextWindow: number;
@@ -15,6 +16,12 @@ export interface Model {
   toolCall: boolean;
   structuredOutput: boolean;
   weights: "open" | "closed";
+  fallbackTargets?: {
+    provider: string;
+    modelId: string;
+    publicModelId: string;
+    position: number;
+  }[];
 }
 
 export function useModelsQuery() {

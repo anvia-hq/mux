@@ -90,3 +90,26 @@ model DisabledModel {
 
   @@id([modelId, provider])
 }
+
+model FallbackGroup {
+  id          String           @id
+  name        String
+  description String?
+  enabled     Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  targets     FallbackTarget[]
+}
+
+model FallbackTarget {
+  id        String        @id @default(cuid())
+  groupId   String
+  group     FallbackGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  provider  String
+  modelId   String
+  position  Int
+  createdAt DateTime      @default(now())
+
+  @@unique([groupId, position])
+  @@index([provider, modelId])
+}

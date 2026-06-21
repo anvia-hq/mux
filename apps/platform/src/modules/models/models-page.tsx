@@ -36,6 +36,14 @@ function CapBadge({ enabled }: { enabled: boolean }) {
 }
 
 function ProviderLogo({ provider }: { provider: string }) {
+  if (provider === "mux") {
+    return (
+      <span className="flex size-5 items-center justify-center rounded-[5px] bg-white font-black text-[11px] text-black leading-none">
+        M
+      </span>
+    );
+  }
+
   return (
     <img
       src={`https://models.dev/logos/${provider}.svg`}
@@ -54,7 +62,9 @@ function matchesSearch(model: Model, query: string) {
     model.id,
     model.name,
     model.provider,
+    model.type,
     model.weights,
+    model.fallbackTargets?.map((target) => target.publicModelId).join(" ") ?? "",
     model.inputModalities.join(" "),
     model.outputModalities.join(" "),
   ]
@@ -125,12 +135,37 @@ export function ModelsPage() {
                   <TableRow key={m.id}>
                     <TableCell>
                       <ModelIdCopyButton modelId={m.id} />
+                      {m.type === "fallback-group" ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-1">
+                          <Badge variant="outline" className="rounded-md">
+                            Fallback group
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {m.fallbackTargets?.length ?? 0} targets
+                          </span>
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <ProviderLogo provider={m.provider} />
-                        <span className="capitalize">{m.provider}</span>
+                        <span className="capitalize">
+                          {m.provider === "mux" ? "Mux" : m.provider}
+                        </span>
                       </div>
+                      {m.fallbackTargets?.length ? (
+                        <div className="mt-1 flex max-w-72 flex-wrap gap-1">
+                          {m.fallbackTargets.map((target) => (
+                            <Badge
+                              key={`${target.position}:${target.publicModelId}`}
+                              variant="outline"
+                              className="text-[10px]"
+                            >
+                              {target.position}. {target.publicModelId}
+                            </Badge>
+                          ))}
+                        </div>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <ModalityIcons modalities={m.inputModalities} />

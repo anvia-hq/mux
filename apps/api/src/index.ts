@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authRouter } from "./modules/auth/router";
 import { chatRouter } from "./modules/chat/router";
+import { fallbackGroupsRouter } from "./modules/fallback-groups/router";
 import { keysRouter } from "./modules/keys/router";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
@@ -38,6 +39,7 @@ const app = new Hono()
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
   .route("/logs", logsRouter)
+  .route("/fallback-groups", fallbackGroupsRouter)
   .route("/providers", providersRouter);
 
 const port = Number(process.env.API_PORT ?? 8000);

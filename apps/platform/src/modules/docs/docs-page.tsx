@@ -193,6 +193,36 @@ print(response.choices[0].message.content)`,
   },
 ];
 
+const fallbackSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const response = await client.chat.completions.create({
+  model: "mux:fast-chat",
+  messages: [{ role: "user", content: "Hello!" }],
+});`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `response = client.chat.completions.create(
+    model="mux:fast-chat",
+    messages=[{"role": "user", "content": "Hello!"}],
+)`,
+  },
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl __MUX_GATEWAY_BASE_URL__/chat/completions \\
+  -H "Authorization: Bearer $MUX_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"mux:fast-chat","messages":[{"role":"user","content":"Hello!"}]}'`,
+  },
+];
+
 const streamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -368,10 +398,11 @@ export function DocsPage() {
               <strong>OpenAI-compatible</strong> endpoint so existing SDK clients work without a
               custom adapter.
             </p>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-4">
               {[
                 ["Unified route", "Send requests to one endpoint and let the gateway dispatch."],
                 ["Normalized output", "Responses follow the OpenAI shape across providers."],
+                ["Fallback groups", "Expose virtual models with ordered backup targets."],
                 ["Request logs", "Track latency, tokens, cost, provider, and status code."],
               ].map(([title, description]) => (
                 <Card key={title} className="gap-2 p-4">
@@ -421,7 +452,8 @@ export function DocsPage() {
             <p>
               Retrieve all enabled models across configured providers. Each model includes an{" "}
               <code>id</code> in <code>provider:model</code> format and an <code>owned_by</code>{" "}
-              field matching the OpenAI format.
+              field matching the OpenAI format. Fallback groups appear as virtual{" "}
+              <code>mux:&lt;group&gt;</code> models.
             </p>
             <CodeTabs samples={modelSamples} />
           </Section>
@@ -433,6 +465,20 @@ export function DocsPage() {
               Mistral handles the request.
             </p>
             <CodeTabs samples={completionSamples} />
+          </Section>
+
+          <Section id="fallback-groups" title="Fallback groups">
+            <p>
+              Admins can create fallback groups from the{" "}
+              <Link to="/fallback-groups" className="text-foreground">
+                Fallbacks
+              </Link>{" "}
+              page. A group exposes a virtual <code>mux:&lt;group&gt;</code> model and tries its
+              ordered provider/model targets until one succeeds. Streaming requests can fall back
+              before the first chunk is sent; after streaming starts, provider errors are surfaced
+              to the client.
+            </p>
+            <CodeTabs samples={fallbackSamples} />
           </Section>
 
           <Section id="streaming" title="Streaming">

@@ -147,6 +147,7 @@ import { prisma } from "../utils/prisma";
 import { decrypt } from "../modules/providers/crypto";
 
 const providers: Map<string, ProviderAdapter> = new Map();
+export const FALLBACK_GROUP_PROVIDER = "mux";
 
 const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter> = {
   requesty: (apiKey) => new RequestyAdapter(apiKey),
@@ -346,8 +347,35 @@ export type ResolvedProviderModel = {
   publicModelId: string;
 };
 
+export type ResolvedFallbackGroup = {
+  groupId: string;
+  name: string;
+  description: string | null;
+  publicModelId: string;
+  targets: ResolvedProviderModel[];
+};
+
+export type ResolvedChatModel =
+  | {
+      kind: "direct";
+      requestedModelId: string;
+      targets: [ResolvedProviderModel];
+    }
+  | {
+      kind: "fallback-group";
+      groupId: string;
+      name: string;
+      description: string | null;
+      requestedModelId: string;
+      targets: ResolvedProviderModel[];
+    };
+
 export function toPublicModelId(provider: string, modelId: string): string {
   return `${provider}:${modelId}`;
+}
+
+export function toFallbackGroupModelId(groupId: string): string {
+  return toPublicModelId(FALLBACK_GROUP_PROVIDER, groupId);
 }
 
 function parsePublicModelId(model: string): { providerName: string; modelId: string } | null {
@@ -360,6 +388,14 @@ function parsePublicModelId(model: string): { providerName: string; modelId: str
     providerName: model.slice(0, separatorIndex),
     modelId: model.slice(separatorIndex + 1),
   };
+}
+
+function parseFallbackGroupModelId(model: string): string | null {
+  const parsed = parsePublicModelId(model);
+  if (!parsed || parsed.providerName !== FALLBACK_GROUP_PROVIDER) {
+    return null;
+  }
+  return parsed.modelId;
 }
 
 export function resolveProviderModel(model: string): ResolvedProviderModel | null {
@@ -385,6 +421,61 @@ export function resolveProviderModel(model: string): ResolvedProviderModel | nul
   };
 }
 
+export async function resolveFallbackGroupModel(
+  model: string,
+): Promise<ResolvedFallbackGroup | null> {
+  const groupId = parseFallbackGroupModelId(model);
+  if (!groupId) {
+    return null;
+  }
+
+  const group = await prisma.fallbackGroup.findUnique({
+    where: { id: groupId },
+    include: { targets: { orderBy: { position: "asc" } } },
+  });
+
+  if (!group?.enabled) {
+    return null;
+  }
+
+  const targets = group.targets
+    .map((target) => resolveProviderModel(toPublicModelId(target.provider, target.modelId)))
+    .filter((target): target is ResolvedProviderModel => Boolean(target));
+
+  if (targets.length === 0) {
+    return null;
+  }
+
+  return {
+    groupId: group.id,
+    name: group.name,
+    description: group.description,
+    publicModelId: toFallbackGroupModelId(group.id),
+    targets,
+  };
+}
+
+export async function resolveChatModel(model: string): Promise<ResolvedChatModel | null> {
+  const direct = resolveProviderModel(model);
+  if (direct) {
+    return { kind: "direct", requestedModelId: direct.publicModelId, targets: [direct] };
+  }
+
+  const fallbackGroup = await resolveFallbackGroupModel(model);
+  if (!fallbackGroup) {
+    return null;
+  }
+
+  return {
+    kind: "fallback-group",
+    groupId: fallbackGroup.groupId,
+    name: fallbackGroup.name,
+    description: fallbackGroup.description,
+    requestedModelId: fallbackGroup.publicModelId,
+    targets: fallbackGroup.targets,
+  };
+}
+
 export function getProvider(model: string): ProviderAdapter | null {
   return resolveProviderModel(model)?.provider ?? null;
 }
@@ -395,6 +486,58 @@ export function listAllModels(): Model[] {
     models.push(...provider.listModels());
   }
   return models;
+}
+
+export async function listFallbackGroupModels(): Promise<Model[]> {
+  const groups = await prisma.fallbackGroup.findMany({
+    where: { enabled: true },
+    orderBy: { name: "asc" },
+    include: { targets: { orderBy: { position: "asc" } } },
+  });
+
+  const models: Model[] = [];
+  for (const group of groups) {
+    const targets = group.targets
+      .map((target) => {
+        const resolved = resolveProviderModel(toPublicModelId(target.provider, target.modelId));
+        if (!resolved) return null;
+        const model = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
+        if (!model) return null;
+        return { resolved, model, position: target.position };
+      })
+      .filter(
+        (
+          target,
+        ): target is {
+          resolved: ResolvedProviderModel;
+          model: Model;
+          position: number;
+        } => Boolean(target),
+      );
+
+    const primary = targets[0];
+    if (!primary) continue;
+
+    models.push({
+      ...primary.model,
+      id: group.id,
+      name: group.name,
+      provider: FALLBACK_GROUP_PROVIDER,
+      type: "fallback-group",
+      fallbackTargets: targets.map(({ resolved, position }) => ({
+        provider: resolved.providerName,
+        modelId: resolved.modelId,
+        publicModelId: resolved.publicModelId,
+        position,
+      })),
+    });
+  }
+
+  return models;
+}
+
+export async function listPublicModels(): Promise<Model[]> {
+  return [...listAllModels(), ...(await listFallbackGroupModels())];
 }
 
 export function listConfiguredProviders(): string[] {

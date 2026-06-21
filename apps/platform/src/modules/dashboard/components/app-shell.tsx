@@ -22,6 +22,7 @@ import {
   BookOpen01Icon,
   BoxesIcon,
   DashboardSquare01Icon,
+  Flowchart02Icon,
   Key01Icon,
   Logout01Icon,
   Plug01Icon,
@@ -56,6 +57,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
       { to: "/models", label: "Models", icon: BoxesIcon },
+      { to: "/fallback-groups", label: "Fallbacks", icon: Flowchart02Icon, adminOnly: true },
     ],
   },
   {

@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { mockListAllModels, mockPrisma } = vi.hoisted(() => ({
-  mockListAllModels: vi.fn().mockReturnValue([]),
+const { mockListPublicModels, mockPrisma } = vi.hoisted(() => ({
+  mockListPublicModels: vi.fn().mockResolvedValue([]),
   mockPrisma: {
     disabledModel: { findMany: vi.fn().mockResolvedValue([]) },
     user: {
@@ -20,7 +20,7 @@ const { mockListAllModels, mockPrisma } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../providers/registry", () => ({
-  listAllModels: mockListAllModels,
+  listPublicModels: mockListPublicModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
 }));
 vi.mock("../../utils/prisma", () => ({ prisma: mockPrisma }));
@@ -57,7 +57,7 @@ describe("models router", () => {
   });
 
   it("GET /v1/models returns model list", async () => {
-    mockListAllModels.mockReturnValueOnce([
+    mockListPublicModels.mockResolvedValueOnce([
       {
         id: "gpt-4",
         name: "GPT-4",
@@ -85,7 +85,7 @@ describe("models router", () => {
   });
 
   it("GET /dashboard/models returns model list", async () => {
-    mockListAllModels.mockReturnValueOnce([
+    mockListPublicModels.mockResolvedValueOnce([
       {
         id: "gpt-4",
         name: "GPT-4",

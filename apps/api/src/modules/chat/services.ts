@@ -3,7 +3,12 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
 } from "../../providers/types";
-import { estimateCost, getModelPricing, resolveProviderModel } from "../../providers/registry";
+import {
+  estimateCost,
+  getModelPricing,
+  resolveChatModel,
+  type ResolvedProviderModel,
+} from "../../providers/registry";
 import { logRequest } from "../../middleware/logger";
 
 /**
@@ -19,6 +24,7 @@ export type ChatCompletionResult =
       provider: string;
       model: string;
       startTime: number;
+      responseModel: string;
     }
   | {
       kind: "complete";
@@ -50,81 +56,159 @@ export async function handleChatCompletion(
   apiKeyId: string,
   options: { requireBillableUsage?: boolean } = {},
 ): Promise<ChatCompletionResult> {
-  const resolved = resolveProviderModel(request.model);
+  const resolved = await resolveChatModel(request.model);
 
   if (!resolved) {
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  if (options.requireBillableUsage && !getModelPricing(request.model)) {
+  if (
+    options.requireBillableUsage &&
+    resolved.kind === "direct" &&
+    !getModelPricing(resolved.requestedModelId)
+  ) {
     throw new ApiKeyUnbillableUsageError();
   }
 
-  const providerRequest = { ...request, model: resolved.modelId };
   const startTime = Date.now();
 
-  try {
-    if (request.stream) {
-      // For streaming, hand off the async iterable to the router. The router
-      // owns writing chunks to the wire and will call logRequest() once the
-      // stream finishes (or fails) so usage can be recorded.
-      return {
-        kind: "stream",
-        stream: prefixStreamModel(
-          resolved.provider.chatCompletionStream(providerRequest),
-          resolved.publicModelId,
-        ),
-        provider: resolved.provider.name,
-        model: resolved.publicModelId,
-        startTime,
-      };
-    }
+  if (request.stream) {
+    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, startTime);
 
-    const response = await resolved.provider.chatCompletion(providerRequest);
-    const latencyMs = Date.now() - startTime;
-    const estimatedCost = estimateCost(
-      request.model,
-      response.usage?.prompt_tokens,
-      response.usage?.completion_tokens,
-    );
-
-    if (options.requireBillableUsage && estimatedCost === undefined) {
-      throw new ApiKeyUnbillableUsageError();
-    }
-
-    // Buffer log entry; flushed asynchronously by the logger middleware.
-    logRequest({
-      apiKeyId,
-      provider: resolved.provider.name,
-      model: resolved.publicModelId,
-      endpoint: "/v1/chat/completions",
-      latencyMs,
-      promptTokens: response.usage?.prompt_tokens,
-      completionTokens: response.usage?.completion_tokens,
-      totalTokens: response.usage?.total_tokens,
-      estimatedCost,
-      statusCode: 200,
-    });
-
-    return { kind: "complete", response: { ...response, model: resolved.publicModelId } };
-  } catch (error) {
-    const latencyMs = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-
-    // Log the failure so it is visible in admin stats. Streaming errors are
-    // also logged by the router when the iterable errors mid-flight.
-    logRequest({
-      apiKeyId,
-      provider: resolved.provider.name,
-      model: resolved.publicModelId,
-      endpoint: "/v1/chat/completions",
-      latencyMs,
-      statusCode: 500,
-      errorMessage,
-    });
-
-    throw error;
+    // For streaming, hand off the async iterable to the router. The router
+    // owns writing chunks to the wire and will call logRequest() once the
+    // stream finishes (or fails) so usage can be recorded.
+    return {
+      kind: "stream",
+      stream: prefixStreamModel(selected.stream, resolved.requestedModelId),
+      provider: selected.target.provider.name,
+      model: selected.target.publicModelId,
+      responseModel: resolved.requestedModelId,
+      startTime,
+    };
   }
+
+  return handleNonStreamingCompletion(
+    request,
+    apiKeyId,
+    resolved.requestedModelId,
+    resolved.targets,
+    {
+      requireBillableUsage: options.requireBillableUsage,
+      startTime,
+    },
+  );
+}
+
+async function handleNonStreamingCompletion(
+  request: ChatCompletionRequest,
+  apiKeyId: string,
+  responseModelId: string,
+  targets: ResolvedProviderModel[],
+  options: { requireBillableUsage?: boolean; startTime: number },
+): Promise<ChatCompletionResult> {
+  let lastError: unknown;
+
+  for (const target of targets) {
+    try {
+      const response = await target.provider.chatCompletion({ ...request, model: target.modelId });
+      const latencyMs = Date.now() - options.startTime;
+      const estimatedCost = estimateCost(
+        target.publicModelId,
+        response.usage?.prompt_tokens,
+        response.usage?.completion_tokens,
+      );
+
+      if (options.requireBillableUsage && estimatedCost === undefined) {
+        throw new ApiKeyUnbillableUsageError();
+      }
+
+      // Buffer log entry; flushed asynchronously by the logger middleware.
+      logRequest({
+        apiKeyId,
+        provider: target.provider.name,
+        model: target.publicModelId,
+        endpoint: "/v1/chat/completions",
+        latencyMs,
+        promptTokens: response.usage?.prompt_tokens,
+        completionTokens: response.usage?.completion_tokens,
+        totalTokens: response.usage?.total_tokens,
+        estimatedCost,
+        statusCode: 200,
+      });
+
+      return { kind: "complete", response: { ...response, model: responseModelId } };
+    } catch (error) {
+      lastError = error;
+      const latencyMs = Date.now() - options.startTime;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      // Log the failed concrete attempt before trying the next fallback target.
+      logRequest({
+        apiKeyId,
+        provider: target.provider.name,
+        model: target.publicModelId,
+        endpoint: "/v1/chat/completions",
+        latencyMs,
+        statusCode: 500,
+        errorMessage,
+      });
+    }
+  }
+
+  throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+async function resolveStreamingTarget(
+  request: ChatCompletionRequest,
+  apiKeyId: string,
+  targets: ResolvedProviderModel[],
+  startTime: number,
+): Promise<{ target: ResolvedProviderModel; stream: AsyncIterable<ChatCompletionChunk> }> {
+  let lastError: unknown;
+
+  for (const target of targets) {
+    try {
+      const stream = target.provider.chatCompletionStream({ ...request, model: target.modelId });
+      return { target, stream: await prefetchFirstStreamChunk(stream) };
+    } catch (error) {
+      lastError = error;
+      const latencyMs = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      logRequest({
+        apiKeyId,
+        provider: target.provider.name,
+        model: target.publicModelId,
+        endpoint: "/v1/chat/completions",
+        latencyMs,
+        statusCode: 500,
+        errorMessage,
+      });
+    }
+  }
+
+  throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+async function prefetchFirstStreamChunk(
+  stream: AsyncIterable<ChatCompletionChunk>,
+): Promise<AsyncIterable<ChatCompletionChunk>> {
+  const iterator = stream[Symbol.asyncIterator]();
+  const first = await iterator.next();
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      if (!first.done) {
+        yield first.value;
+      }
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) return;
+        yield next.value;
+      }
+    },
+  };
 }
 
 async function* prefixStreamModel(

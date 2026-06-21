@@ -40,6 +40,7 @@ export interface Model {
   id: string;
   name: string;
   provider: string;
+  type?: "provider" | "fallback-group";
   /** Price per 1M input (prompt) tokens in USD. */
   inputPricePer1M: number;
   /** Price per 1M output (completion) tokens in USD. */
@@ -54,6 +55,12 @@ export interface Model {
   toolCall: boolean;
   structuredOutput: boolean;
   weights: "open" | "closed";
+  fallbackTargets?: {
+    provider: string;
+    modelId: string;
+    publicModelId: string;
+    position: number;
+  }[];
 }
 
 /** Sensible defaults for most modern chat models. Override as needed. */
