@@ -20,7 +20,6 @@ import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import {
   BookOpen01Icon,
   BoxesIcon,
-  ChartLineIcon,
   DashboardSquare01Icon,
   Key01Icon,
   Plug01Icon,
@@ -62,12 +61,16 @@ export function AppShell() {
     <SidebarProvider>
       <Sidebar collapsible="icon">
         <SidebarHeader>
-          <div className="flex items-center gap-2 px-2 py-1.5">
-            <div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
-              <HugeiconsIcon icon={ChartLineIcon} className="size-4" />
-            </div>
-            <span className="truncate font-semibold">Mux Gateway</span>
-          </div>
+          <Link
+            to="/"
+            aria-label="Mux Gateway"
+            className="flex h-10 items-center px-2 text-sm font-semibold tracking-normal group-data-[collapsible=icon]:justify-center"
+          >
+            <span className="truncate group-data-[collapsible=icon]:hidden">Mux Gateway</span>
+            <span aria-hidden="true" className="hidden group-data-[collapsible=icon]:block">
+              M
+            </span>
+          </Link>
         </SidebarHeader>
         <SidebarContent>
           <SidebarGroup>
