@@ -2,7 +2,6 @@ import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth } from "../../middleware/api-key";
 import { listPublicModels, toPublicModelId } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
-import { prisma } from "../../utils/prisma";
 
 /**
  * Formats a provider model into the OpenAI `GET /v1/models` response shape.
@@ -69,13 +68,8 @@ modelsDashboardRouter.use("*", requireUser);
 modelsDashboardRouter.get("/", async (c) => {
   try {
     const models = await listPublicModels();
-    const disabled = new Set(
-      (await prisma.disabledModel.findMany({ select: { modelId: true, provider: true } })).map(
-        (r) => `${r.provider}:${r.modelId}`,
-      ),
-    );
     return c.json({
-      data: models.filter((m) => !disabled.has(`${m.provider}:${m.id}`)).map(toDashboardModel),
+      data: models.map(toDashboardModel),
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";

@@ -76,4 +76,56 @@ describe("OpenAIAdapter", () => {
       total_tokens: 5,
     });
   });
+
+  it("forwards advanced chat completion fields", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chat-1",
+        model: "gpt-4o",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.chatCompletion({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "lookup",
+            parameters: { type: "object", properties: { q: { type: "string" } } },
+          },
+        },
+      ],
+      tool_choice: "auto",
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "answer", schema: { type: "object" } },
+      },
+      top_p: 0.9,
+      stop: ["END"],
+      seed: 1,
+      logprobs: true,
+      top_logprobs: 2,
+      reasoning_effort: "low",
+      metadata: { trace: "t1" },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      tools: [{ type: "function", function: { name: "lookup" } }],
+      tool_choice: "auto",
+      response_format: { type: "json_schema" },
+      top_p: 0.9,
+      stop: ["END"],
+      seed: 1,
+      logprobs: true,
+      top_logprobs: 2,
+      reasoning_effort: "low",
+      metadata: { trace: "t1" },
+    });
+  });
 });

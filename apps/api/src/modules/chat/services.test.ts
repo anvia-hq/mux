@@ -48,6 +48,7 @@ vi.mock("../../providers/registry", () => ({
 
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
 import type { ChatCompletionRequest } from "../../providers/types";
+import { openAICompatibleCapabilities, unsupportedNativeCapabilities } from "../../providers/chat-compat";
 
 describe("chat services", () => {
   afterEach(() => {
@@ -72,7 +73,24 @@ describe("chat services", () => {
       name: provider,
       chatCompletion: overrides?.chatCompletion ?? vi.fn(),
       chatCompletionStream: overrides?.chatCompletionStream ?? vi.fn(),
-      listModels: vi.fn().mockReturnValue([]),
+      listModels: vi.fn().mockReturnValue([
+        {
+          id: modelId,
+          name: modelId,
+          provider,
+          inputPricePer1M: 1,
+          outputPricePer1M: 1,
+          contextWindow: 1,
+          maxOutputTokens: 1,
+          inputModalities: ["text"],
+          outputModalities: ["text"],
+          reasoning: true,
+          toolCall: true,
+          structuredOutput: true,
+          weights: "closed",
+        },
+      ]),
+      capabilities: provider === "openai" ? openAICompatibleCapabilities : unsupportedNativeCapabilities,
     },
     providerName: provider,
     modelId,
@@ -237,5 +255,47 @@ describe("chat services", () => {
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ model: "anthropic:claude-3-haiku", statusCode: 200 }),
     );
+  });
+
+  it("fails fast when a direct model cannot support requested features", async () => {
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "anthropic:claude-3-haiku",
+      targets: [
+        {
+          ...createResolvedModel("anthropic", "claude-3-haiku"),
+          provider: {
+            ...createResolvedModel("anthropic", "claude-3-haiku").provider,
+            capabilities: unsupportedNativeCapabilities,
+            listModels: vi.fn().mockReturnValue([
+              {
+                id: "claude-3-haiku",
+                name: "Claude",
+                provider: "anthropic",
+                inputPricePer1M: 1,
+                outputPricePer1M: 1,
+                contextWindow: 1,
+                maxOutputTokens: 1,
+                inputModalities: ["text"],
+                outputModalities: ["text"],
+                reasoning: false,
+                toolCall: false,
+                structuredOutput: false,
+                weights: "closed",
+              },
+            ]),
+          },
+        },
+      ],
+    });
+
+    await expect(
+      handleChatCompletion(
+        createRequest({
+          response_format: { type: "json_object" },
+        }),
+        "key-1",
+      ),
+    ).rejects.toThrow("does not support requested feature");
   });
 });

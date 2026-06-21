@@ -19,10 +19,10 @@ const BASE_URL_PLACEHOLDER = "__MUX_GATEWAY_BASE_URL__";
 
 function getGatewayBaseUrl() {
   if (typeof window === "undefined") {
-    return "http://localhost/v1";
+    return "http://localhost/api/v1";
   }
 
-  return `${window.location.origin}/v1`;
+  return `${window.location.origin}/api/v1`;
 }
 
 const codeTheme = {

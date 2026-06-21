@@ -5,11 +5,13 @@ import type {
   Model,
   ProviderAdapter,
 } from "./types";
+import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export class ModelsDevProviderAdapter implements ProviderAdapter {
   name: string;
+  capabilities = openAICompatibleCapabilities;
   private apiKey: string;
   private chatCompletionsUrl?: string;
   private models: Model[];
@@ -102,14 +104,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   }
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
-    return JSON.stringify({
-      model: request.model,
-      messages: request.messages,
-      temperature: request.temperature,
-      max_tokens: request.max_tokens,
-      stream,
-      stream_options: stream ? { include_usage: true } : undefined,
-    });
+    return buildOpenAICompatibleRequestBody(request, stream);
   }
 
   private toChatCompletionsUrl(apiBase: string): string {

@@ -1,6 +1,76 @@
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "refusal"; refusal: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+  | { type: "input_audio"; input_audio: { data: string; format: string } }
+  | { type: "file"; file: { file_id?: string; filename?: string; file_data?: string } };
+
+export type ToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+export type ToolCallDelta = {
+  index?: number;
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+};
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content?: string | ChatContentPart[] | null;
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: ToolCall[];
+}
+
+export type ChatTool = {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+    strict?: boolean;
+  };
+};
+
+export type ChatToolChoice =
+  | "none"
+  | "auto"
+  | "required"
+  | {
+      type: "function";
+      function: { name: string };
+    };
+
+export type ChatResponseFormat =
+  | { type: "text" }
+  | { type: "json_object" }
+  | {
+      type: "json_schema";
+      json_schema: {
+        name: string;
+        description?: string;
+        schema?: Record<string, unknown>;
+        strict?: boolean;
+      };
+    };
+
+export type ChatAudioOptions = {
+  voice: string;
+  format: "wav" | "mp3" | "flac" | "opus" | "pcm16";
+};
+
+export type ChatStreamOptions = {
+  include_usage?: boolean;
 }
 
 export interface ChatCompletionRequest {
@@ -9,6 +79,27 @@ export interface ChatCompletionRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  tools?: ChatTool[];
+  tool_choice?: ChatToolChoice;
+  parallel_tool_calls?: boolean;
+  response_format?: ChatResponseFormat;
+  top_p?: number;
+  stop?: string | string[];
+  n?: number;
+  seed?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  logit_bias?: Record<string, number>;
+  logprobs?: boolean;
+  top_logprobs?: number;
+  user?: string;
+  metadata?: Record<string, string>;
+  store?: boolean;
+  service_tier?: "auto" | "default" | "flex";
+  reasoning_effort?: "minimal" | "low" | "medium" | "high";
+  modalities?: ("text" | "audio")[];
+  audio?: ChatAudioOptions;
+  stream_options?: ChatStreamOptions;
 }
 
 export interface ChatCompletionResponse {
@@ -18,6 +109,7 @@ export interface ChatCompletionResponse {
     index: number;
     message: ChatMessage;
     finish_reason: string | null;
+    logprobs?: unknown;
   }[];
   usage: {
     prompt_tokens: number;
@@ -31,14 +123,29 @@ export interface ChatCompletionChunk {
   model: string;
   choices: {
     index: number;
-    delta: Partial<ChatMessage>;
+    delta: {
+      role?: ChatMessage["role"];
+      content?: string | null;
+      tool_calls?: ToolCallDelta[];
+    };
     finish_reason: string | null;
+    logprobs?: unknown;
   }[];
   usage?: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
   };
+}
+
+export interface ProviderCapabilities {
+  tools: boolean;
+  structuredOutput: boolean;
+  multimodalInput: boolean;
+  audioOutput: boolean;
+  reasoning: boolean;
+  logprobs: boolean;
+  openAICompatiblePassthrough: boolean;
 }
 
 export interface Model {
@@ -87,6 +194,7 @@ export const textOnly = { inputModalities: ["text"], outputModalities: ["text"] 
 
 export interface ProviderAdapter {
   name: string;
+  capabilities: ProviderCapabilities;
   chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
   chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk>;
   listModels(): Model[];

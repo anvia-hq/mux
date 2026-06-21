@@ -30,6 +30,7 @@ import {
   Settings01Icon,
 } from "@hugeicons/core-free-icons";
 import { meQueryOptions, useLogoutMutation } from "../../auth/hooks/use-auth";
+import muxLogoUrl from "../../../assets/logo-mux.png";
 
 type NavItem = {
   to: string;
@@ -94,12 +95,12 @@ export function AppShell() {
             aria-label="Mux Gateway"
             className="flex h-10 items-center gap-2 px-2 text-sm font-semibold tracking-normal group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
-            <span
+            <img
+              src={muxLogoUrl}
+              alt=""
               aria-hidden="true"
-              className="flex size-6 shrink-0 items-center justify-center rounded-[6px] bg-white font-black text-[15px] text-black leading-none shadow-[inset_0_0_0_1px_rgb(255_255_255_/_0.45),0_1px_2px_rgb(0_0_0_/_0.18)]"
-            >
-              M
-            </span>
+              className="size-6 shrink-0 rounded-[6px] object-cover"
+            />
             <span className="truncate group-data-[collapsible=icon]:hidden">Mux Gateway</span>
           </Link>
         </SidebarHeader>

@@ -52,6 +52,22 @@ describe("ModelsDevProviderAdapter", () => {
     expect(resp.id).toBe("r1");
   });
 
+  it("chatCompletion forwards advanced OpenAI-compatible fields", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(Response.json({
+      id: "r1", model: "m1", choices: [], usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    }));
+    const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", apiBase: "https://x.com", models: testModels });
+    await a.chatCompletion({
+      model: "m1",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "lookup" } }],
+      response_format: { type: "json_object" },
+    });
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.tools).toEqual([{ type: "function", function: { name: "lookup" } }]);
+    expect(requestBody.response_format).toEqual({ type: "json_object" });
+  });
+
   it("chatCompletion throws on non-ok", async () => {
     mockGlobalFetch.mockResolvedValueOnce(new Response("err", { status: 429 }));
     const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", apiBase: "https://x.com", models: testModels });

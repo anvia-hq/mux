@@ -145,6 +145,7 @@ import { XiaomiTokenPlanSgpAdapter } from "./xiaomi-token-plan-sgp";
 import { ClaudinioAdapter } from "./claudinio";
 import { prisma } from "../utils/prisma";
 import { decrypt } from "../modules/providers/crypto";
+import { applyRuntimeCapabilities } from "./chat-compat";
 
 const providers: Map<string, ProviderAdapter> = new Map();
 export const FALLBACK_GROUP_PROVIDER = "mux";
@@ -378,6 +379,19 @@ export function toFallbackGroupModelId(groupId: string): string {
   return toPublicModelId(FALLBACK_GROUP_PROVIDER, groupId);
 }
 
+function disabledModelKey(provider: string, modelId: string): string {
+  return toPublicModelId(provider, modelId);
+}
+
+async function listDisabledModelKeys(): Promise<Set<string>> {
+  const rows = await prisma.disabledModel.findMany({ select: { modelId: true, provider: true } });
+  return new Set(rows.map((row) => disabledModelKey(row.provider, row.modelId)));
+}
+
+function isModelDisabled(disabledModels: Set<string>, provider: string, modelId: string): boolean {
+  return disabledModels.has(disabledModelKey(provider, modelId));
+}
+
 function parsePublicModelId(model: string): { providerName: string; modelId: string } | null {
   const separatorIndex = model.indexOf(":");
   if (separatorIndex <= 0 || separatorIndex === model.length - 1) {
@@ -421,9 +435,27 @@ export function resolveProviderModel(model: string): ResolvedProviderModel | nul
   };
 }
 
+function resolveEnabledProviderModel(
+  model: string,
+  disabledModels: Set<string>,
+): ResolvedProviderModel | null {
+  const resolved = resolveProviderModel(model);
+  if (!resolved) {
+    return null;
+  }
+
+  if (isModelDisabled(disabledModels, resolved.providerName, resolved.modelId)) {
+    return null;
+  }
+
+  return resolved;
+}
+
 export async function resolveFallbackGroupModel(
   model: string,
+  disabledModels?: Set<string>,
 ): Promise<ResolvedFallbackGroup | null> {
+  const disabled = disabledModels ?? (await listDisabledModelKeys());
   const groupId = parseFallbackGroupModelId(model);
   if (!groupId) {
     return null;
@@ -439,7 +471,9 @@ export async function resolveFallbackGroupModel(
   }
 
   const targets = group.targets
-    .map((target) => resolveProviderModel(toPublicModelId(target.provider, target.modelId)))
+    .map((target) =>
+      resolveEnabledProviderModel(toPublicModelId(target.provider, target.modelId), disabled),
+    )
     .filter((target): target is ResolvedProviderModel => Boolean(target));
 
   if (targets.length === 0) {
@@ -456,12 +490,13 @@ export async function resolveFallbackGroupModel(
 }
 
 export async function resolveChatModel(model: string): Promise<ResolvedChatModel | null> {
-  const direct = resolveProviderModel(model);
+  const disabledModels = await listDisabledModelKeys();
+  const direct = resolveEnabledProviderModel(model, disabledModels);
   if (direct) {
     return { kind: "direct", requestedModelId: direct.publicModelId, targets: [direct] };
   }
 
-  const fallbackGroup = await resolveFallbackGroupModel(model);
+  const fallbackGroup = await resolveFallbackGroupModel(model, disabledModels);
   if (!fallbackGroup) {
     return null;
   }
@@ -483,12 +518,19 @@ export function getProvider(model: string): ProviderAdapter | null {
 export function listAllModels(): Model[] {
   const models: Model[] = [];
   for (const provider of providers.values()) {
-    models.push(...provider.listModels());
+    models.push(
+      ...provider
+        .listModels()
+        .map((model) => applyRuntimeCapabilities(model, provider.capabilities)),
+    );
   }
   return models;
 }
 
-export async function listFallbackGroupModels(): Promise<Model[]> {
+export async function listFallbackGroupModels(
+  disabledModels?: Set<string>,
+): Promise<Model[]> {
+  const disabled = disabledModels ?? (await listDisabledModelKeys());
   const groups = await prisma.fallbackGroup.findMany({
     where: { enabled: true },
     orderBy: { name: "asc" },
@@ -499,9 +541,15 @@ export async function listFallbackGroupModels(): Promise<Model[]> {
   for (const group of groups) {
     const targets = group.targets
       .map((target) => {
-        const resolved = resolveProviderModel(toPublicModelId(target.provider, target.modelId));
+        const resolved = resolveEnabledProviderModel(
+          toPublicModelId(target.provider, target.modelId),
+          disabled,
+        );
         if (!resolved) return null;
-        const model = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
+        const sourceModel = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
+        const model = sourceModel
+          ? applyRuntimeCapabilities(sourceModel, resolved.provider.capabilities)
+          : null;
         if (!model) return null;
         return { resolved, model, position: target.position };
       })
@@ -537,7 +585,11 @@ export async function listFallbackGroupModels(): Promise<Model[]> {
 }
 
 export async function listPublicModels(): Promise<Model[]> {
-  return [...listAllModels(), ...(await listFallbackGroupModels())];
+  const disabledModels = await listDisabledModelKeys();
+  const providerModels = listAllModels().filter(
+    (model) => !isModelDisabled(disabledModels, model.provider, model.id),
+  );
+  return [...providerModels, ...(await listFallbackGroupModels(disabledModels))];
 }
 
 export function listConfiguredProviders(): string[] {
@@ -552,7 +604,8 @@ export function listConfiguredProviders(): string[] {
 export function getModelPricing(modelId: string): Model | null {
   const resolved = resolveProviderModel(modelId);
   if (!resolved) return null;
-  return resolved.provider.listModels().find((m) => m.id === resolved.modelId) ?? null;
+  const model = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
+  return model ? applyRuntimeCapabilities(model, resolved.provider.capabilities) : null;
 }
 
 /**

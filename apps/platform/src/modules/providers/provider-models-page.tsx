@@ -289,9 +289,6 @@ export function ProviderModelsPage({ provider }: { provider: ProviderName }) {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Badge variant={model.enabled ? "default" : "secondary"}>
-                          {model.enabled ? "On" : "Off"}
-                        </Badge>
                         <Switch
                           checked={model.enabled}
                           onCheckedChange={(checked) =>

@@ -9,6 +9,11 @@ import {
   resolveChatModel,
   type ResolvedProviderModel,
 } from "../../providers/registry";
+import {
+  assertChatFeaturesSupported,
+  requestedChatFeatures,
+  UnsupportedChatFeatureError,
+} from "../../providers/chat-compat";
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
@@ -71,10 +76,11 @@ export async function handleChatCompletion(
     throw new ApiKeyUnbillableUsageError();
   }
 
+  const targets = compatibleTargetsForRequest(request, resolved.targets, resolved.kind === "direct");
   const startTime = Date.now();
 
   if (request.stream) {
-    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, startTime);
+    const selected = await resolveStreamingTarget(request, apiKeyId, targets, startTime);
 
     // For streaming, hand off the async iterable to the router. The router
     // owns the stream audit lifecycle because usage is only known after chunks
@@ -93,12 +99,47 @@ export async function handleChatCompletion(
     request,
     apiKeyId,
     resolved.requestedModelId,
-    resolved.targets,
+    targets,
     {
       requireBillableUsage: options.requireBillableUsage,
       startTime,
     },
   );
+}
+
+function compatibleTargetsForRequest(
+  request: ChatCompletionRequest,
+  targets: ResolvedProviderModel[],
+  throwForFirstTarget: boolean,
+): ResolvedProviderModel[] {
+  const compatible = targets.filter((target) => {
+    const model = target.provider.listModels().find((m) => m.id === target.modelId);
+    if (!model) return false;
+
+    try {
+      assertChatFeaturesSupported(
+        request,
+        model,
+        target.publicModelId,
+        target.provider.capabilities,
+      );
+      return true;
+    } catch (error) {
+      if (throwForFirstTarget && error instanceof UnsupportedChatFeatureError) {
+        throw error;
+      }
+      return false;
+    }
+  });
+
+  if (compatible.length === 0) {
+    throw new UnsupportedChatFeatureError(
+      targets[0]?.publicModelId ?? request.model,
+      Array.from(requestedChatFeatures(request)),
+    );
+  }
+
+  return compatible;
 }
 
 async function handleNonStreamingCompletion(

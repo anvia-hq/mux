@@ -4,7 +4,11 @@ import type {
   ChatCompletionChunk,
   ProviderAdapter,
   Model,
+  ChatContentPart,
+  ChatMessage,
+  ToolCall,
 } from "./types";
+import { googleCapabilities } from "./chat-compat";
 
 const MODELS: Model[] = [
   {
@@ -344,6 +348,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 export class GoogleAdapter implements ProviderAdapter {
   name = "google";
+  capabilities = googleCapabilities;
   private apiKey: string;
 
   constructor(apiKey: string) {
@@ -360,7 +365,7 @@ export class GoogleAdapter implements ProviderAdapter {
       .filter((m) => m.role !== "system")
       .map((m) => ({
         role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: m.content }],
+        parts: this.convertMessageParts(m),
       }));
 
     const systemInstruction = messages.find((m) => m.role === "system");
@@ -373,11 +378,78 @@ export class GoogleAdapter implements ProviderAdapter {
     };
   }
 
+  private convertMessageParts(message: ChatMessage): unknown[] {
+    if (message.role === "tool") {
+      return [
+        {
+          functionResponse: {
+            name: message.name ?? message.tool_call_id ?? "tool",
+            response: safeJsonObject(contentToText(message.content)),
+          },
+        },
+      ];
+    }
+
+    const parts = Array.isArray(message.content)
+      ? message.content.map((part) => this.convertContentPart(part))
+      : message.content == null
+        ? []
+        : [{ text: message.content }];
+
+    if (message.tool_calls?.length) {
+      parts.push(
+        ...message.tool_calls.map((toolCall) => ({
+          functionCall: {
+            name: toolCall.function.name,
+            args: safeJsonObject(toolCall.function.arguments),
+          },
+        })),
+      );
+    }
+
+    return parts;
+  }
+
+  private convertContentPart(part: ChatContentPart): unknown {
+    if (part.type === "text") return { text: part.text };
+    if (part.type === "refusal") return { text: part.refusal };
+    if (part.type === "image_url") {
+      const inlineData = dataUrlToInlineData(part.image_url.url);
+      return inlineData ?? { fileData: { fileUri: part.image_url.url } };
+    }
+    if (part.type === "input_audio") {
+      return {
+        inlineData: {
+          mimeType: `audio/${part.input_audio.format}`,
+          data: part.input_audio.data,
+        },
+      };
+    }
+    return part.file.file_data
+      ? {
+          inlineData: {
+            mimeType: "application/pdf",
+            data: part.file.file_data,
+          },
+        }
+      : { fileData: { fileUri: part.file.file_id ?? part.file.filename ?? "" } };
+  }
+
   private buildRequestBody(request: ChatCompletionRequest, _stream: boolean): string {
     const converted = this.convertMessages(request.messages);
     const generationConfig: Record<string, unknown> = {};
     if (request.temperature !== undefined) generationConfig.temperature = request.temperature;
     if (request.max_tokens !== undefined) generationConfig.maxOutputTokens = request.max_tokens;
+    if (request.top_p !== undefined) generationConfig.topP = request.top_p;
+    if (request.stop !== undefined)
+      generationConfig.stopSequences = Array.isArray(request.stop) ? request.stop : [request.stop];
+    if (request.response_format?.type === "json_object") {
+      generationConfig.responseMimeType = "application/json";
+    }
+    if (request.response_format?.type === "json_schema") {
+      generationConfig.responseMimeType = "application/json";
+      generationConfig.responseSchema = request.response_format.json_schema.schema;
+    }
 
     const body: Record<string, unknown> = {
       contents: converted.contents,
@@ -385,6 +457,20 @@ export class GoogleAdapter implements ProviderAdapter {
     };
     if (converted.systemInstruction) {
       body.systemInstruction = converted.systemInstruction;
+    }
+    if (request.tools?.length) {
+      body.tools = [
+        {
+          functionDeclarations: request.tools.map((tool) => ({
+            name: tool.function.name,
+            description: tool.function.description,
+            parameters: tool.function.parameters ?? { type: "object", properties: {} },
+          })),
+        },
+      ];
+    }
+    if (request.tool_choice !== undefined) {
+      body.toolConfig = toGoogleToolConfig(request.tool_choice);
     }
     return JSON.stringify(body);
   }
@@ -411,7 +497,7 @@ export class GoogleAdapter implements ProviderAdapter {
     const data = (await response.json()) as {
       id?: string;
       candidates?: {
-        content?: { parts?: { text?: string }[] };
+        content?: { parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[] };
         finishReason?: string;
       }[];
       usageMetadata?: {
@@ -422,7 +508,26 @@ export class GoogleAdapter implements ProviderAdapter {
     };
 
     const candidate = data.candidates?.[0];
-    const content = candidate?.content?.parts?.[0]?.text ?? "";
+    const parts = candidate?.content?.parts ?? [];
+    const content = parts
+      .filter((part): part is { text: string } => typeof part.text === "string")
+      .map((part) => part.text)
+      .join("");
+    const toolCalls = parts
+      .filter(
+        (part): part is { functionCall: { name: string; args?: unknown } } =>
+          Boolean(part.functionCall?.name),
+      )
+      .map(
+        (part, index): ToolCall => ({
+          id: `call_${index}`,
+          type: "function",
+          function: {
+            name: part.functionCall.name,
+            arguments: JSON.stringify(part.functionCall.args ?? {}),
+          },
+        }),
+      );
 
     return {
       id: data.id ?? `google-${Date.now()}`,
@@ -433,8 +538,9 @@ export class GoogleAdapter implements ProviderAdapter {
           message: {
             role: "assistant",
             content,
+            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
           },
-          finish_reason: candidate?.finishReason ?? "stop",
+          finish_reason: toolCalls.length > 0 ? "tool_calls" : candidate?.finishReason ?? "stop",
         },
       ],
       usage: {
@@ -538,7 +644,7 @@ export class GoogleAdapter implements ProviderAdapter {
           const c = chunk as {
             id?: string;
             candidates?: {
-              content?: { parts?: { text?: string }[] };
+              content?: { parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[] };
               finishReason?: string;
             }[];
             usageMetadata?: {
@@ -548,7 +654,8 @@ export class GoogleAdapter implements ProviderAdapter {
             };
           };
           const candidate = c.candidates?.[0];
-          const text = candidate?.content?.parts?.[0]?.text;
+          const text = candidate?.content?.parts?.find((part) => typeof part.text === "string")
+            ?.text;
           if (text !== undefined) {
             yield {
               id: c.id ?? `google-${Date.now()}`,
@@ -558,6 +665,33 @@ export class GoogleAdapter implements ProviderAdapter {
                   index: 0,
                   delta: { content: text },
                   finish_reason: candidate?.finishReason ?? null,
+                },
+              ],
+            };
+          }
+          const functionCall = candidate?.content?.parts?.find((part) => part.functionCall)
+            ?.functionCall;
+          if (functionCall?.name) {
+            yield {
+              id: c.id ?? `google-${Date.now()}`,
+              model: request.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: {
+                    tool_calls: [
+                      {
+                        index: 0,
+                        id: "call_0",
+                        type: "function",
+                        function: {
+                          name: functionCall.name,
+                          arguments: JSON.stringify(functionCall.args ?? {}),
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
                 },
               ],
             };
@@ -594,4 +728,45 @@ export class GoogleAdapter implements ProviderAdapter {
   listModels(): Model[] {
     return MODELS;
   }
+}
+
+function contentToText(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return content;
+  if (!content) return "";
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("");
+}
+
+function safeJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : { content: value };
+  } catch {
+    return { content: value };
+  }
+}
+
+function dataUrlToInlineData(url: string): { inlineData: { mimeType: string; data: string } } | null {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(url);
+  if (!match) return null;
+  return { inlineData: { mimeType: match[1] ?? "image/png", data: match[2] ?? "" } };
+}
+
+function toGoogleToolConfig(toolChoice: ChatCompletionRequest["tool_choice"]): unknown {
+  if (toolChoice === "none") return { functionCallingConfig: { mode: "NONE" } };
+  if (toolChoice === "required") return { functionCallingConfig: { mode: "ANY" } };
+  if (toolChoice === "auto") return { functionCallingConfig: { mode: "AUTO" } };
+  if (toolChoice && typeof toolChoice === "object") {
+    return {
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: [toolChoice.function.name],
+      },
+    };
+  }
+  return undefined;
 }

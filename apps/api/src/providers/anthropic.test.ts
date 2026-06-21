@@ -71,4 +71,51 @@ describe("AnthropicAdapter", () => {
       total_tokens: 10,
     });
   });
+
+  it("translates tools and tool results to Anthropic format", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "msg-1",
+        model: "claude-test",
+        content: [{ type: "tool_use", id: "toolu_1", name: "lookup", input: { q: "hi" } }],
+        stop_reason: "tool_use",
+        usage: { input_tokens: 5, output_tokens: 6 },
+      }),
+    );
+
+    const adapter = new AnthropicAdapter("sk-test");
+    const response = await adapter.chatCompletion({
+      model: "claude-test",
+      messages: [
+        { role: "user", content: "hi" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_1", content: "{\"ok\":true}" },
+      ],
+      tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
+      tool_choice: { type: "function", function: { name: "lookup" } },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.tools).toEqual([
+      { name: "lookup", input_schema: { type: "object" } },
+    ]);
+    expect(requestBody.tool_choice).toEqual({ type: "tool", name: "lookup" });
+    expect(requestBody.messages[1].content[0]).toMatchObject({ type: "tool_use", name: "lookup" });
+    expect(requestBody.messages[2].content[0]).toMatchObject({ type: "tool_result" });
+    expect(response.choices[0]?.message.tool_calls?.[0]).toMatchObject({
+      id: "toolu_1",
+      function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+    });
+    expect(response.choices[0]?.finish_reason).toBe("tool_calls");
+  });
 });

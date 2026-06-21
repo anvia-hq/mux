@@ -8,6 +8,10 @@ import {
 } from "../../middleware/logger";
 import { estimateCost } from "../../providers/registry";
 import {
+  UnsupportedChatFeatureError,
+  validateChatCompletionRequestShape,
+} from "../../providers/chat-compat";
+import {
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
   assertApiKeyCanSpend,
@@ -39,8 +43,9 @@ chatRouter.post("/completions", async (c) => {
     return c.json({ error: "invalid JSON body" }, 400);
   }
 
-  if (!body?.model || !Array.isArray(body.messages) || body.messages.length === 0) {
-    return c.json({ error: "request must include a model and a non-empty messages array" }, 400);
+  const validationError = validateChatCompletionRequestShape(body);
+  if (validationError) {
+    return c.json({ error: validationError }, 400);
   }
 
   if (isLimitedKey && body.stream) {
@@ -161,6 +166,10 @@ chatRouter.post("/completions", async (c) => {
       error instanceof ApiKeySpendLedgerUnavailableError
     ) {
       return c.json({ error: errorMessage }, 503);
+    }
+
+    if (error instanceof UnsupportedChatFeatureError) {
+      return c.json({ error: errorMessage }, 422);
     }
 
     return c.json({ error: errorMessage }, 500);

@@ -54,6 +54,27 @@ vi.mock("../../middleware/logger", () => {
   };
 });
 vi.mock("../../providers/registry", () => ({ estimateCost: mockEstimateCost }));
+vi.mock("../../providers/chat-compat", () => {
+  class UnsupportedChatFeatureError extends Error {
+    constructor() {
+      super("Model x does not support requested feature(s): structuredOutput");
+      this.name = "UnsupportedChatFeatureError";
+    }
+  }
+
+  return {
+    UnsupportedChatFeatureError,
+    validateChatCompletionRequestShape: vi.fn((body: { model?: string; messages?: { role?: string; tool_call_id?: string }[] }) => {
+      if (!body.model) return "request must include a model";
+      if (!Array.isArray(body.messages) || body.messages.length === 0)
+        return "request must include a non-empty messages array";
+      const toolMessage = body.messages?.find((message) => message.role === "tool");
+      return toolMessage && typeof toolMessage.tool_call_id !== "string"
+        ? "messages[0].tool_call_id is required for tool messages"
+        : null;
+    }),
+  };
+});
 vi.mock("../keys/services", () => {
   class ApiKeySpendLimitExceededError extends Error {
     constructor() {
@@ -80,6 +101,7 @@ import { chatRouter } from "./router";
 import { ApiKeyUnbillableUsageError } from "./services";
 import { RequestLoggingUnavailableError } from "../../middleware/logger";
 import { ApiKeySpendLedgerUnavailableError, ApiKeySpendLimitExceededError } from "../keys/services";
+import { UnsupportedChatFeatureError } from "../../providers/chat-compat";
 
 describe("chat router", () => {
   beforeEach(() => {
@@ -115,6 +137,16 @@ describe("chat router", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "gpt-4", messages: [] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /completions 400 malformed tool message", async () => {
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "tool", content: "ok" }] }),
     });
     expect(res.status).toBe(400);
   });
@@ -290,6 +322,23 @@ describe("chat router", () => {
     });
     expect(res.status).toBe(503);
     expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("POST /completions 422 when requested features are unsupported", async () => {
+    mockHandleChatCompletion.mockRejectedValueOnce(
+      new UnsupportedChatFeatureError("anthropic:claude", ["structuredOutput"]),
+    );
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic:claude",
+        messages: [{ role: "user", content: "hi" }],
+        response_format: { type: "json_object" },
+      }),
+    });
+    expect(res.status).toBe(422);
   });
 
   it("POST /completions 500 generic error", async () => {

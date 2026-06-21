@@ -76,4 +76,57 @@ describe("GoogleAdapter", () => {
       total_tokens: 10,
     });
   });
+
+  it("translates tools and JSON schema to Gemini format", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: { parts: [{ functionCall: { name: "lookup", args: { q: "hi" } } }] },
+            finishReason: "STOP",
+          },
+        ],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 },
+      }),
+    );
+
+    const adapter = new GoogleAdapter("sk-test");
+    const response = await adapter.chatCompletion({
+      model: "gemini-test",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "hi" }] },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_1", name: "lookup", content: "{\"ok\":true}" },
+      ],
+      tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "answer", schema: { type: "object" } },
+      },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.tools[0].functionDeclarations).toEqual([
+      { name: "lookup", parameters: { type: "object" } },
+    ]);
+    expect(requestBody.generationConfig).toMatchObject({
+      responseMimeType: "application/json",
+      responseSchema: { type: "object" },
+    });
+    expect(requestBody.contents[1].parts[0]).toMatchObject({ functionCall: { name: "lookup" } });
+    expect(requestBody.contents[2].parts[0]).toMatchObject({ functionResponse: { name: "lookup" } });
+    expect(response.choices[0]?.message.tool_calls?.[0]).toMatchObject({
+      function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+    });
+  });
 });

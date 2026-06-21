@@ -50,10 +50,30 @@ describe("providers router", () => {
     expect(res.status).toBe(200);
   });
 
+  it("PUT /:name keeps disabled model preferences", async () => {
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/openai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey: "sk-test-key" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.disabledModel.deleteMany).not.toHaveBeenCalled();
+  });
+
   it("DELETE /:name removes provider key", async () => {
     const app = new Hono().route("/providers", providersRouter);
     const res = await app.request("/providers/openai", { method: "DELETE" });
     expect(res.status).toBe(200);
+  });
+
+  it("DELETE /:name keeps disabled model preferences", async () => {
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/openai", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.disabledModel.deleteMany).not.toHaveBeenCalled();
   });
 
   it("GET /:name/models lists models", async () => {

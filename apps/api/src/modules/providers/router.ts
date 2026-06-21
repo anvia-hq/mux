@@ -65,7 +65,6 @@ providersRouter.put(
       update: { ciphertext, lastFour: four, updatedBy: admin.id },
     });
 
-    await prisma.disabledModel.deleteMany({ where: { provider: name } });
     await reloadProvider(name);
 
     return c.json({
@@ -92,7 +91,6 @@ providersRouter.delete(
     const { name } = c.req.valid("param");
 
     await prisma.providerKey.deleteMany({ where: { provider: name } });
-    await prisma.disabledModel.deleteMany({ where: { provider: name } });
     await reloadProvider(name);
 
     return c.json({ ok: true });

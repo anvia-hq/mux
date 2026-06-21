@@ -5,6 +5,7 @@ import type {
   ProviderAdapter,
   Model,
 } from "./types";
+import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 
 const MODELS: Model[] = [
   {
@@ -464,6 +465,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 export class MistralAdapter implements ProviderAdapter {
   name = "mistral";
+  capabilities = openAICompatibleCapabilities;
   private apiKey: string;
 
   constructor(apiKey: string) {
@@ -471,14 +473,7 @@ export class MistralAdapter implements ProviderAdapter {
   }
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
-    return JSON.stringify({
-      model: request.model,
-      messages: request.messages,
-      temperature: request.temperature,
-      max_tokens: request.max_tokens,
-      stream,
-      stream_options: stream ? { include_usage: true } : undefined,
-    });
+    return buildOpenAICompatibleRequestBody(request, stream);
   }
 
   private buildHeaders(): Record<string, string> {
