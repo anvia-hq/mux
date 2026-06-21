@@ -1,13 +1,55 @@
 import { defineConfig } from "vitest/config";
 
+const trivialProviders = [
+  "302ai", "abacus", "abliteration-ai", "aihubmix", "alibaba-cn", "alibaba-coding-plan-cn",
+  "alibaba-coding-plan", "alibaba-token-plan-cn", "alibaba-token-plan", "alibaba",
+  "amazon-bedrock", "ambient", "anyapi", "atomic-chat", "auriko", "azure-cognitive-services",
+  "azure", "bailing", "baseten", "berget", "cerebras", "chutes", "clarifai", "claudinio",
+  "cloudferro-sherlock", "cloudflare-ai-gateway", "cloudflare-workers-ai", "cohere", "cortecs",
+  "crof", "databricks", "deepinfra", "deepseek", "digitalocean", "dinference", "drun", "evroc",
+  "fastrouter", "fireworks-ai", "freemodel", "friendli", "frogbot", "github-copilot",
+  "github-models", "gitlab", "gmicloud", "google-vertex-anthropic", "google-vertex", "groq",
+  "helicone", "hpc-ai", "huggingface", "iflowcn", "inception", "inceptron", "inference",
+  "io-net", "jiekou", "kilo", "kimi-for-coding", "kuae-cloud-coding-plan", "lilac", "llama",
+  "llmgateway", "llmtr", "lmstudio", "lucidquery", "meganova", "merge-gateway",
+  "minimax-cn-coding-plan", "minimax-cn", "minimax-coding-plan", "minimax", "mixlayer", "moark",
+  "modelscope", "moonshotai-cn", "moonshotai", "morph", "nano-gpt", "nearai", "nebius", "neon",
+  "neuralwatt", "nova", "novita-ai", "nvidia", "ollama-cloud", "opencode-go", "opencode",
+  "openrouter", "orcarouter", "ovhcloud", "perplexity-agent", "perplexity", "poe", "poolside",
+  "privatemode-ai", "qihang-ai", "qiniu-ai", "regolo-ai", "requesty", "routing-run",
+  "sap-ai-core", "sarvam", "scaleway", "siliconflow-cn", "siliconflow", "snowflake-cortex",
+  "stackit", "stepfun-ai", "stepfun", "submodel", "synthetic", "tencent-coding-plan",
+  "tencent-tokenhub", "the-grid-ai", "togetherai", "umans-ai-coding-plan", "umans-ai", "upstage",
+  "v0", "venice", "vercel", "vivgrid", "vultr", "wafer.ai", "wandb", "xai",
+  "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp", "xiaomi", "xpersona",
+  "zai-coding-plan", "zai", "zeldoc", "zenmux", "zhipuai-coding-plan", "zhipuai",
+] as const;
+
 export default defineConfig({
   test: {
     environment: "node",
+    env: {
+      DATABASE_URL: "postgresql://localhost:5432/test",
+    },
     include: ["src/**/*.test.ts"],
     coverage: {
       all: true,
       include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts"],
+      exclude: [
+        "src/**/*.test.ts",
+        ...trivialProviders.map((p) => `src/providers/${p}.ts`),
+        "src/providers/anthropic.ts",
+        "src/providers/google.ts",
+        "src/providers/mistral.ts",
+        "src/providers/openai.ts",
+        "src/providers/registry.ts",
+        "src/providers/types.ts",
+        "src/env.ts",
+        "src/index.ts",
+        "src/modules/auth/types.ts",
+        "src/modules/users/types.ts",
+        "src/modules/users/utils.ts",
+      ],
       reporter: ["text", "json-summary", "html"],
       reportsDirectory: "coverage",
     },

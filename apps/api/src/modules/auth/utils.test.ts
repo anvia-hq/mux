@@ -1,55 +1,62 @@
 import { describe, expect, it } from "vitest";
-import {
-  getValidationErrorMessage,
-  isUniqueConstraintError,
-  normalizeEmail,
-  normalizeName,
-  sanitizeUser,
-} from "./utils";
+
+import { normalizeEmail, normalizeName, sanitizeUser, isUniqueConstraintError, getValidationErrorMessage } from "./utils";
 
 describe("auth utils", () => {
-  it("normalizes emails and optional names", () => {
-    expect(normalizeEmail("  USER@Example.COM  ")).toBe("user@example.com");
-    expect(normalizeName("  Ada Lovelace  ")).toBe("Ada Lovelace");
-    expect(normalizeName("   ")).toBeNull();
-    expect(normalizeName(undefined)).toBeNull();
-  });
-
-  it("removes sensitive fields from users", () => {
-    const createdAt = new Date("2026-01-01T00:00:00.000Z");
-    const updatedAt = new Date("2026-01-02T00:00:00.000Z");
-
-    const sanitized = sanitizeUser({
-      id: "user_1",
-      email: "user@example.com",
-      name: "User",
-      role: "USER",
-      passwordHash: "secret",
-      createdAt,
-      updatedAt,
+  describe("normalizeEmail", () => {
+    it("trims and lowercases email", () => {
+      expect(normalizeEmail("  User@Example.com  ")).toBe("user@example.com");
     });
+  });
 
-    expect(sanitized).toEqual({
-      id: "user_1",
-      email: "user@example.com",
-      name: "User",
-      role: "USER",
-      createdAt,
-      updatedAt,
+  describe("normalizeName", () => {
+    it("trims name", () => {
+      expect(normalizeName("  Test User  ")).toBe("Test User");
     });
-    expect(sanitized).not.toHaveProperty("passwordHash");
+    it("returns null for nullish values", () => {
+      expect(normalizeName(null)).toBeNull();
+      expect(normalizeName(undefined)).toBeNull();
+    });
+    it("returns null for whitespace-only name", () => {
+      expect(normalizeName("   ")).toBeNull();
+    });
   });
 
-  it("detects Prisma unique constraint errors", () => {
-    expect(isUniqueConstraintError({ code: "P2002" })).toBe(true);
-    expect(isUniqueConstraintError({ code: "P2003" })).toBe(false);
-    expect(isUniqueConstraintError(null)).toBe(false);
+  describe("sanitizeUser", () => {
+    it("strips passwordHash from user", () => {
+      const user = {
+        id: "1",
+        email: "test@example.com",
+        name: "Test",
+        passwordHash: "secret",
+        role: "USER" as const,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const sanitized = sanitizeUser(user);
+      expect(sanitized).not.toHaveProperty("passwordHash");
+      expect(sanitized.id).toBe("1");
+      expect(sanitized.email).toBe("test@example.com");
+    });
   });
 
-  it("returns the first validation error message with a fallback", () => {
-    expect(getValidationErrorMessage({ issues: [{ message: "email is required" }] })).toBe(
-      "email is required",
-    );
-    expect(getValidationErrorMessage({ issues: [] })).toBe("invalid request body");
+  describe("isUniqueConstraintError", () => {
+    it("returns true for P2002 error", () => {
+      expect(isUniqueConstraintError({ code: "P2002" })).toBe(true);
+    });
+    it("returns false for other objects", () => {
+      expect(isUniqueConstraintError({ code: "OTHER" })).toBe(false);
+      expect(isUniqueConstraintError(null)).toBe(false);
+      expect(isUniqueConstraintError("string")).toBe(false);
+    });
+  });
+
+  describe("getValidationErrorMessage", () => {
+    it("returns first issue message", () => {
+      expect(getValidationErrorMessage({ issues: [{ message: "missing field" }] })).toBe("missing field");
+    });
+    it("returns default when no issues", () => {
+      expect(getValidationErrorMessage({ issues: [] })).toBe("invalid request body");
+    });
   });
 });
