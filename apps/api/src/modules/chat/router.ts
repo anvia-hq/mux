@@ -83,17 +83,8 @@ chatRouter.post("/completions", async (c) => {
             await streamWriter.write(`data: ${JSON.stringify(chunk)}\n\n`);
 
             // Some providers emit a final chunk that includes a `usage` object.
-            // Track it for logging purposes. We narrow the chunk via a runtime
-            // check because `usage` is not part of the ChatCompletionChunk type.
-            const maybeUsage = (
-              chunk as {
-                usage?: {
-                  total_tokens?: number;
-                  prompt_tokens?: number;
-                  completion_tokens?: number;
-                };
-              }
-            ).usage;
+            // Track it for logging purposes.
+            const maybeUsage = chunk.usage;
             if (maybeUsage) {
               if (typeof maybeUsage.total_tokens === "number")
                 totalTokens = maybeUsage.total_tokens;

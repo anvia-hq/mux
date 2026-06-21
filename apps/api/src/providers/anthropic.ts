@@ -485,6 +485,9 @@ export class AnthropicAdapter implements ProviderAdapter {
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let messageId = `anthropic-${Date.now()}`;
+    let promptTokens: number | undefined;
+    let completionTokens: number | undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -498,8 +501,13 @@ export class AnthropicAdapter implements ProviderAdapter {
         if (line.startsWith("data: ")) {
           let data: {
             type: string;
-            id: string;
+            id?: string;
+            message?: {
+              id?: string;
+              usage?: { input_tokens?: number; output_tokens?: number };
+            };
             delta?: { text?: string };
+            usage?: { output_tokens?: number };
             error?: { type?: string; message?: string };
           };
           try {
@@ -510,10 +518,26 @@ export class AnthropicAdapter implements ProviderAdapter {
             );
           }
 
+          if (data.message?.id) {
+            messageId = data.message.id;
+          } else if (data.id) {
+            messageId = data.id;
+          }
+
+          if (typeof data.message?.usage?.input_tokens === "number") {
+            promptTokens = data.message.usage.input_tokens;
+          }
+          if (typeof data.message?.usage?.output_tokens === "number") {
+            completionTokens = data.message.usage.output_tokens;
+          }
+          if (typeof data.usage?.output_tokens === "number") {
+            completionTokens = data.usage.output_tokens;
+          }
+
           // Convert Anthropic events to OpenAI format
           if (data.type === "content_block_delta") {
             yield {
-              id: data.id,
+              id: messageId,
               model: request.model,
               choices: [
                 {
@@ -525,7 +549,7 @@ export class AnthropicAdapter implements ProviderAdapter {
             };
           } else if (data.type === "message_stop") {
             yield {
-              id: data.id,
+              id: messageId,
               model: request.model,
               choices: [
                 {
@@ -534,6 +558,14 @@ export class AnthropicAdapter implements ProviderAdapter {
                   finish_reason: "stop",
                 },
               ],
+              usage:
+                promptTokens !== undefined || completionTokens !== undefined
+                  ? {
+                      prompt_tokens: promptTokens ?? 0,
+                      completion_tokens: completionTokens ?? 0,
+                      total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
+                    }
+                  : undefined,
             };
           } else if (data.type === "error") {
             const message = data.error?.message ?? "Unknown Anthropic stream error";

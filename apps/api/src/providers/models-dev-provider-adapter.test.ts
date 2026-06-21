@@ -79,6 +79,16 @@ describe("ModelsDevProviderAdapter", () => {
     expect(chunks.length).toBe(1);
   });
 
+  it("chatCompletionStream requests usage for OpenAI-compatible providers", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(makeSSEStream(["data: [DONE]\n\n"]));
+    const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", apiBase: "https://x.com", models: testModels });
+    for await (const _ of a.chatCompletionStream({ model: "m1", messages: [] })) {
+      void _;
+    }
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.stream_options).toEqual({ include_usage: true });
+  });
+
   it("chatCompletionStream throws on non-ok", async () => {
     mockGlobalFetch.mockResolvedValueOnce(new Response("err", { status: 500 }));
     const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", apiBase: "https://x.com", models: testModels });

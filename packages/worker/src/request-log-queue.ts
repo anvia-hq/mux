@@ -60,7 +60,8 @@ export const requestLogQueue = new Queue<RequestLogJob>(REQUEST_LOG_QUEUE_NAME, 
 
 export async function enqueueRequestLog(job: RequestLogJob): Promise<void> {
   await requestLogQueue.add(job.kind, job, {
-    jobId: `${job.kind}:${job.logId}`,
+    // BullMQ reserves ":" for its own Redis key namespace and rejects it in custom job ids.
+    jobId: `${job.kind}-${job.logId}`,
   });
 }
 

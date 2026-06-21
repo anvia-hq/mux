@@ -94,7 +94,10 @@ services:
     expose:
       - "3000"
     environment:
-      VITE_API_URL: "${VITE_API_URL:-/api}"
+      # Docker/Caddy serves the API from the same public origin under /api.
+      # Keep this literal so host-mode .env values like http://localhost:8000
+      # do not get baked into the browser client inside Compose.
+      VITE_API_URL: "/api"
     depends_on:
       gateway:
         condition: service_started

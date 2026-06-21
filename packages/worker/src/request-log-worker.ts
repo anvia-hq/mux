@@ -31,7 +31,7 @@ function toRequestLogCreateInput(entry: RequestLogPayload) {
     totalTokens: entry.totalTokens,
     estimatedCost: entry.estimatedCost,
     statusCode: entry.statusCode,
-    errorMessage: entry.errorMessage,
+    errorMessage: entry.errorMessage ?? null,
   };
 }
 
@@ -50,13 +50,13 @@ async function finalizeStreamLog(entry: RequestLogPayload): Promise<void> {
       model: entry.model,
       endpoint: entry.endpoint,
       latencyMs: entry.latencyMs,
-      providerLatencyMs: entry.providerLatencyMs,
-      promptTokens: entry.promptTokens,
-      completionTokens: entry.completionTokens,
-      totalTokens: entry.totalTokens,
-      estimatedCost: entry.estimatedCost,
+      providerLatencyMs: entry.providerLatencyMs ?? null,
+      promptTokens: entry.promptTokens ?? null,
+      completionTokens: entry.completionTokens ?? null,
+      totalTokens: entry.totalTokens ?? null,
+      estimatedCost: entry.estimatedCost ?? null,
       statusCode: entry.statusCode,
-      errorMessage: entry.errorMessage,
+      errorMessage: entry.errorMessage ?? null,
     },
   });
 

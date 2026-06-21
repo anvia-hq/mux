@@ -477,6 +477,7 @@ export class MistralAdapter implements ProviderAdapter {
       temperature: request.temperature,
       max_tokens: request.max_tokens,
       stream,
+      stream_options: stream ? { include_usage: true } : undefined,
     });
   }
 

@@ -541,6 +541,11 @@ export class GoogleAdapter implements ProviderAdapter {
               content?: { parts?: { text?: string }[] };
               finishReason?: string;
             }[];
+            usageMetadata?: {
+              promptTokenCount?: number;
+              candidatesTokenCount?: number;
+              totalTokenCount?: number;
+            };
           };
           const candidate = c.candidates?.[0];
           const text = candidate?.content?.parts?.[0]?.text;
@@ -555,6 +560,18 @@ export class GoogleAdapter implements ProviderAdapter {
                   finish_reason: candidate?.finishReason ?? null,
                 },
               ],
+            };
+          }
+          if (c.usageMetadata) {
+            yield {
+              id: c.id ?? `google-${Date.now()}`,
+              model: request.model,
+              choices: [],
+              usage: {
+                prompt_tokens: c.usageMetadata.promptTokenCount ?? 0,
+                completion_tokens: c.usageMetadata.candidatesTokenCount ?? 0,
+                total_tokens: c.usageMetadata.totalTokenCount ?? 0,
+              },
             };
           }
         }
