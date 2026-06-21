@@ -1,148 +1,143 @@
+import { useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { CodeIcon, ComputerTerminal01Icon, Copy01Icon } from "@hugeicons/core-free-icons";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { Badge } from "@repo/ui/components/badge";
+import { Button } from "@repo/ui/components/button";
+import { Card, CardDescription, CardTitle } from "@repo/ui/components/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
 
-const sections = [
-  { id: "overview", label: "Overview" },
-  { id: "setup", label: "Setup" },
-  { id: "authentication", label: "Authentication" },
-  { id: "list-models", label: "List Models" },
-  { id: "chat-completions", label: "Chat Completions" },
-  { id: "streaming", label: "Streaming" },
-  { id: "errors", label: "Errors" },
-] as const;
+type CodeSample = {
+  value: string;
+  label: string;
+  language: string;
+  code: string;
+};
 
-function Code({ children, lang }: { children: string; lang?: string }) {
-  return (
-    <pre className="overflow-x-auto rounded-md bg-muted px-4 py-3 text-xs leading-relaxed">
-      {lang ? <div className="mb-1 text-[10px] text-muted-foreground/50">{lang}</div> : null}
-      <code>{children}</code>
-    </pre>
-  );
-}
+const codeTheme = {
+  'code[class*="language-"]': {
+    color: "#d8d4cc",
+    background: "transparent",
+    textShadow: "none",
+    fontFamily: "inherit",
+  },
+  'pre[class*="language-"]': {
+    color: "#d8d4cc",
+    background: "transparent",
+    textShadow: "none",
+    fontFamily: "inherit",
+  },
+  comment: { color: "#73716d" },
+  prolog: { color: "#73716d" },
+  doctype: { color: "#73716d" },
+  cdata: { color: "#73716d" },
+  punctuation: { color: "#a8a29a" },
+  property: { color: "#d0b983" },
+  tag: { color: "#d0b983" },
+  boolean: { color: "#d0b983" },
+  number: { color: "#d0b983" },
+  constant: { color: "#d0b983" },
+  symbol: { color: "#d0b983" },
+  deleted: { color: "#d0b983" },
+  selector: { color: "#9aaa7a" },
+  "attr-name": { color: "#9aaa7a" },
+  string: { color: "#9aaa7a" },
+  char: { color: "#9aaa7a" },
+  builtin: { color: "#9aaa7a" },
+  inserted: { color: "#9aaa7a" },
+  operator: { color: "#b9b5ad" },
+  entity: { color: "#b9b5ad" },
+  url: { color: "#b9b5ad" },
+  atrule: { color: "#c6a978" },
+  "attr-value": { color: "#c6a978" },
+  keyword: { color: "#c6a978" },
+  function: { color: "#cfcac0" },
+  "class-name": { color: "#cfcac0" },
+  regex: { color: "#b7a17b" },
+  important: { color: "#b7a17b", fontWeight: "600" },
+  variable: { color: "#d8d4cc" },
+};
 
-function Section({
-  id,
-  title,
-  children,
-}: {
-  id: string;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section id={id} className="grid gap-3 scroll-mt-8">
-      <h2 className="text-lg font-semibold">{title}</h2>
-      <div className="text-sm text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-export function DocsPage() {
-  return (
-    <div className="grid gap-8">
-      <div>
-        <h1 className="text-2xl font-semibold">API Reference</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Everything you need to start using the Mux LLM Gateway.
-        </p>
-      </div>
-
-      <nav>
-        <ul className="flex flex-wrap gap-3">
-          {sections.map((s) => (
-            <li key={s.id}>
-              <a
-                href={`#${s.id}`}
-                className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-              >
-                {s.label}
-              </a>
-            </li>
-          ))}
-        </ul>
-      </nav>
-
-      <div className="grid gap-10">
-        <Section id="overview" title="Overview">
-          <p>
-            Mux Gateway is a self-hosted, unified API for LLM providers. It exposes an{" "}
-            <strong>OpenAI-compatible</strong> endpoint so any OpenAI SDK client works out of the
-            box. Under the hood it routes requests to OpenAI, Anthropic, Google Gemini, and Mistral,
-            normalizing all responses back to the OpenAI format.
-          </p>
-          <p>
-            Every request is <strong>logged</strong> with latency, token usage, and estimated cost —
-            no need for separate monitoring.
-          </p>
-        </Section>
-
-        <Section id="setup" title="Setup">
-          <p>
-            The gateway runs at <code>http://localhost</code> when deployed via Docker Compose.
-            Configure the OpenAI SDK with the gateway base URL and your API key:
-          </p>
-          <Code lang="python">{`from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost/v1",
-    api_key="mux_live_xxxxxxxxxxxxxxxx",
-)`}</Code>
-          <Code lang="js">{`import OpenAI from "openai";
+const setupSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "http://localhost/v1",
   apiKey: "mux_live_xxxxxxxxxxxxxxxx",
-});`}</Code>
-        </Section>
+});`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `from openai import OpenAI
 
-        <Section id="authentication" title="Authentication">
-          <p>
-            Create an API key from the{" "}
-            <Link to="/api-keys" className="underline underline-offset-4">
-              API keys
-            </Link>{" "}
-            page (admin only). Keys are <strong>hashed at rest</strong> and cached in Redis.
-            Revoking a key takes effect immediately.
-          </p>
-          <p className="mt-2">
-            Pass the key when initializing the client (shown above), or set the{" "}
-            <code>MUX_API_KEY</code> environment variable:
-          </p>
-          <Code lang="bash">export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx</Code>
-        </Section>
+client = OpenAI(
+    base_url="http://localhost/v1",
+    api_key="mux_live_xxxxxxxxxxxxxxxx",
+)`,
+  },
+  {
+    value: "fetch",
+    label: "TypeScript (fetch)",
+    language: "typescript",
+    code: `const response = await fetch("http://localhost/v1/models", {
+  headers: {
+    Authorization: "Bearer mux_live_xxxxxxxxxxxxxxxx",
+  },
+});
 
-        <Section id="list-models" title="List Models">
-          <p>Retrieve all available (enabled) models across every configured provider:</p>
-          <Code lang="python">{`models = client.models.list()
+const models = await response.json();`,
+  },
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl http://localhost/v1/models \\
+  -H "Authorization: Bearer mux_live_xxxxxxxxxxxxxxxx"`,
+  },
+];
+
+const modelSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const models = await client.models.list();
+
+for (const model of models.data) {
+  console.log(model.id);
+}`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `models = client.models.list()
+
 for model in models.data:
-    print(model.id)  # e.g. "gpt-5.5", "claude-opus-4-8"`}</Code>
-          <Code lang="js">{`const models = await client.models.list();
-models.data.forEach(m => console.log(m.id));`}</Code>
-          <p className="mt-2">
-            Every model in the response has an <code>id</code> and <code>owned_by</code> field
-            matching the OpenAI format.
-          </p>
-        </Section>
+    print(model.id)`,
+  },
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl http://localhost/v1/models \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+];
 
-        <Section id="chat-completions" title="Chat Completions">
-          <p>
-            Send a chat request using any model id from the models list. The response follows the
-            OpenAI format regardless of which provider (OpenAI, Anthropic, Google, Mistral) handles
-            it:
-          </p>
-          <Code lang="python">{`response = client.chat.completions.create(
-    model="gpt-5.5",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello!"},
-    ],
-    temperature=0.7,
-    max_tokens=1024,
-)
-
-print(response.choices[0].message.content)`}</Code>
-          <Code lang="js">{`const response = await client.chat.completions.create({
+const completionSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const response = await client.chat.completions.create({
   model: "gpt-5.5",
   messages: [
     { role: "system", content: "You are a helpful assistant." },
@@ -152,28 +147,48 @@ print(response.choices[0].message.content)`}</Code>
   max_tokens: 1024,
 });
 
-console.log(response.choices[0].message.content);`}</Code>
-          <p className="mt-2">
-            Response object includes <code>usage</code> (prompt_tokens, completion_tokens,
-            total_tokens) and a standard <code>choices</code> array.
-          </p>
-        </Section>
-
-        <Section id="streaming" title="Streaming">
-          <p>
-            Set <code>stream: True</code> (Python) or <code>stream: true</code> (JS) to receive
-            tokens as they are generated:
-          </p>
-          <Code lang="python">{`stream = client.chat.completions.create(
-    model="claude-sonnet-4-6",
-    messages=[{"role": "user", "content": "Tell me a story"}],
-    stream=True,
+console.log(response.choices[0].message.content);`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `response = client.chat.completions.create(
+    model="gpt-5.5",
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello!"},
+    ],
+    temperature=0.7,
+    max_tokens=1024,
 )
 
-for chunk in stream:
-    if chunk.choices[0].delta.content:
-        print(chunk.choices[0].delta.content, end="")`}</Code>
-          <Code lang="js">{`const stream = await client.chat.completions.create({
+print(response.choices[0].message.content)`,
+  },
+  {
+    value: "fetch",
+    label: "TypeScript (fetch)",
+    language: "typescript",
+    code: `const response = await fetch("http://localhost/v1/chat/completions", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: "Bearer mux_live_xxxxxxxxxxxxxxxx",
+  },
+  body: JSON.stringify({
+    model: "gpt-5.5",
+    messages: [{ role: "user", content: "Hello!" }],
+  }),
+});`,
+  },
+];
+
+const streamingSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const stream = await client.chat.completions.create({
   model: "claude-sonnet-4-6",
   messages: [{ role: "user", content: "Tell me a story" }],
   stream: true,
@@ -181,41 +196,259 @@ for chunk in stream:
 
 for await (const chunk of stream) {
   process.stdout.write(chunk.choices[0]?.delta?.content ?? "");
-}`}</Code>
-        </Section>
+}`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `stream = client.chat.completions.create(
+    model="claude-sonnet-4-6",
+    messages=[{"role": "user", "content": "Tell me a story"}],
+    stream=True,
+)
 
-        <Section id="errors" title="Errors">
-          <p>The gateway returns standard HTTP status codes:</p>
-          <div className="mt-2 grid gap-2">
-            <div>
-              <span className="font-mono font-medium">401</span> — Missing or invalid API key.
-            </div>
-            <div>
-              <span className="font-mono font-medium">403</span> — The API key is valid but has been
-              revoked or disabled.
-            </div>
-            <div>
-              <span className="font-mono font-medium">500</span> — Internal error. Check the gateway
-              logs or contact your administrator.
-            </div>
-          </div>
-          <p className="mt-2">The OpenAI SDK surfaces these as typed exceptions:</p>
-          <Code lang="python">{`from openai import AuthenticationError
+for chunk in stream:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")`,
+  },
+];
+
+const errorSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `import { AuthenticationError } from "openai";
+
+try {
+  const response = await client.chat.completions.create({ ... });
+} catch (error) {
+  if (error instanceof AuthenticationError) {
+    console.error("Auth failed:", error.message);
+  }
+}`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `from openai import AuthenticationError
 
 try:
     response = client.chat.completions.create(...)
-except AuthenticationError as e:
-    print(f"Auth failed: {e}")`}</Code>
-          <Code lang="js">{`import { AuthenticationError } from "openai";
+except AuthenticationError as error:
+    print(f"Auth failed: {error}")`,
+  },
+];
 
-try {
-  const response = await client.chat.completions.create({...});
-} catch (e) {
-  if (e instanceof AuthenticationError) {
-    console.error("Auth failed:", e.message);
-  }
-}`}</Code>
-        </Section>
+function CodeTabs({ samples }: { samples: CodeSample[] }) {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copySample = async (sample: CodeSample) => {
+    await navigator.clipboard.writeText(sample.code);
+    setCopied(sample.value);
+    window.setTimeout(() => setCopied(null), 1400);
+  };
+
+  return (
+    <Tabs defaultValue={samples[0]?.value} className="gap-4">
+      <TabsList className="h-auto min-h-10 flex-wrap justify-start rounded-xl p-1.5">
+        {samples.map((sample) => (
+          <TabsTrigger
+            key={sample.value}
+            value={sample.value}
+            className="flex-none rounded-lg px-5 py-2 text-sm font-medium text-muted-foreground hover:bg-secondary/40 hover:text-foreground data-[state=active]:bg-secondary data-[state=active]:text-foreground data-[state=active]:shadow-none"
+          >
+            {sample.label}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {samples.map((sample) => (
+        <TabsContent key={sample.value} value={sample.value} className="m-0">
+          <div className="relative overflow-hidden rounded-lg border bg-[#181818] shadow-[0_0_0_2px_color-mix(in_oklab,var(--sidebar-border)_68%,black)] [&_code]:!bg-transparent [&_pre]:!bg-transparent [&_span]:!bg-transparent">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="absolute top-3 right-3 z-10 text-muted-foreground hover:bg-white/5 hover:text-foreground"
+              onClick={() => copySample(sample)}
+            >
+              <HugeiconsIcon icon={Copy01Icon} className="size-4" />
+              {copied === sample.value ? "Copied" : "Copy"}
+            </Button>
+            <SyntaxHighlighter
+              language={sample.language}
+              style={codeTheme}
+              customStyle={{
+                margin: 0,
+                background: "transparent",
+                backgroundColor: "transparent",
+                padding: "2rem 1.5rem",
+                paddingRight: "6.5rem",
+                fontSize: "0.875rem",
+                lineHeight: 1.75,
+              }}
+              codeTagProps={{ className: "font-mono", style: { background: "transparent" } }}
+            >
+              {sample.code}
+            </SyntaxHighlighter>
+          </div>
+        </TabsContent>
+      ))}
+    </Tabs>
+  );
+}
+
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section id={id} className="grid gap-4 scroll-mt-24">
+      <div className="grid gap-1">
+        <h2 className="text-xl font-semibold">{title}</h2>
+      </div>
+      <div className="grid gap-4 text-sm leading-6 text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-xs [&_strong]:font-medium [&_strong]:text-foreground">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+export function DocsPage() {
+  return (
+    <div className="grid gap-8">
+      <Card className="overflow-hidden p-0">
+        <div className="p-6 lg:p-8">
+          <div className="grid max-w-3xl gap-4">
+            <Badge variant="secondary" className="w-fit rounded-md">
+              OpenAI-compatible gateway
+            </Badge>
+            <div className="grid gap-3">
+              <h1 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
+                API reference for routing LLM traffic through Mux Gateway
+              </h1>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Use one endpoint for OpenAI, Anthropic, Google Gemini, and Mistral. Requests stay
+                compatible with OpenAI SDK clients and are logged with latency, token usage, and
+                estimated cost.
+              </p>
+            </div>
+            <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <HugeiconsIcon icon={ComputerTerminal01Icon} className="size-4" />
+                <span>Base URL</span>
+              </div>
+              <code className="min-w-0 truncate font-mono text-xs text-foreground">
+                http://localhost/v1
+              </code>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-8">
+        <div className="grid w-full gap-8">
+          <Section id="overview" title="Overview">
+            <p>
+              Mux Gateway is a self-hosted, unified API for LLM providers. It exposes an{" "}
+              <strong>OpenAI-compatible</strong> endpoint so existing SDK clients work without a
+              custom adapter.
+            </p>
+            <div className="grid gap-3 md:grid-cols-3">
+              {[
+                ["Unified route", "Send requests to one endpoint and let the gateway dispatch."],
+                ["Normalized output", "Responses follow the OpenAI shape across providers."],
+                ["Request logs", "Track latency, tokens, cost, provider, and status code."],
+              ].map(([title, description]) => (
+                <Card key={title} className="gap-2 p-4">
+                  <CardTitle className="text-sm">{title}</CardTitle>
+                  <CardDescription className="text-xs leading-5">{description}</CardDescription>
+                </Card>
+              ))}
+            </div>
+          </Section>
+
+          <Section id="setup" title="Setup">
+            <p>
+              Configure your SDK or HTTP client with the gateway base URL and a Mux API key. The key
+              is sent as a bearer token for direct HTTP calls.
+            </p>
+            <CodeTabs samples={setupSamples} />
+          </Section>
+
+          <Section id="authentication" title="Authentication">
+            <p>
+              Create an API key from the{" "}
+              <Link to="/api-keys" className="text-foreground">
+                API keys
+              </Link>{" "}
+              page. Keys are <strong>hashed at rest</strong> and cached in Redis. Revoking a key
+              takes effect immediately.
+            </p>
+            <Card className="gap-3 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <HugeiconsIcon icon={CodeIcon} className="size-4" />
+                Environment variable
+              </div>
+              <CodeTabs
+                samples={[
+                  {
+                    value: "bash",
+                    label: "Bash",
+                    language: "bash",
+                    code: "export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx",
+                  },
+                ]}
+              />
+            </Card>
+          </Section>
+
+          <Section id="list-models" title="List models">
+            <p>
+              Retrieve all enabled models across configured providers. Each model includes an{" "}
+              <code>id</code> and <code>owned_by</code> field matching the OpenAI format.
+            </p>
+            <CodeTabs samples={modelSamples} />
+          </Section>
+
+          <Section id="chat-completions" title="Chat completions">
+            <p>
+              Send a chat request using any model id from the model list. The gateway returns the
+              same response shape whether OpenAI, Anthropic, Google, or Mistral handles the request.
+            </p>
+            <CodeTabs samples={completionSamples} />
+          </Section>
+
+          <Section id="streaming" title="Streaming">
+            <p>
+              Set <code>stream: true</code> in TypeScript or <code>stream=True</code> in Python to
+              receive tokens as they are generated.
+            </p>
+            <CodeTabs samples={streamingSamples} />
+          </Section>
+
+          <Section id="errors" title="Errors">
+            <p>
+              The gateway returns standard HTTP status codes and the OpenAI SDK surfaces them as
+              typed exceptions.
+            </p>
+            <div className="grid gap-2">
+              {[
+                ["401", "Missing or invalid API key."],
+                ["403", "The API key is valid but has been revoked or disabled."],
+                ["500", "Internal error. Check the gateway logs or contact your administrator."],
+              ].map(([status, description]) => (
+                <div
+                  key={status}
+                  className="grid grid-cols-[4rem_minmax(0,1fr)] rounded-md border p-3"
+                >
+                  <span className="font-mono text-sm font-medium text-foreground">{status}</span>
+                  <span>{description}</span>
+                </div>
+              ))}
+            </div>
+            <CodeTabs samples={errorSamples} />
+          </Section>
+        </div>
       </div>
     </div>
   );

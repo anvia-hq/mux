@@ -1,9 +1,9 @@
 /**
  * Tiny fetch wrapper for the platform UI.
  *
- * - Uses a relative base (`/api`) by default so requests always go through
- *   Caddy. Set `VITE_API_URL` to an absolute URL (e.g. `http://localhost:8000`)
- *   to bypass the proxy in dev.
+ * - Uses `VITE_API_URL` as the API base. Set it to `/api` when requests should
+ *   go through Caddy, or to an absolute URL (e.g. `http://localhost:8000`) to
+ *   call the API directly in dev.
  * - Always sends cookies (so the auth cookie round-trips).
  * - Throws `UnauthorizedError` on 401 so route guards can redirect to login.
  */
@@ -26,9 +26,14 @@ export class ApiError extends Error {
   }
 }
 
-const apiBaseUrl = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+const apiBaseUrl = import.meta.env.VITE_API_URL?.trim();
 
-export const apiBase = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+if (!apiBaseUrl) {
+  throw new Error("VITE_API_URL must be configured for apps/platform");
+}
+
+export const apiBase =
+  apiBaseUrl === "/" ? "" : apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
 type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
 

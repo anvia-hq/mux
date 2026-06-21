@@ -1,5 +1,5 @@
-import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
+import { Card } from "@repo/ui/components/card";
 import {
   Sidebar,
   SidebarContent,
@@ -22,6 +22,7 @@ import {
   BoxesIcon,
   DashboardSquare01Icon,
   Key01Icon,
+  Logout01Icon,
   Plug01Icon,
   Scroll01Icon,
   Settings01Icon,
@@ -91,31 +92,32 @@ export function AppShell() {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
-          <div className="flex items-center justify-between gap-2 px-2 py-1.5">
-            <div className="min-w-0">
+          <Card className="flex-row items-center gap-2 p-2">
+            <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
               <div className="truncate text-sm font-medium">{user.name ?? user.email}</div>
               <div className="truncate text-xs text-muted-foreground">{user.email}</div>
             </div>
-            <Badge variant="secondary">{user.role}</Badge>
-          </div>
+            <Button
+              aria-label={logout.isPending ? "Signing out" : "Sign out"}
+              size="icon-sm"
+              variant="outline"
+              disabled={logout.isPending}
+              onClick={() => logout.mutate()}
+            >
+              <HugeiconsIcon icon={Logout01Icon} className="size-4" />
+              <span className="sr-only">{logout.isPending ? "Signing out..." : "Sign out"}</span>
+            </Button>
+          </Card>
         </SidebarFooter>
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-14 items-center justify-between border-b px-4">
+        <header className="flex h-14 items-center justify-between border-b px-4 shadow-[0_2px_0_color-mix(in_oklab,var(--sidebar-border)_68%,black)]">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
             <h1 className="text-sm font-medium text-muted-foreground">
               {visibleItems.find((i) => i.to === location.pathname)?.label ?? "Mux Gateway"}
             </h1>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={logout.isPending}
-            onClick={() => logout.mutate()}
-          >
-            {logout.isPending ? "Signing out..." : "Sign out"}
-          </Button>
         </header>
         <main className="p-6">
           <Outlet />

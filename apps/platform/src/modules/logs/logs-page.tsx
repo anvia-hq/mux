@@ -105,84 +105,74 @@ export function LogsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            {logs.data ? `${logs.data.total.toLocaleString()} requests` : "Loading..."}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Provider</TableHead>
-                <TableHead>Model</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead className="text-right">Latency</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
-                <TableHead className="text-right">Cost</TableHead>
-                <TableHead className="text-right">Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {logs.data?.logs.length ? (
-                logs.data.logs.map((row: RequestLog) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {new Date(row.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell>{row.provider}</TableCell>
-                    <TableCell className="font-mono text-xs">{row.model}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.apiKey.name}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {row.totalTokens?.toLocaleString() ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      ${row.estimatedCost?.toFixed(4) ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <StatusBadge status={row.statusCode} />
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
-                    {logs.isLoading ? "Loading..." : "No requests match the current filters."}
+      <Card className="gap-0 overflow-hidden p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Provider</TableHead>
+              <TableHead>Model</TableHead>
+              <TableHead>Key</TableHead>
+              <TableHead className="text-right">Latency</TableHead>
+              <TableHead className="text-right">Tokens</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+              <TableHead className="text-right">Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {logs.data?.logs.length ? (
+              logs.data.logs.map((row: RequestLog) => (
+                <TableRow key={row.id}>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {new Date(row.createdAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell>{row.provider}</TableCell>
+                  <TableCell className="font-mono text-xs">{row.model}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{row.apiKey.name}</TableCell>
+                  <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.totalTokens?.toLocaleString() ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    ${row.estimatedCost?.toFixed(4) ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <StatusBadge status={row.statusCode} />
                   </TableCell>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
-          <div className="mt-4 flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">
-              Showing {offset + 1}–{offset + (logs.data?.logs.length ?? 0)} of{" "}
-              {logs.data?.total ?? 0}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={offset === 0}
-                onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              >
-                Previous
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!logs.data || offset + PAGE_SIZE >= logs.data.total}
-                onClick={() => setOffset(offset + PAGE_SIZE)}
-              >
-                Next
-              </Button>
-            </div>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
+                  {logs.isLoading ? "Loading..." : "No requests match the current filters."}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+        <div className="flex items-center justify-between border-t p-4">
+          <span className="text-xs text-muted-foreground">
+            Showing {offset + 1}–{offset + (logs.data?.logs.length ?? 0)} of {logs.data?.total ?? 0}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+            >
+              Previous
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!logs.data || offset + PAGE_SIZE >= logs.data.total}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+            >
+              Next
+            </Button>
           </div>
-        </CardContent>
+        </div>
       </Card>
     </div>
   );

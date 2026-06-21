@@ -1,12 +1,6 @@
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@repo/ui/components/card";
+import { Card, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
 import {
   Dialog,
   DialogContent,
@@ -58,7 +52,7 @@ export function ApiKeysPage() {
   const keys = query.data?.keys ?? [];
 
   return (
-    <div className="grid gap-6">
+    <div className="grid min-w-0 gap-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">API keys</h1>
@@ -146,17 +140,15 @@ export function ApiKeysPage() {
         </Dialog>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">{keys.length} keys</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {query.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : keys.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No API keys yet. Create one above.</p>
-          ) : (
-            <Table>
+      <section className="grid min-w-0 gap-3">
+        <h2 className="text-sm font-medium">{keys.length} keys</h2>
+        {query.isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : keys.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No API keys yet. Create one above.</p>
+        ) : (
+          <Card className="gap-0 overflow-hidden p-0">
+            <Table className="min-w-full">
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
@@ -195,9 +187,9 @@ export function ApiKeysPage() {
                 ))}
               </TableBody>
             </Table>
-          )}
-        </CardContent>
-      </Card>
+          </Card>
+        )}
+      </section>
     </div>
   );
 }
