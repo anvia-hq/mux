@@ -5,6 +5,7 @@ import type {
   ProviderAdapter,
   Model,
 } from "./types";
+import { modelDefaults, visionInput, pdfInput } from "./types";
 
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -170,10 +171,35 @@ export class AnthropicAdapter implements ProviderAdapter {
   }
 
   listModels(): Model[] {
+    const d = modelDefaults;
+    const $ = visionInput;
+    const $$ = pdfInput;
     return [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: this.name },
-      { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", provider: this.name },
-      { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", provider: this.name },
+      { id: "claude-fable-5", name: "Claude Fable 5", provider: this.name, inputPricePer1M: 10, outputPricePer1M: 50, contextWindow: 1000000, maxOutputTokens: 128000, ...d, ...$$ },
+      { id: "claude-opus-4-8", name: "Claude Opus 4.8", provider: this.name, inputPricePer1M: 5, outputPricePer1M: 25, contextWindow: 1000000, maxOutputTokens: 128000, ...d, ...$$ },
+      { id: "claude-opus-4-7", name: "Claude Opus 4.7", provider: this.name, inputPricePer1M: 5, outputPricePer1M: 25, contextWindow: 1000000, maxOutputTokens: 128000, ...d, ...$$ },
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: this.name, inputPricePer1M: 5, outputPricePer1M: 25, contextWindow: 1000000, maxOutputTokens: 128000, ...d, ...$$ },
+      { id: "claude-opus-4-5", name: "Claude Opus 4.5 (latest)", provider: this.name, inputPricePer1M: 5, outputPricePer1M: 25, contextWindow: 200000, maxOutputTokens: 32768, ...d, ...$ },
+      { id: "claude-opus-4-5-20251101", name: "Claude Opus 4.5", provider: this.name, inputPricePer1M: 5, outputPricePer1M: 25, contextWindow: 200000, maxOutputTokens: 32768, ...d, ...$ },
+      { id: "claude-opus-4-1", name: "Claude Opus 4.1 (latest)", provider: this.name, inputPricePer1M: 15, outputPricePer1M: 75, contextWindow: 200000, maxOutputTokens: 32768, ...d, ...$ },
+      { id: "claude-opus-4-1-20250805", name: "Claude Opus 4.1", provider: this.name, inputPricePer1M: 15, outputPricePer1M: 75, contextWindow: 200000, maxOutputTokens: 32768, ...d, ...$ },
+      { id: "claude-opus-4-0", name: "Claude Opus 4 (latest)", provider: this.name, inputPricePer1M: 15, outputPricePer1M: 75, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
+      { id: "claude-opus-4-20250514", name: "Claude Opus 4", provider: this.name, inputPricePer1M: 15, outputPricePer1M: 75, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
+      { id: "claude-3-opus-20240229", name: "Claude Opus 3", provider: this.name, inputPricePer1M: 15, outputPricePer1M: 75, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 1000000, maxOutputTokens: 64000, ...d, ...$$ },
+      { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5 (latest)", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-sonnet-4-5-20250929", name: "Claude Sonnet 4.5", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-sonnet-4-0", name: "Claude Sonnet 4 (latest)", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-7-sonnet-20250219", name: "Claude Sonnet 3.7", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-5-sonnet-20241022", name: "Claude Sonnet 3.5 v2", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-5-sonnet-20240620", name: "Claude Sonnet 3.5", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
+      { id: "claude-3-sonnet-20240229", name: "Claude Sonnet 3", provider: this.name, inputPricePer1M: 3, outputPricePer1M: 15, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5 (latest)", provider: this.name, inputPricePer1M: 1, outputPricePer1M: 5, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: this.name, inputPricePer1M: 1, outputPricePer1M: 5, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-5-haiku-latest", name: "Claude Haiku 3.5 (latest)", provider: this.name, inputPricePer1M: 0.8, outputPricePer1M: 4, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-5-haiku-20241022", name: "Claude Haiku 3.5", provider: this.name, inputPricePer1M: 0.8, outputPricePer1M: 4, contextWindow: 200000, maxOutputTokens: 8192, ...d, ...$ },
+      { id: "claude-3-haiku-20240307", name: "Claude Haiku 3", provider: this.name, inputPricePer1M: 0.25, outputPricePer1M: 1.25, contextWindow: 200000, maxOutputTokens: 4096, ...d, ...$ },
     ];
   }
 }

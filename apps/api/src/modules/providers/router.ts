@@ -5,7 +5,7 @@ import { requireRole } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
 import { prisma } from "../../utils/prisma";
 import { encrypt, lastFour } from "./crypto";
-import { reloadProvider } from "../../providers/registry";
+import { reloadProvider, listAllModels } from "../../providers/registry";
 import { providerNameSchema, setProviderKeySchema } from "./schema";
 
 type AdminContext = { Variables: { adminUser: { id: string } } };
@@ -65,6 +65,7 @@ providersRouter.put(
       update: { ciphertext, lastFour: four, updatedBy: admin.id },
     });
 
+    await prisma.disabledModel.deleteMany({ where: { provider: name } });
     await reloadProvider(name);
 
     return c.json({
@@ -91,8 +92,97 @@ providersRouter.delete(
     const { name } = c.req.valid("param");
 
     await prisma.providerKey.deleteMany({ where: { provider: name } });
+    await prisma.disabledModel.deleteMany({ where: { provider: name } });
     await reloadProvider(name);
 
+    return c.json({ ok: true });
+  },
+);
+
+/**
+ * GET /providers/:name/models - list all models for a provider with their
+ * enabled/disabled state.
+ */
+providersRouter.get(
+  "/:name/models",
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
+  async (c) => {
+    const { name } = c.req.valid("param");
+    const models = listAllModels().filter((m) => m.provider === name);
+    const disabled = new Set(
+      (
+        await prisma.disabledModel.findMany({
+          where: { provider: name },
+          select: { modelId: true },
+        })
+      ).map((r) => r.modelId),
+    );
+    return c.json({
+      data: models.map((m) => ({ ...m, enabled: !disabled.has(m.id) })),
+    });
+  },
+);
+
+/**
+ * PUT /providers/:name/models/toggle - enable or disable a single model.
+ */
+providersRouter.put(
+  "/:name/models/toggle",
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
+  zValidator(
+    "json",
+    z.object({ modelId: z.string().min(1), enabled: z.boolean() }),
+    authValidationHook,
+  ),
+  async (c) => {
+    const { name } = c.req.valid("param");
+    const { modelId, enabled } = c.req.valid("json");
+
+    if (enabled) {
+      await prisma.disabledModel.deleteMany({
+        where: { provider: name, modelId },
+      });
+    } else {
+      await prisma.disabledModel.upsert({
+        where: { modelId_provider: { modelId, provider: name } },
+        create: { modelId, provider: name },
+        update: {},
+      });
+    }
+
+    return c.json({ ok: true });
+  },
+);
+
+/**
+ * PUT /providers/:name/models/enable-all - enable every model for a provider.
+ */
+providersRouter.put(
+  "/:name/models/enable-all",
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
+  async (c) => {
+    const { name } = c.req.valid("param");
+    await prisma.disabledModel.deleteMany({ where: { provider: name } });
+    return c.json({ ok: true });
+  },
+);
+
+/**
+ * PUT /providers/:name/models/disable-all - disable every model for a provider.
+ */
+providersRouter.put(
+  "/:name/models/disable-all",
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
+  async (c) => {
+    const { name } = c.req.valid("param");
+    const models = listAllModels().filter((m) => m.provider === name);
+    for (const m of models) {
+      await prisma.disabledModel.upsert({
+        where: { modelId_provider: { modelId: m.id, provider: name } },
+        create: { modelId: m.id, provider: name },
+        update: {},
+      });
+    }
     return c.json({ ok: true });
   },
 );

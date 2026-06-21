@@ -5,6 +5,7 @@ import type {
   ProviderAdapter,
   Model,
 } from "./types";
+import { modelDefaults, visionInput, audioVideoInput, imageOutput, textOnly } from "./types";
 
 const GOOGLE_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -242,10 +243,30 @@ export class GoogleAdapter implements ProviderAdapter {
   }
 
   listModels(): Model[] {
+    const d = modelDefaults;
+    const v = visionInput;
+    const av = audioVideoInput;
     return [
-      { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", provider: this.name },
-      { id: "gemini-2.0-pro", name: "Gemini 2.0 Pro", provider: this.name },
-      { id: "gemini-1.5-pro", name: "Gemini 1.5 Pro", provider: this.name },
+      { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", provider: this.name, inputPricePer1M: 1.5, outputPricePer1M: 9, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...av },
+      { id: "gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: this.name, inputPricePer1M: 2, outputPricePer1M: 12, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...av },
+      { id: "gemini-3.1-pro-preview-customtools", name: "Gemini 3.1 Pro Preview Custom Tools", provider: this.name, inputPricePer1M: 2, outputPricePer1M: 12, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...av },
+      { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", provider: this.name, inputPricePer1M: 0.25, outputPricePer1M: 1.5, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...v },
+      { id: "gemini-3.1-flash-lite-preview", name: "Gemini 3.1 Flash Lite Preview", provider: this.name, inputPricePer1M: 0.25, outputPricePer1M: 1.5, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...v },
+      { id: "gemini-3-pro-preview", name: "Gemini 3 Pro Preview", provider: this.name, inputPricePer1M: 2, outputPricePer1M: 12, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-3-flash-preview", name: "Gemini 3 Flash Preview", provider: this.name, inputPricePer1M: 0.5, outputPricePer1M: 3, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", provider: this.name, inputPricePer1M: 1.25, outputPricePer1M: 10, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...av },
+      { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", provider: this.name, inputPricePer1M: 0.3, outputPricePer1M: 2.5, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.5-flash-lite", name: "Gemini 2.5 Flash-Lite", provider: this.name, inputPricePer1M: 0.1, outputPricePer1M: 0.4, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.0-flash", name: "Gemini 2.0 Flash", provider: this.name, inputPricePer1M: 0.1, outputPricePer1M: 0.4, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.0-flash-lite", name: "Gemini 2.0 Flash-Lite", provider: this.name, inputPricePer1M: 0.075, outputPricePer1M: 0.3, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-flash-latest", name: "Gemini Flash Latest", provider: this.name, inputPricePer1M: 0.3, outputPricePer1M: 2.5, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-flash-lite-latest", name: "Gemini Flash-Lite Latest", provider: this.name, inputPricePer1M: 0.1, outputPricePer1M: 0.4, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.5-flash-image", name: "Nano Banana", provider: this.name, inputPricePer1M: 0.3, outputPricePer1M: 30, contextWindow: 65536, maxOutputTokens: 65536, ...d, ...v, ...imageOutput },
+      { id: "gemini-3.1-flash-image-preview", name: "Nano Banana 2", provider: this.name, inputPricePer1M: 0.5, outputPricePer1M: 60, contextWindow: 65536, maxOutputTokens: 65536, ...d, ...v, ...imageOutput },
+      { id: "gemini-3-pro-image-preview", name: "Nano Banana Pro", provider: this.name, inputPricePer1M: 2, outputPricePer1M: 120, contextWindow: 65536, maxOutputTokens: 65536, ...d, ...v, ...imageOutput },
+      { id: "gemini-2.5-flash-preview-tts", name: "Gemini 2.5 Flash Preview TTS", provider: this.name, inputPricePer1M: 0.5, outputPricePer1M: 10, contextWindow: 1048576, maxOutputTokens: 8192, ...d, ...av },
+      { id: "gemini-2.5-pro-preview-tts", name: "Gemini 2.5 Pro Preview TTS", provider: this.name, inputPricePer1M: 1, outputPricePer1M: 20, contextWindow: 1048576, maxOutputTokens: 65536, ...d, ...av },
+      { id: "gemini-embedding-001", name: "Gemini Embedding 001", provider: this.name, inputPricePer1M: 0.15, outputPricePer1M: 0, contextWindow: 2048, maxOutputTokens: 0, ...textOnly, reasoning: false, toolCall: false, structuredOutput: false, weights: "closed" },
     ];
   }
 }

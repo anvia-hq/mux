@@ -61,10 +61,6 @@ services:
       CLIENT_ORIGINS: "${CLIENT_ORIGINS:-http://localhost}"
       DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/mux_gateway?schema=public}"
       REDIS_URL: "${DOCKER_REDIS_URL:-redis://redis:6379}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
-      GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
-      MISTRAL_API_KEY: "${MISTRAL_API_KEY:-}"
     depends_on:
       postgres:
         condition: service_healthy

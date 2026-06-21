@@ -20,8 +20,6 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
-  prompts      Prompt[]
-  versions     PromptVersion[]
   providerKeys ProviderKey[]
 }
 
@@ -66,39 +64,6 @@ model RequestLog {
   @@index([createdAt])
 }
 
-model Prompt {
-  id              String          @id @default(cuid())
-  name            String          @unique
-  description     String?
-  activeVersionId String?         @unique
-  activeVersion   PromptVersion?  @relation("ActiveVersion", fields: [activeVersionId], references: [id], onDelete: SetNull)
-  versions        PromptVersion[] @relation("PromptVersions")
-  createdBy       String
-  creator         User            @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-
-  @@index([name])
-}
-
-model PromptVersion {
-  id          String   @id @default(cuid())
-  promptId    String
-  prompt      Prompt   @relation("PromptVersions", fields: [promptId], references: [id], onDelete: Cascade)
-  version     Int
-  content     String
-  model       String?
-  temperature Float?
-  notes       String?
-  createdBy   String
-  creator     User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  activeOf    Prompt?  @relation("ActiveVersion")
-
-  @@unique([promptId, version])
-  @@index([promptId])
-}
-
 /// Provider API keys configured for the gateway. Stored encrypted at rest
 /// using AES-256-GCM with a key derived from `PROVIDER_KEYS_ENCRYPTION_KEY`.
 /// The `provider` field is the primary key (one key per provider).
@@ -112,4 +77,15 @@ model ProviderKey {
   updater     User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
+}
+
+/// Tracks which models are disabled. A model is enabled by default — presence of
+/// a row means the model is disabled. Composite key of (modelId, provider) so
+/// enable/disable toggles are idempotent.
+model DisabledModel {
+  modelId    String
+  provider   String
+  disabledAt DateTime @default(now())
+
+  @@id([modelId, provider])
 }

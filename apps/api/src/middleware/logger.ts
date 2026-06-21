@@ -1,5 +1,5 @@
 import { prisma } from "../utils/prisma";
-import { estimateCost } from "../utils/cost";
+import { estimateCost } from "../providers/registry";
 
 export interface LogEntry {
   apiKeyId: string;
@@ -55,11 +55,7 @@ async function flushLogs(): Promise<void> {
         promptTokens: entry.promptTokens,
         completionTokens: entry.completionTokens,
         totalTokens: entry.totalTokens,
-        estimatedCost: estimateCost(
-          entry.model,
-          entry.promptTokens ?? 0,
-          entry.completionTokens ?? 0,
-        ),
+        estimatedCost: estimateCost(entry.model, entry.promptTokens, entry.completionTokens),
         statusCode: entry.statusCode,
         errorMessage: entry.errorMessage,
       })),

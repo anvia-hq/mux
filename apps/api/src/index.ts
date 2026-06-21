@@ -6,7 +6,6 @@ import { chatRouter } from "./modules/chat/router";
 import { keysRouter } from "./modules/keys/router";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
-import { promptsRouter } from "./modules/prompts/router";
 import { providersRouter } from "./modules/providers/router";
 import { usersRouter } from "./modules/users/router";
 import { initProviders } from "./providers/registry";
@@ -38,7 +37,6 @@ const app = new Hono()
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
   .route("/logs", logsRouter)
-  .route("/prompts", promptsRouter)
   .route("/providers", providersRouter);
 
 const port = Number(process.env.API_PORT ?? 8000);

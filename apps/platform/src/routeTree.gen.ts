@@ -16,8 +16,11 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed.index'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
+import { Route as AuthedProvidersIndexImport } from './routes/_authed.providers.index'
+import { Route as AuthedProvidersNameModelsImport } from './routes/_authed.providers.$name.models'
 import { Route as AuthedPromptsRouteImport } from './routes/_authed.prompts'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
+import { Route as AuthedDocsRouteImport } from './routes/_authed.docs'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
 import { Route as AuthedApiKeysRouteImport } from './routes/_authed.api-keys'
 
@@ -55,6 +58,16 @@ const AuthedProvidersRoute = AuthedProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => AuthedRoute,
 } as any)
+const AuthedProvidersIndex = AuthedProvidersIndexImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedProvidersRoute,
+} as any)
+const AuthedProvidersNameModels = AuthedProvidersNameModelsImport.update({
+  id: '/$name/models',
+  path: '/$name/models',
+  getParentRoute: () => AuthedProvidersRoute,
+} as any)
 const AuthedPromptsRoute = AuthedPromptsRouteImport.update({
   id: '/prompts',
   path: '/prompts',
@@ -63,6 +76,11 @@ const AuthedPromptsRoute = AuthedPromptsRouteImport.update({
 const AuthedModelsRoute = AuthedModelsRouteImport.update({
   id: '/models',
   path: '/models',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedDocsRoute = AuthedDocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedLogsRoute = AuthedLogsRouteImport.update({
@@ -82,10 +100,12 @@ export interface FileRoutesByFullPath {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
+  '/docs': typeof AuthedDocsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/prompts': typeof AuthedPromptsRoute
-  '/providers': typeof AuthedProvidersRoute
+  '/providers': typeof AuthedProvidersIndex
+  '/providers/$name/models': typeof AuthedProvidersNameModels
   '/settings': typeof AuthedSettingsRoute
 }
 export interface FileRoutesByTo {
@@ -93,10 +113,12 @@ export interface FileRoutesByTo {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
+  '/docs': typeof AuthedDocsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
   '/prompts': typeof AuthedPromptsRoute
-  '/providers': typeof AuthedProvidersRoute
+  '/providers': typeof AuthedProvidersIndex
+  '/providers/$name/models': typeof AuthedProvidersNameModels
   '/settings': typeof AuthedSettingsRoute
   '/': typeof AuthedIndexRoute
 }
@@ -107,10 +129,13 @@ export interface FileRoutesById {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/_authed/api-keys': typeof AuthedApiKeysRoute
+  '/_authed/docs': typeof AuthedDocsRoute
   '/_authed/logs': typeof AuthedLogsRoute
   '/_authed/models': typeof AuthedModelsRoute
   '/_authed/prompts': typeof AuthedPromptsRoute
-  '/_authed/providers': typeof AuthedProvidersRoute
+  '/_authed/providers': typeof AuthedProvidersRouteWithChildren
+  '/_authed/providers/': typeof AuthedProvidersIndex
+  '/_authed/providers/$name/models': typeof AuthedProvidersNameModels
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/': typeof AuthedIndexRoute
 }
@@ -122,10 +147,12 @@ export interface FileRouteTypes {
     | '/onboard'
     | '/register'
     | '/api-keys'
+    | '/docs'
     | '/logs'
     | '/models'
     | '/prompts'
     | '/providers'
+    | '/providers/$name/models'
     | '/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -133,10 +160,12 @@ export interface FileRouteTypes {
     | '/onboard'
     | '/register'
     | '/api-keys'
+    | '/docs'
     | '/logs'
     | '/models'
     | '/prompts'
     | '/providers'
+    | '/providers/$name/models'
     | '/settings'
     | '/'
   id:
@@ -146,10 +175,13 @@ export interface FileRouteTypes {
     | '/onboard'
     | '/register'
     | '/_authed/api-keys'
+    | '/_authed/docs'
     | '/_authed/logs'
     | '/_authed/models'
     | '/_authed/prompts'
     | '/_authed/providers'
+    | '/_authed/providers/'
+    | '/_authed/providers/$name/models'
     | '/_authed/settings'
     | '/_authed/'
   fileRoutesById: FileRoutesById
@@ -212,6 +244,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedProvidersRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/providers/': {
+      id: '/_authed/providers/'
+      path: '/'
+      fullPath: '/providers'
+      preLoaderRoute: typeof AuthedProvidersIndexImport
+      parentRoute: typeof AuthedProvidersRoute
+    }
+    '/_authed/providers/$name/models': {
+      id: '/_authed/providers/$name/models'
+      path: '/$name/models'
+      fullPath: '/providers/$name/models'
+      preLoaderRoute: typeof AuthedProvidersNameModelsImport
+      parentRoute: typeof AuthedProvidersRouteImport
+    }
     '/_authed/prompts': {
       id: '/_authed/prompts'
       path: '/prompts'
@@ -224,6 +270,13 @@ declare module '@tanstack/react-router' {
       path: '/models'
       fullPath: '/models'
       preLoaderRoute: typeof AuthedModelsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/docs': {
+      id: '/_authed/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof AuthedDocsRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/logs': {
@@ -245,23 +298,38 @@ declare module '@tanstack/react-router' {
 
 interface AuthedRouteChildren {
   AuthedApiKeysRoute: typeof AuthedApiKeysRoute
+  AuthedDocsRoute: typeof AuthedDocsRoute
   AuthedLogsRoute: typeof AuthedLogsRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
   AuthedPromptsRoute: typeof AuthedPromptsRoute
-  AuthedProvidersRoute: typeof AuthedProvidersRoute
+  AuthedProvidersRoute: typeof AuthedProvidersRouteWithChildren
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApiKeysRoute: AuthedApiKeysRoute,
+  AuthedDocsRoute: AuthedDocsRoute,
   AuthedLogsRoute: AuthedLogsRoute,
   AuthedModelsRoute: AuthedModelsRoute,
   AuthedPromptsRoute: AuthedPromptsRoute,
-  AuthedProvidersRoute: AuthedProvidersRoute,
+  AuthedProvidersRoute: AuthedProvidersRouteWithChildren,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedIndexRoute: AuthedIndexRoute,
 }
+
+interface AuthedProvidersRouteChildren {
+  AuthedProvidersIndex: typeof AuthedProvidersIndex
+  AuthedProvidersNameModels: typeof AuthedProvidersNameModels
+}
+
+const AuthedProvidersRouteChildren: AuthedProvidersRouteChildren = {
+  AuthedProvidersIndex: AuthedProvidersIndex,
+  AuthedProvidersNameModels: AuthedProvidersNameModels,
+}
+
+const AuthedProvidersRouteWithChildren =
+  AuthedProvidersRoute._addFileChildren(AuthedProvidersRouteChildren)
 
 const AuthedRouteWithChildren =
   AuthedRoute._addFileChildren(AuthedRouteChildren)

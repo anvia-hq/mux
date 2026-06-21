@@ -25,26 +25,10 @@ function buildAdapter(provider: string, apiKey: string): ProviderAdapter | null 
 
 /**
  * Reads provider keys from the database and seeds the in-memory adapter cache.
- * Also falls back to environment variables for any provider that isn't yet in
- * the DB (useful for the very first boot before anyone has visited the UI).
+ * Provider keys are NEVER read from environment variables — they are stored
+ * encrypted at rest and managed exclusively via the dashboard / providers API.
  */
 export async function initProviders() {
-  const envFallback: Record<string, string | undefined> = {
-    openai: process.env.OPENAI_API_KEY,
-    anthropic: process.env.ANTHROPIC_API_KEY,
-    google: process.env.GOOGLE_API_KEY,
-    mistral: process.env.MISTRAL_API_KEY,
-  };
-
-  // Seed from env first so the gateway works even if the DB hasn't been
-  // populated yet. DB-loaded keys override env on top.
-  for (const [name, key] of Object.entries(envFallback)) {
-    if (key) {
-      const adapter = buildAdapter(name, key);
-      if (adapter) providers.set(name, adapter);
-    }
-  }
-
   try {
     const rows = await prisma.providerKey.findMany();
     for (const row of rows) {
@@ -96,4 +80,33 @@ export function listAllModels(): Model[] {
 
 export function listConfiguredProviders(): string[] {
   return Array.from(providers.keys());
+}
+
+/**
+ * Returns the pricing for a specific model id by searching all configured
+ * providers' model lists. Returns null if the model is unknown.
+ */
+export function getModelPricing(modelId: string): Model | null {
+  for (const provider of providers.values()) {
+    const found = provider.listModels().find((m) => m.id === modelId);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Computes the estimated cost (in USD) of a request given prompt and
+ * completion token counts and the model's per-1M-token pricing.
+ */
+export function estimateCost(
+  modelId: string,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
+): number | undefined {
+  const pricing = getModelPricing(modelId);
+  if (!pricing) return undefined;
+  const p = promptTokens ?? 0;
+  const c = completionTokens ?? 0;
+  if (p === 0 && c === 0) return undefined;
+  return (p / 1_000_000) * pricing.inputPricePer1M + (c / 1_000_000) * pricing.outputPricePer1M;
 }

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
@@ -12,7 +13,7 @@ import {
   useSetProviderKeyMutation,
 } from "./hooks";
 
-export function ProvidersPage() {
+export function ProvidersList() {
   const query = useProvidersQuery();
   const configured = new Map((query.data?.providers ?? []).map((p) => [p.provider, p]));
 
@@ -108,6 +109,15 @@ function ProviderCard({
             </Button>
           ) : null}
         </div>
+        {configured ? (
+          <Link
+            to="/providers/$name/models"
+            params={{ name }}
+            className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+          >
+            Manage models
+          </Link>
+        ) : null}
         {(setKey.error || deleteKey.error) && (
           <p className="text-xs text-red-500">
             {(setKey.error || deleteKey.error)?.message ?? "Request failed"}

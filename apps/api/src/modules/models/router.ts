@@ -2,6 +2,7 @@ import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth } from "../../middleware/api-key";
 import { listAllModels } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
+import { prisma } from "../../utils/prisma";
 
 /**
  * Formats a provider model into the OpenAI `GET /v1/models` response shape.
@@ -56,10 +57,13 @@ async function requireUser(c: Context, next: Next) {
 
 modelsDashboardRouter.use("*", requireUser);
 
-modelsDashboardRouter.get("/", (c) => {
+modelsDashboardRouter.get("/", async (c) => {
   try {
     const models = listAllModels();
-    return c.json({ data: models.map(toOpenAIModel) });
+    const disabled = new Set(
+      (await prisma.disabledModel.findMany({ select: { modelId: true } })).map((r) => r.modelId),
+    );
+    return c.json({ data: models.filter((m) => !disabled.has(m.id)) });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
     return c.json({ error: errorMessage }, 500);
