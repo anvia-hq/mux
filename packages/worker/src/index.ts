@@ -1,3 +1,4 @@
+import "./env";
 import { Queue, QueueEvents, Worker } from "bullmq";
 import IORedis from "ioredis";
 

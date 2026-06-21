@@ -1,5 +1,6 @@
 import { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
+import "../apps/api/src/env";
 import { hashPassword } from "../apps/api/src/modules/auth/password";
 import { prisma } from "../apps/api/src/utils/prisma";
 

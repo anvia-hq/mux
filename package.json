@@ -12,7 +12,7 @@
     "check:fix": "biome check --write .",
     "format": "biome format --write .",
     "lint": "biome lint .",
-    "createsuperuser": "node scripts/with-env.mjs tsx scripts/createsuperuser.ts",
+    "createsuperuser": "tsx scripts/createsuperuser.ts",
     "db:generate": "pnpm --filter @repo/api db:generate",
     "db:migrate": "pnpm --filter @repo/api db:migrate",
     "db:push": "pnpm --filter @repo/api db:push",

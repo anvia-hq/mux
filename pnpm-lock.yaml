@@ -32,6 +32,9 @@ importers:
       '@prisma/client':
         specifier: 7.8.0
         version: 7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@6.0.3))(typescript@6.0.3)
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       hono:
         specifier: ^4.12.26
         version: 4.12.26
@@ -212,6 +215,9 @@ importers:
       bullmq:
         specifier: ^5.79.0
         version: 5.79.0
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1

@@ -13,12 +13,13 @@
     }
   },
   "scripts": {
-    "dev": "node ../../scripts/with-env.mjs tsx watch src/index.ts",
-    "start": "node ../../scripts/with-env.mjs tsx src/index.ts",
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "bullmq": "^5.79.0",
+    "dotenv": "17.4.2",
     "ioredis": "^5.11.1"
   },
   "devDependencies": {
