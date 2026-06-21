@@ -4,6 +4,13 @@ import { cacheGet, cacheSet } from "../../utils/cache";
 
 const API_KEY_PREFIX = "mux_live_";
 
+export class ApiKeySpendLimitExceededError extends Error {
+  constructor() {
+    super("API key spend limit exceeded");
+    this.name = "ApiKeySpendLimitExceededError";
+  }
+}
+
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
@@ -14,7 +21,11 @@ export function generateApiKey(): { raw: string; hashed: string } {
   return { raw, hashed };
 }
 
-export async function createApiKey(name: string, userId: string): Promise<{ id: string; key: string }> {
+export async function createApiKey(
+  name: string,
+  userId: string,
+  spendLimitUsd?: number | null,
+): Promise<{ id: string; key: string }> {
   const { raw, hashed } = generateApiKey();
 
   const apiKey = await prisma.apiKey.create({
@@ -22,6 +33,7 @@ export async function createApiKey(name: string, userId: string): Promise<{ id: 
       name,
       key: hashed,
       createdBy: userId,
+      spendLimitUsd: spendLimitUsd ?? null,
     },
   });
 
@@ -35,7 +47,12 @@ export async function validateApiKey(rawKey: string) {
   // Check cache first
   let cached = null;
   try {
-    cached = await cacheGet<{ id: string; name: string; isActive: boolean }>(cacheKey);
+    cached = await cacheGet<{
+      id: string;
+      name: string;
+      isActive: boolean;
+      spendLimitUsd: number | null;
+    }>(cacheKey);
   } catch {
     // Cache unavailable, fall through to DB
   }
@@ -46,7 +63,7 @@ export async function validateApiKey(rawKey: string) {
   // Cache miss - query database
   const apiKey = await prisma.apiKey.findUnique({
     where: { key: hashed },
-    select: { id: true, name: true, isActive: true },
+    select: { id: true, name: true, isActive: true, spendLimitUsd: true },
   });
 
   if (!apiKey) {
@@ -80,11 +97,12 @@ export async function revokeApiKey(id: string) {
 }
 
 export async function listApiKeys() {
-  return prisma.apiKey.findMany({
+  const keys = await prisma.apiKey.findMany({
     select: {
       id: true,
       name: true,
       isActive: true,
+      spendLimitUsd: true,
       createdAt: true,
       creator: {
         select: { email: true },
@@ -92,4 +110,57 @@ export async function listApiKeys() {
     },
     orderBy: { createdAt: "desc" },
   });
+
+  if (keys.length === 0) {
+    return [];
+  }
+
+  const spendRows = await prisma.requestLog.groupBy({
+    by: ["apiKeyId"],
+    where: {
+      apiKeyId: { in: keys.map((key) => key.id) },
+      statusCode: { gte: 200, lt: 300 },
+      estimatedCost: { not: null },
+    },
+    _sum: { estimatedCost: true },
+  });
+
+  const spentByKey = new Map(
+    spendRows.map((row) => [row.apiKeyId, row._sum.estimatedCost ?? 0] as const),
+  );
+
+  return keys.map((key) => {
+    const spentUsd = spentByKey.get(key.id) ?? 0;
+    const remainingUsd =
+      key.spendLimitUsd === null ? null : Math.max(key.spendLimitUsd - spentUsd, 0);
+
+    return { ...key, spentUsd, remainingUsd };
+  });
+}
+
+export async function getApiKeySpentUsd(apiKeyId: string): Promise<number> {
+  const result = await prisma.requestLog.aggregate({
+    where: {
+      apiKeyId,
+      statusCode: { gte: 200, lt: 300 },
+      estimatedCost: { not: null },
+    },
+    _sum: { estimatedCost: true },
+  });
+
+  return result._sum.estimatedCost ?? 0;
+}
+
+export async function assertApiKeyCanSpend(
+  apiKeyId: string,
+  spendLimitUsd: number | null | undefined,
+): Promise<void> {
+  if (spendLimitUsd === null || spendLimitUsd === undefined) {
+    return;
+  }
+
+  const spentUsd = await getApiKeySpentUsd(apiKeyId);
+  if (spentUsd >= spendLimitUsd) {
+    throw new ApiKeySpendLimitExceededError();
+  }
 }

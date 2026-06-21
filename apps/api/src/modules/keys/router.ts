@@ -68,11 +68,11 @@ keysRouter.get("/", async (c) => {
  * SHA-256 hash, so the raw value cannot be recovered later.
  */
 keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), async (c) => {
-  const { name } = c.req.valid("json");
+  const { name, spendLimitUsd } = c.req.valid("json");
   const userId = c.get("userId");
 
   try {
-    const { id, key } = await createApiKey(name, userId);
+    const { id, key } = await createApiKey(name, userId, spendLimitUsd);
     return c.json({ id, key }, 201);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";

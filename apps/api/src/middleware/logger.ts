@@ -11,6 +11,7 @@ export interface LogEntry {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  estimatedCost?: number;
   statusCode: number;
   errorMessage?: string;
 }
@@ -55,7 +56,9 @@ async function flushLogs(): Promise<void> {
         promptTokens: entry.promptTokens,
         completionTokens: entry.completionTokens,
         totalTokens: entry.totalTokens,
-        estimatedCost: estimateCost(entry.model, entry.promptTokens, entry.completionTokens),
+        estimatedCost:
+          entry.estimatedCost ??
+          estimateCost(entry.model, entry.promptTokens, entry.completionTokens),
         statusCode: entry.statusCode,
         errorMessage: entry.errorMessage,
       })),

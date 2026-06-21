@@ -4,7 +4,7 @@ import { validateApiKey } from "../modules/keys/services";
 export async function apiKeyAuth(c: Context, next: Next) {
   const authHeader = c.req.header("Authorization");
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader?.startsWith("Bearer ")) {
     return c.json({ error: "missing or invalid Authorization header" }, 401);
   }
 
@@ -18,6 +18,7 @@ export async function apiKeyAuth(c: Context, next: Next) {
   // Set API key info in context for logging
   c.set("apiKeyId", apiKey.id);
   c.set("apiKeyName", apiKey.name);
+  c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd);
 
   await next();
 }

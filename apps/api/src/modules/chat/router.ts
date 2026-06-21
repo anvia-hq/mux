@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import { apiKeyAuth } from "../../middleware/api-key";
-import { logRequest } from "../../middleware/logger";
-import { handleChatCompletion } from "./services";
+import { flushLogBuffer, logRequest } from "../../middleware/logger";
+import { ApiKeySpendLimitExceededError, assertApiKeyCanSpend } from "../keys/services";
+import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
 import type { ChatCompletionRequest } from "../../providers/types";
 
 /**
@@ -19,6 +20,8 @@ chatRouter.use("*", apiKeyAuth);
 
 chatRouter.post("/completions", async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;
+  const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
+  const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
 
   let body: ChatCompletionRequest;
   try {
@@ -31,8 +34,19 @@ chatRouter.post("/completions", async (c) => {
     return c.json({ error: "request must include a model and a non-empty messages array" }, 400);
   }
 
+  if (isLimitedKey && body.stream) {
+    return c.json({ error: "streaming is not supported for API keys with a spend limit" }, 429);
+  }
+
   try {
-    const result = await handleChatCompletion(body, apiKeyId);
+    if (isLimitedKey) {
+      await flushLogBuffer();
+      await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
+    }
+
+    const result = await handleChatCompletion(body, apiKeyId, {
+      requireBillableUsage: isLimitedKey,
+    });
 
     // Streaming response: pipe provider chunks to the client as SSE.
     if (result.kind === "stream") {
@@ -113,6 +127,14 @@ chatRouter.post("/completions", async (c) => {
 
     if (errorMessage.startsWith("No provider found")) {
       return c.json({ error: errorMessage }, 404);
+    }
+
+    if (error instanceof ApiKeySpendLimitExceededError) {
+      return c.json({ error: errorMessage }, 429);
+    }
+
+    if (error instanceof ApiKeyUnbillableUsageError) {
+      return c.json({ error: errorMessage }, 429);
     }
 
     return c.json({ error: errorMessage }, 500);

@@ -5,8 +5,16 @@ export type ApiKey = {
   id: string;
   name: string;
   isActive: boolean;
+  spendLimitUsd: number | null;
+  spentUsd: number;
+  remainingUsd: number | null;
   createdAt: string;
   creator: { email: string };
+};
+
+export type CreateApiKeyInput = {
+  name: string;
+  spendLimitUsd?: number | null;
 };
 
 const queryKey = ["api-keys"] as const;
@@ -21,8 +29,8 @@ export function useApiKeysQuery() {
 export function useCreateApiKeyMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (name: string) =>
-      apiFetch<{ id: string; key: string }>("/api-keys", { method: "POST", body: { name } }),
+    mutationFn: (input: CreateApiKeyInput) =>
+      apiFetch<{ id: string; key: string }>("/api-keys", { method: "POST", body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 }

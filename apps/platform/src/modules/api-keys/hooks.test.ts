@@ -4,12 +4,21 @@ vi.mock("../../lib/api-client", () => ({
   apiFetch: vi.fn(),
   ApiError: class ApiError extends Error {
     status: number;
-    constructor(status: number, message: string) { super(message); this.name = "ApiError"; this.status = status; }
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "ApiError";
+      this.status = status;
+    }
   },
 }));
 
 import { apiFetch, ApiError } from "../../lib/api-client";
-import { useApiKeysQuery, useCreateApiKeyMutation, useRevokeApiKeyMutation, isForbiddenError } from "./hooks";
+import {
+  useApiKeysQuery,
+  useCreateApiKeyMutation,
+  useRevokeApiKeyMutation,
+  isForbiddenError,
+} from "./hooks";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
@@ -34,13 +43,13 @@ describe("api-keys hooks", () => {
   });
 
   describe("useCreateApiKeyMutation", () => {
-    it("posts to /api-keys with name", async () => {
+    it("posts to /api-keys with name and spend limit", async () => {
       vi.mocked(apiFetch).mockResolvedValueOnce({ id: "k2", key: "mux_live_xxx" });
       const { result } = renderHook(() => useCreateApiKeyMutation(), { wrapper });
-      await act(() => result.current.mutateAsync("new-key"));
+      await act(() => result.current.mutateAsync({ name: "new-key", spendLimitUsd: 10 }));
       expect(apiFetch).toHaveBeenCalledWith("/api-keys", {
         method: "POST",
-        body: { name: "new-key" },
+        body: { name: "new-key", spendLimitUsd: 10 },
       });
     });
   });
@@ -56,12 +65,12 @@ describe("api-keys hooks", () => {
 
   describe("isForbiddenError", () => {
     it("returns true for ApiError with status 403", () => {
-      expect(isForbiddenError(new ApiError(403, "forbidden"))).toBe(true);
+      expect(isForbiddenError(new ApiError(403, "forbidden", null))).toBe(true);
     });
 
     it("returns false for other errors", () => {
       expect(isForbiddenError(new Error("test"))).toBe(false);
-      expect(isForbiddenError(new ApiError(500, "server error"))).toBe(false);
+      expect(isForbiddenError(new ApiError(500, "server error", null))).toBe(false);
     });
   });
 });

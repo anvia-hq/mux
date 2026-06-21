@@ -4,14 +4,25 @@ import { Hono } from "hono";
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
     apiKey: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+    requestLog: { groupBy: vi.fn() },
     user: { findUnique: vi.fn() },
   },
 }));
 
 vi.mock("../../utils/prisma", () => ({ prisma: mockPrisma }));
-vi.mock("hono/jwt", () => ({ sign: vi.fn().mockResolvedValue("jwt"), verify: vi.fn().mockResolvedValue({ sub: "admin-1", role: "ADMIN" }) }));
-vi.mock("hono/cookie", () => ({ getCookie: vi.fn().mockReturnValue("jwt"), setCookie: vi.fn(), deleteCookie: vi.fn() }));
-vi.mock("../../utils/cache", () => ({ cacheGet: vi.fn().mockResolvedValue(null), cacheSet: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("hono/jwt", () => ({
+  sign: vi.fn().mockResolvedValue("jwt"),
+  verify: vi.fn().mockResolvedValue({ sub: "admin-1", role: "ADMIN" }),
+}));
+vi.mock("hono/cookie", () => ({
+  getCookie: vi.fn().mockReturnValue("jwt"),
+  setCookie: vi.fn(),
+  deleteCookie: vi.fn(),
+}));
+vi.mock("../../utils/cache", () => ({
+  cacheGet: vi.fn().mockResolvedValue(null),
+  cacheSet: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { keysRouter } from "./router";
 
@@ -20,8 +31,13 @@ describe("keys router", () => {
 
   beforeEach(() => {
     mockPrisma.user.findUnique.mockResolvedValue({
-      id: "admin-1", email: "a@b.com", name: "Admin", role: "ADMIN",
-      passwordHash: "h", createdAt: new Date(), updatedAt: new Date(),
+      id: "admin-1",
+      email: "a@b.com",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
   });
 
@@ -38,9 +54,14 @@ describe("keys router", () => {
     const res = await app.request("/api-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: "test" }),
+      body: JSON.stringify({ name: "test", spendLimitUsd: 5 }),
     });
     expect(res.status).toBe(201);
+    expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ spendLimitUsd: 5 }),
+      }),
+    );
   });
 
   it("POST / returns 400 for empty name", async () => {
@@ -49,6 +70,16 @@ describe("keys router", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST / returns 400 for invalid spend limit", async () => {
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test", spendLimitUsd: 0 }),
     });
     expect(res.status).toBe(400);
   });

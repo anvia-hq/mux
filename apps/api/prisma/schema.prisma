@@ -24,14 +24,15 @@ model User {
 }
 
 model ApiKey {
-  id        String   @id @default(cuid())
-  name      String
-  key       String   @unique
-  createdBy String
-  creator   User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  logs      RequestLog[]
+  id            String   @id @default(cuid())
+  name          String
+  key           String   @unique
+  createdBy     String
+  creator       User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  isActive      Boolean  @default(true)
+  spendLimitUsd Float?
+  createdAt     DateTime @default(now())
+  logs          RequestLog[]
 
   @@index([isActive])
 }

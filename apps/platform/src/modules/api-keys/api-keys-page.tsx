@@ -37,6 +37,7 @@ export function ApiKeysPage() {
   const revoke = useRevokeApiKeyMutation();
   const [revealed, setRevealed] = useState<{ id: string; key: string } | null>(null);
   const [name, setName] = useState("");
+  const [spendLimitUsd, setSpendLimitUsd] = useState("");
 
   if (isForbiddenError(query.error)) {
     return (
@@ -64,6 +65,7 @@ export function ApiKeysPage() {
           onOpenChange={(open) => {
             if (!open) {
               setName("");
+              setSpendLimitUsd("");
               create.reset();
             }
           }}
@@ -101,12 +103,30 @@ export function ApiKeysPage() {
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (!name.trim()) return;
-                  create.mutate(name.trim(), {
-                    onSuccess: (data) => {
-                      setRevealed({ id: data.id, key: data.key });
-                      setName("");
+                  const parsedSpendLimit = spendLimitUsd.trim()
+                    ? Number(spendLimitUsd.trim())
+                    : null;
+
+                  if (
+                    parsedSpendLimit !== null &&
+                    (!Number.isFinite(parsedSpendLimit) || parsedSpendLimit <= 0)
+                  ) {
+                    return;
+                  }
+
+                  create.mutate(
+                    {
+                      name: name.trim(),
+                      spendLimitUsd: parsedSpendLimit,
                     },
-                  });
+                    {
+                      onSuccess: (data) => {
+                        setRevealed({ id: data.id, key: data.key });
+                        setName("");
+                        setSpendLimitUsd("");
+                      },
+                    },
+                  );
                 }}
               >
                 <DialogHeader>
@@ -124,6 +144,16 @@ export function ApiKeysPage() {
                     placeholder="e.g. billing-service"
                     autoFocus
                     required
+                  />
+                  <Label htmlFor="key-spend-limit">USD balance</Label>
+                  <Input
+                    id="key-spend-limit"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={spendLimitUsd}
+                    onChange={(event) => setSpendLimitUsd(event.target.value)}
+                    placeholder="Unlimited"
                   />
                   {create.error ? (
                     <p className="text-sm text-destructive">{create.error.message}</p>
@@ -153,6 +183,7 @@ export function ApiKeysPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Balance</TableHead>
                   <TableHead>Created by</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -169,6 +200,7 @@ export function ApiKeysPage() {
                         <Badge variant="secondary">Revoked</Badge>
                       )}
                     </TableCell>
+                    <TableCell className="text-muted-foreground">{formatBalance(key)}</TableCell>
                     <TableCell className="text-muted-foreground">{key.creator.email}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(key.createdAt).toLocaleString()}
@@ -192,4 +224,16 @@ export function ApiKeysPage() {
       </section>
     </div>
   );
+}
+
+function formatBalance(key: ApiKey) {
+  if (key.spendLimitUsd === null) {
+    return "Unlimited";
+  }
+
+  return `${formatUsd(key.spentUsd)} / ${formatUsd(key.spendLimitUsd)}`;
+}
+
+function formatUsd(value: number) {
+  return `$${value.toFixed(2)}`;
 }

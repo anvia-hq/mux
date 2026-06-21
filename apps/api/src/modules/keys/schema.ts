@@ -13,6 +13,11 @@ export const createKeySchema = z.object({
     .trim()
     .min(1, "name is required")
     .max(100, "name must be at most 100 characters"),
+  spendLimitUsd: z
+    .number({ error: "spendLimitUsd must be a number" })
+    .positive("spendLimitUsd must be greater than 0")
+    .nullable()
+    .optional(),
 });
 
 export type CreateKeyInput = z.infer<typeof createKeySchema>;

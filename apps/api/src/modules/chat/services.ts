@@ -3,7 +3,7 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
 } from "../../providers/types";
-import { getProvider } from "../../providers/registry";
+import { estimateCost, getModelPricing, getProvider } from "../../providers/registry";
 import { logRequest } from "../../middleware/logger";
 
 /**
@@ -25,6 +25,15 @@ export type ChatCompletionResult =
       response: ChatCompletionResponse;
     };
 
+export class ApiKeyUnbillableUsageError extends Error {
+  constructor() {
+    super(
+      "API key spend limit requires billable usage, but this request cost could not be determined",
+    );
+    this.name = "ApiKeyUnbillableUsageError";
+  }
+}
+
 /**
  * Dispatch a chat completion request to the appropriate provider.
  *
@@ -39,11 +48,16 @@ export type ChatCompletionResult =
 export async function handleChatCompletion(
   request: ChatCompletionRequest,
   apiKeyId: string,
+  options: { requireBillableUsage?: boolean } = {},
 ): Promise<ChatCompletionResult> {
   const provider = getProvider(request.model);
 
   if (!provider) {
     throw new Error(`No provider found for model: ${request.model}`);
+  }
+
+  if (options.requireBillableUsage && !getModelPricing(request.model)) {
+    throw new ApiKeyUnbillableUsageError();
   }
 
   const startTime = Date.now();
@@ -64,6 +78,15 @@ export async function handleChatCompletion(
 
     const response = await provider.chatCompletion(request);
     const latencyMs = Date.now() - startTime;
+    const estimatedCost = estimateCost(
+      request.model,
+      response.usage?.prompt_tokens,
+      response.usage?.completion_tokens,
+    );
+
+    if (options.requireBillableUsage && estimatedCost === undefined) {
+      throw new ApiKeyUnbillableUsageError();
+    }
 
     // Buffer log entry; flushed asynchronously by the logger middleware.
     logRequest({
@@ -75,6 +98,7 @@ export async function handleChatCompletion(
       promptTokens: response.usage?.prompt_tokens,
       completionTokens: response.usage?.completion_tokens,
       totalTokens: response.usage?.total_tokens,
+      estimatedCost,
       statusCode: 200,
     });
 
