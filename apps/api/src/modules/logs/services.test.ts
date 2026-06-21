@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
+    $queryRaw: vi.fn(),
     requestLog: {
       findMany: vi.fn(),
       count: vi.fn(),
@@ -22,13 +23,25 @@ describe("logs services", () => {
 
   describe("getLogs", () => {
     it("returns paginated logs with total count", async () => {
-      mockPrisma.requestLog.findMany.mockResolvedValueOnce([{
-        id: "log-1", apiKeyId: "key-1", provider: "openai", model: "gpt-4",
-        endpoint: "/v1/chat", latencyMs: 100, providerLatencyMs: null,
-        promptTokens: 10, completionTokens: 20, totalTokens: 30,
-        estimatedCost: 0.01, statusCode: 200, errorMessage: null,
-        createdAt: new Date(), apiKey: { name: "test" },
-      }]);
+      mockPrisma.requestLog.findMany.mockResolvedValueOnce([
+        {
+          id: "log-1",
+          apiKeyId: "key-1",
+          provider: "openai",
+          model: "gpt-4",
+          endpoint: "/v1/chat",
+          latencyMs: 100,
+          providerLatencyMs: null,
+          promptTokens: 10,
+          completionTokens: 20,
+          totalTokens: 30,
+          estimatedCost: 0.01,
+          statusCode: 200,
+          errorMessage: null,
+          createdAt: new Date(),
+          apiKey: { name: "test" },
+        },
+      ]);
       mockPrisma.requestLog.count.mockResolvedValueOnce(42);
 
       const result = await getLogs({});
@@ -39,7 +52,13 @@ describe("logs services", () => {
     it("applies filter params to where clause", async () => {
       mockPrisma.requestLog.findMany.mockResolvedValueOnce([]);
       mockPrisma.requestLog.count.mockResolvedValueOnce(0);
-      await getLogs({ provider: "openai", model: "gpt-4", apiKeyId: "key-1", limit: 10, offset: 5 });
+      await getLogs({
+        provider: "openai",
+        model: "gpt-4",
+        apiKeyId: "key-1",
+        limit: 10,
+        offset: 5,
+      });
       expect(mockPrisma.requestLog.findMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 10, skip: 5 }),
       );
@@ -52,13 +71,41 @@ describe("logs services", () => {
       mockPrisma.requestLog.aggregate
         .mockResolvedValueOnce({ _sum: { totalTokens: 5000 } })
         .mockResolvedValueOnce({ _sum: { estimatedCost: 2.5 } });
-      mockPrisma.requestLog.groupBy
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([]);
+      mockPrisma.requestLog.groupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { date: "2026-06-21", requests: 2, tokens: 30, cost: 0.2 },
+      ]);
 
-      const stats = await getStats({});
+      const stats = await getStats({ days: 7, endDate: new Date("2026-06-21T12:00:00.000Z") });
       expect(stats.totalRequests).toBe(100);
       expect(stats.totalTokens).toBe(5000);
+      expect(stats.daily).toHaveLength(7);
+      expect(stats.daily.at(-1)).toEqual({
+        date: "2026-06-21",
+        requests: 2,
+        tokens: 30,
+        cost: 0.2,
+      });
+    });
+
+    it("applies provider and model filters to stats queries", async () => {
+      mockPrisma.requestLog.count.mockResolvedValueOnce(0);
+      mockPrisma.requestLog.aggregate
+        .mockResolvedValueOnce({ _sum: { totalTokens: null } })
+        .mockResolvedValueOnce({ _sum: { estimatedCost: null } });
+      mockPrisma.requestLog.groupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+
+      await getStats({
+        provider: "openai",
+        model: "gpt-4",
+        days: 30,
+        endDate: new Date("2026-06-21T12:00:00.000Z"),
+      });
+
+      expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ provider: "openai", model: "gpt-4" }),
+      });
     });
   });
 });

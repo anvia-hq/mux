@@ -42,10 +42,17 @@ describe("logs hooks", () => {
         totalCost: 2.5,
         byProvider: [],
         byModel: [],
+        daily: [],
       });
-      const { result } = renderHook(() => useLogsStatsQuery(), { wrapper });
+      const { result } = renderHook(
+        () => useLogsStatsQuery({ days: 30, provider: "openai", model: "gpt-4" }),
+        { wrapper },
+      );
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
-      expect(apiFetch).toHaveBeenCalledWith("/logs/stats");
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("/logs/stats?"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("days=30"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("provider=openai"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("model=gpt-4"));
     });
   });
 });

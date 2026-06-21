@@ -1,29 +1,14 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@repo/ui/components/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { meQueryOptions } from "../../auth/hooks/use-auth";
-import { apiFetch } from "../../../lib/api-client";
-
-type StatsResponse = {
-  totalRequests: number;
-  totalTokens: number;
-  totalCost: number;
-  byProvider: Array<{ provider: string; requests: number; tokens: number; cost: number }>;
-  byModel: Array<{ model: string; requests: number; tokens: number; cost: number }>;
-};
+import { useLogsStatsQuery, type StatsRangeDays } from "../../logs/hooks";
+import { RequestTrendChart } from "../../logs/request-trend-chart";
 
 export function OverviewPage() {
   const user = useQuery(meQueryOptions).data;
-  const stats = useQuery<StatsResponse>({
-    queryKey: ["logs", "stats"],
-    queryFn: () => apiFetch<StatsResponse>("/logs/stats"),
-    refetchInterval: 15_000,
-  });
+  const [days, setDays] = useState<StatsRangeDays>(30);
+  const stats = useLogsStatsQuery({ days });
 
   return (
     <div className="grid gap-6">
@@ -36,39 +21,7 @@ export function OverviewPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Total requests</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold tabular-nums">
-              {stats.data?.totalRequests ?? "—"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Total tokens</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold tabular-nums">
-              {stats.data?.totalTokens.toLocaleString() ?? "—"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium">Estimated cost</CardTitle>
-            <CardDescription>USD across all requests</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-semibold tabular-nums">
-              ${stats.data?.totalCost.toFixed(4) ?? "—"}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <RequestTrendChart stats={stats.data} days={days} onDaysChange={setDays} />
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>

@@ -24,7 +24,14 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { useState } from "react";
-import { useLogsQuery, useLogsStatsQuery, type LogsStats, type RequestLog } from "./hooks";
+import {
+  useLogsQuery,
+  useLogsStatsQuery,
+  type LogsStats,
+  type RequestLog,
+  type StatsRangeDays,
+} from "./hooks";
+import { RequestTrendChart } from "./request-trend-chart";
 
 const PAGE_SIZE = 25;
 
@@ -32,8 +39,13 @@ export function LogsPage() {
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [offset, setOffset] = useState(0);
+  const [days, setDays] = useState<StatsRangeDays>(30);
 
-  const stats = useLogsStatsQuery();
+  const stats = useLogsStatsQuery({
+    days,
+    provider: provider || undefined,
+    model: model || undefined,
+  });
   const logs = useLogsQuery({
     provider: provider || undefined,
     model: model || undefined,
@@ -51,6 +63,14 @@ export function LogsPage() {
       </div>
 
       <StatsRow stats={stats.data} />
+
+      <RequestTrendChart
+        stats={stats.data}
+        days={days}
+        onDaysChange={setDays}
+        title="Filtered requests"
+        description="Daily traffic for the current log view"
+      />
 
       <Card>
         <CardHeader>

@@ -110,15 +110,20 @@ logsRouter.get("/", async (c) => {
  * query parameters to scope the window.
  */
 logsRouter.get("/stats", async (c) => {
-  const { startDate, endDate, groupBy } = c.req.query();
+  const { startDate, endDate, groupBy, days, provider, model } = c.req.query();
 
   const filters: StatsFilters = {};
+  if (provider) filters.provider = provider;
+  if (model) filters.model = model;
 
   const parsedStart = parseDate(startDate);
   if (parsedStart) filters.startDate = parsedStart;
 
   const parsedEnd = parseDate(endDate);
   if (parsedEnd) filters.endDate = parsedEnd;
+
+  const parsedDays = parsePositiveInt(days);
+  if (parsedDays !== undefined) filters.days = parsedDays;
 
   // Narrow the raw string into the documented union before passing through so
   // unknown values are silently dropped instead of forwarding user input to

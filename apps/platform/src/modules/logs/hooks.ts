@@ -23,6 +23,7 @@ export type LogsStats = {
   totalCost: number;
   byProvider: Array<{ provider: string; requests: number; tokens: number; cost: number }>;
   byModel: Array<{ model: string; requests: number; tokens: number; cost: number }>;
+  daily: Array<{ date: string; requests: number; tokens: number; cost: number }>;
 };
 
 const queryKey = ["logs"] as const;
@@ -46,10 +47,24 @@ export function useLogsQuery(filters: LogFilters) {
   });
 }
 
-export function useLogsStatsQuery() {
+export type StatsRangeDays = 7 | 30 | 90;
+
+export type StatsFilters = {
+  days?: StatsRangeDays;
+  provider?: string;
+  model?: string;
+};
+
+export function useLogsStatsQuery(filters: StatsFilters = {}) {
+  const params = new URLSearchParams();
+  if (filters.days) params.set("days", String(filters.days));
+  if (filters.provider) params.set("provider", filters.provider);
+  if (filters.model) params.set("model", filters.model);
+  const query = params.toString();
+
   return useQuery({
-    queryKey: [...queryKey, "stats"] as const,
-    queryFn: () => apiFetch<LogsStats>("/logs/stats"),
+    queryKey: [...queryKey, "stats", filters] as const,
+    queryFn: () => apiFetch<LogsStats>(query ? `/logs/stats?${query}` : "/logs/stats"),
     refetchInterval: 15_000,
   });
 }

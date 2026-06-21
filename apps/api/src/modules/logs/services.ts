@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../utils/prisma";
 
 /**
@@ -25,6 +25,13 @@ export type GroupedStat = {
   cost: number;
 };
 
+export type DailyStat = {
+  date: string;
+  requests: number;
+  tokens: number;
+  cost: number;
+};
+
 /**
  * Shape returned by {@link getStats}. Aggregates are computed across the full
  * filtered set as well as broken down by provider and model.
@@ -35,6 +42,7 @@ export type Stats = {
   totalCost: number;
   byProvider: Array<{ provider: string } & GroupedStat>;
   byModel: Array<{ model: string } & GroupedStat>;
+  daily: DailyStat[];
 };
 
 /**
@@ -109,8 +117,87 @@ export async function getLogs(filters: LogFilters) {
 export type StatsFilters = {
   startDate?: Date;
   endDate?: Date;
+  provider?: string;
+  model?: string;
+  days?: number;
   groupBy?: "provider" | "model" | "apiKey";
 };
+
+const DEFAULT_STATS_DAYS = 30;
+const ALLOWED_STATS_DAYS = new Set([7, 30, 90]);
+
+function normalizeStatsDays(days: number | undefined) {
+  return days && ALLOWED_STATS_DAYS.has(days) ? days : DEFAULT_STATS_DAYS;
+}
+
+function startOfUtcDay(date: Date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function formatDateKey(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildStatsRange(filters: StatsFilters) {
+  const days = normalizeStatsDays(filters.days);
+  const endDate = filters.endDate ?? new Date();
+  const endDay = startOfUtcDay(endDate);
+  const startDate =
+    filters.startDate ?? new Date(endDay.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+
+  return { days, startDate, endDate };
+}
+
+function buildStatsWhere(filters: StatsFilters, startDate: Date, endDate: Date) {
+  const where: Prisma.RequestLogWhereInput = {
+    createdAt: {
+      gte: startDate,
+      lte: endDate,
+    },
+  };
+
+  if (filters.provider) where.provider = filters.provider;
+  if (filters.model) where.model = filters.model;
+
+  return where;
+}
+
+type DailyRow = {
+  date: string | Date;
+  requests: number | bigint;
+  tokens: number | bigint | null;
+  cost: number | null;
+};
+
+function toNumber(value: number | bigint | null | undefined) {
+  if (typeof value === "bigint") return Number(value);
+  return value ?? 0;
+}
+
+function buildDailySeries(rows: DailyRow[], days: number, startDate: Date): DailyStat[] {
+  const byDate = new Map(
+    rows.map((row) => {
+      const date =
+        row.date instanceof Date ? formatDateKey(row.date) : String(row.date).slice(0, 10);
+
+      return [
+        date,
+        {
+          date,
+          requests: toNumber(row.requests),
+          tokens: toNumber(row.tokens),
+          cost: row.cost ?? 0,
+        },
+      ] as const;
+    }),
+  );
+
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date(startDate.getTime() + index * 24 * 60 * 60 * 1000);
+    const dateKey = formatDateKey(date);
+    return byDate.get(dateKey) ?? { date: dateKey, requests: 0, tokens: 0, cost: 0 };
+  });
+}
 
 /**
  * Compute aggregate request statistics over the filtered log set.
@@ -120,37 +207,51 @@ export type StatsFilters = {
  * null in the response shape.
  */
 export async function getStats(filters: StatsFilters): Promise<Stats> {
-  const where: Prisma.RequestLogWhereInput = {};
+  const { days, startDate, endDate } = buildStatsRange(filters);
+  const where = buildStatsWhere(filters, startDate, endDate);
+  const providerFilter = filters.provider
+    ? Prisma.sql`AND "provider" = ${filters.provider}`
+    : Prisma.empty;
+  const modelFilter = filters.model ? Prisma.sql`AND "model" = ${filters.model}` : Prisma.empty;
 
-  if (filters.startDate || filters.endDate) {
-    where.createdAt = {};
-    if (filters.startDate) where.createdAt.gte = filters.startDate;
-    if (filters.endDate) where.createdAt.lte = filters.endDate;
-  }
-
-  const [totalRequests, totalTokensAgg, totalCostAgg, byProvider, byModel] = await Promise.all([
-    prisma.requestLog.count({ where }),
-    prisma.requestLog.aggregate({
-      where,
-      _sum: { totalTokens: true },
-    }),
-    prisma.requestLog.aggregate({
-      where,
-      _sum: { estimatedCost: true },
-    }),
-    prisma.requestLog.groupBy({
-      by: ["provider"],
-      where,
-      _count: { _all: true },
-      _sum: { totalTokens: true, estimatedCost: true },
-    }),
-    prisma.requestLog.groupBy({
-      by: ["model"],
-      where,
-      _count: { _all: true },
-      _sum: { totalTokens: true, estimatedCost: true },
-    }),
-  ]);
+  const [totalRequests, totalTokensAgg, totalCostAgg, byProvider, byModel, dailyRows] =
+    await Promise.all([
+      prisma.requestLog.count({ where }),
+      prisma.requestLog.aggregate({
+        where,
+        _sum: { totalTokens: true },
+      }),
+      prisma.requestLog.aggregate({
+        where,
+        _sum: { estimatedCost: true },
+      }),
+      prisma.requestLog.groupBy({
+        by: ["provider"],
+        where,
+        _count: { _all: true },
+        _sum: { totalTokens: true, estimatedCost: true },
+      }),
+      prisma.requestLog.groupBy({
+        by: ["model"],
+        where,
+        _count: { _all: true },
+        _sum: { totalTokens: true, estimatedCost: true },
+      }),
+      prisma.$queryRaw<DailyRow[]>`
+        SELECT
+          DATE("createdAt")::text AS "date",
+          COUNT(*)::int AS "requests",
+          COALESCE(SUM("totalTokens"), 0)::int AS "tokens",
+          COALESCE(SUM("estimatedCost"), 0)::float8 AS "cost"
+        FROM "RequestLog"
+        WHERE "createdAt" >= ${startDate}
+          AND "createdAt" <= ${endDate}
+          ${providerFilter}
+          ${modelFilter}
+        GROUP BY DATE("createdAt")
+        ORDER BY DATE("createdAt") ASC
+      `,
+    ]);
 
   return {
     totalRequests,
@@ -168,5 +269,6 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
       tokens: m._sum.totalTokens ?? 0,
       cost: m._sum.estimatedCost ?? 0,
     })),
+    daily: buildDailySeries(dailyRows, days, startDate),
   };
 }
