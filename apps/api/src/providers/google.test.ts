@@ -7,8 +7,12 @@ const { mockFetch } = vi.hoisted(() => ({
 vi.mock("../models-dev-provider-adapter", () => ({
   ModelsDevProviderAdapter: class {
     name: string;
-    constructor(input: { name: string }) { this.name = input.name; }
-    listModels() { return []; }
+    constructor(input: { name: string }) {
+      this.name = input.name;
+    }
+    listModels() {
+      return [];
+    }
   },
 }));
 
@@ -102,17 +106,18 @@ describe("GoogleAdapter", () => {
             {
               id: "call_1",
               type: "function",
-              function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+              function: { name: "lookup", arguments: '{"q":"hi"}' },
             },
           ],
         },
-        { role: "tool", tool_call_id: "call_1", name: "lookup", content: "{\"ok\":true}" },
+        { role: "tool", tool_call_id: "call_1", name: "lookup", content: '{"ok":true}' },
       ],
       tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
       response_format: {
         type: "json_schema",
         json_schema: { name: "answer", schema: { type: "object" } },
       },
+      max_completion_tokens: 123,
     });
 
     const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
@@ -120,13 +125,16 @@ describe("GoogleAdapter", () => {
       { name: "lookup", parameters: { type: "object" } },
     ]);
     expect(requestBody.generationConfig).toMatchObject({
+      maxOutputTokens: 123,
       responseMimeType: "application/json",
       responseSchema: { type: "object" },
     });
     expect(requestBody.contents[1].parts[0]).toMatchObject({ functionCall: { name: "lookup" } });
-    expect(requestBody.contents[2].parts[0]).toMatchObject({ functionResponse: { name: "lookup" } });
+    expect(requestBody.contents[2].parts[0]).toMatchObject({
+      functionResponse: { name: "lookup" },
+    });
     expect(response.choices[0]?.message.tool_calls?.[0]).toMatchObject({
-      function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+      function: { name: "lookup", arguments: '{"q":"hi"}' },
     });
   });
 });

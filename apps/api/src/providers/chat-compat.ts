@@ -1,9 +1,4 @@
-import type {
-  ChatCompletionRequest,
-  ChatContentPart,
-  Model,
-  ProviderCapabilities,
-} from "./types";
+import type { ChatCompletionRequest, ChatContentPart, Model, ProviderCapabilities } from "./types";
 
 export type ChatFeature =
   | "tools"
@@ -81,9 +76,7 @@ export function requestedChatFeatures(request: ChatCompletionRequest): Set<ChatF
 
   if (
     request.messages.some((message) =>
-      Array.isArray(message.content)
-        ? message.content.some((part) => part.type !== "text")
-        : false,
+      Array.isArray(message.content) ? message.content.some((part) => part.type !== "text") : false,
     )
   ) {
     features.add("multimodalInput");
@@ -178,11 +171,12 @@ export function buildOpenAICompatibleRequestBody(
   request: ChatCompletionRequest,
   stream: boolean,
 ): string {
-  return JSON.stringify({
+  const body = {
     model: request.model,
     messages: request.messages,
     temperature: request.temperature,
     max_tokens: request.max_tokens,
+    max_completion_tokens: request.max_completion_tokens,
     stream,
     stream_options: stream
       ? { ...request.stream_options, include_usage: request.stream_options?.include_usage ?? true }
@@ -207,7 +201,9 @@ export function buildOpenAICompatibleRequestBody(
     reasoning_effort: request.reasoning_effort,
     modalities: request.modalities,
     audio: request.audio,
-  });
+  } satisfies Record<keyof ChatCompletionRequest, unknown>;
+
+  return JSON.stringify(body);
 }
 
 export function validateChatCompletionRequestShape(value: unknown): string | null {
@@ -273,7 +269,9 @@ function supportsInputPart(model: Model, part: ChatContentPart): boolean {
   return true;
 }
 
-function isValidToolCalls(toolCalls: unknown): toolCalls is NonNullable<ChatCompletionRequest["messages"][number]["tool_calls"]> {
+function isValidToolCalls(
+  toolCalls: unknown,
+): toolCalls is NonNullable<ChatCompletionRequest["messages"][number]["tool_calls"]> {
   return (
     Array.isArray(toolCalls) &&
     toolCalls.every(
@@ -299,7 +297,9 @@ function isValidMessageContent(message: ChatCompletionRequest["messages"][number
     if (part.type === "refusal") return typeof part.refusal === "string";
     if (part.type === "image_url") return typeof part.image_url?.url === "string";
     if (part.type === "input_audio")
-      return typeof part.input_audio?.data === "string" && typeof part.input_audio?.format === "string";
+      return (
+        typeof part.input_audio?.data === "string" && typeof part.input_audio?.format === "string"
+      );
     if (part.type === "file") return Boolean(part.file?.file_id || part.file?.file_data);
     return false;
   });

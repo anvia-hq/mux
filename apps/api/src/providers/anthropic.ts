@@ -472,7 +472,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     const { system, messages } = this.convertMessages(request.messages);
     const body: Record<string, unknown> = {
       model: request.model,
-      max_tokens: request.max_tokens ?? 4096,
+      max_tokens: request.max_completion_tokens ?? request.max_tokens ?? 4096,
       messages,
       stream,
     };
@@ -523,7 +523,10 @@ export class AnthropicAdapter implements ProviderAdapter {
     const data = (await response.json()) as {
       id: string;
       model: string;
-      content: ({ type?: "text"; text: string } | { type: "tool_use"; id: string; name: string; input: unknown })[];
+      content: (
+        | { type?: "text"; text: string }
+        | { type: "tool_use"; id: string; name: string; input: unknown }
+      )[];
       stop_reason: string | null;
       usage: { input_tokens: number; output_tokens: number };
     };
@@ -538,14 +541,16 @@ export class AnthropicAdapter implements ProviderAdapter {
         (part): part is { type: "tool_use"; id: string; name: string; input: unknown } =>
           "type" in part && part.type === "tool_use",
       )
-      .map((part): ToolCall => ({
-        id: part.id,
-        type: "function",
-        function: {
-          name: part.name,
-          arguments: JSON.stringify(part.input ?? {}),
-        },
-      }));
+      .map(
+        (part): ToolCall => ({
+          id: part.id,
+          type: "function",
+          function: {
+            name: part.name,
+            arguments: JSON.stringify(part.input ?? {}),
+          },
+        }),
+      );
 
     return {
       id: data.id,
@@ -670,7 +675,10 @@ export class AnthropicAdapter implements ProviderAdapter {
                 },
               ],
             };
-          } else if (data.type === "content_block_delta" && data.delta?.type === "input_json_delta") {
+          } else if (
+            data.type === "content_block_delta" &&
+            data.delta?.type === "input_json_delta"
+          ) {
             const index = data.index ?? 0;
             yield {
               id: messageId,
@@ -764,10 +772,9 @@ function safeJsonObject(value: string): Record<string, unknown> {
   }
 }
 
-function imageUrlToAnthropicSource(url: string):
-  | { type: "base64"; media_type: string; data: string }
-  | { type: "url"; url: string }
-  | null {
+function imageUrlToAnthropicSource(
+  url: string,
+): { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } | null {
   if (!url.startsWith("data:")) return { type: "url", url };
   const match = /^data:([^;]+);base64,(.+)$/.exec(url);
   if (!match) return null;

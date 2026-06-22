@@ -93,6 +93,40 @@ When running through the default Caddy setup, the gateway API is available at:
 http://localhost/api
 ```
 
+## Overhead Benchmark
+
+Mux includes a local CLI benchmark for measuring gateway overhead against direct OpenAI API calls.
+It exercises the full default stack through Caddy at `/api/v1`, creates a temporary Mux API key,
+and revokes that key when the run finishes.
+
+```sh
+OPENAI_API_KEY=sk-... \
+MUX_API_KEY=mux_live_... \
+pnpm benchmark:overhead
+```
+
+Useful options:
+
+```sh
+pnpm benchmark:overhead --model gpt-5.4-mini --requests 30 --stream-requests 20 --concurrency 1
+```
+
+The command prints a latency table and writes JSON to `benchmark-results/`.
+If `MUX_API_KEY` is not set, the benchmark can instead use `MUX_ADMIN_EMAIL` and
+`MUX_ADMIN_PASSWORD` to create and revoke a temporary Mux API key.
+
+Recent 100-sample run against `gpt-5.4-mini`:
+
+| Metric | Direct p50 | Mux p50 | Median overhead | Direct p95 | Mux p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Non-stream total | 803.79 ms | 765.15 ms | -38.64 ms | 1119.69 ms | 1114.44 ms |
+| Stream first chunk | 528.06 ms | 542.85 ms | +14.79 ms | 716.38 ms | 697.74 ms |
+| Stream total | 663.33 ms | 662.06 ms | -1.27 ms | 889.91 ms | 861.99 ms |
+
+In this run, Mux added no measurable total-response overhead and about 15 ms median
+overhead to the first streamed chunk. Negative overhead values are expected benchmark
+variance, not a product claim that the gateway makes upstream models faster.
+
 ## Deployment Notes
 
 Mux ships as a small self-hosted stack:

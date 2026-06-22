@@ -7,8 +7,12 @@ const { mockFetch } = vi.hoisted(() => ({
 vi.mock("../models-dev-provider-adapter", () => ({
   ModelsDevProviderAdapter: class {
     name: string;
-    constructor(input: { name: string }) { this.name = input.name; }
-    listModels() { return []; }
+    constructor(input: { name: string }) {
+      this.name = input.name;
+    }
+    listModels() {
+      return [];
+    }
   },
 }));
 
@@ -95,26 +99,26 @@ describe("AnthropicAdapter", () => {
             {
               id: "call_1",
               type: "function",
-              function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+              function: { name: "lookup", arguments: '{"q":"hi"}' },
             },
           ],
         },
-        { role: "tool", tool_call_id: "call_1", content: "{\"ok\":true}" },
+        { role: "tool", tool_call_id: "call_1", content: '{"ok":true}' },
       ],
       tools: [{ type: "function", function: { name: "lookup", parameters: { type: "object" } } }],
       tool_choice: { type: "function", function: { name: "lookup" } },
+      max_completion_tokens: 123,
     });
 
     const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
-    expect(requestBody.tools).toEqual([
-      { name: "lookup", input_schema: { type: "object" } },
-    ]);
+    expect(requestBody.max_tokens).toBe(123);
+    expect(requestBody.tools).toEqual([{ name: "lookup", input_schema: { type: "object" } }]);
     expect(requestBody.tool_choice).toEqual({ type: "tool", name: "lookup" });
     expect(requestBody.messages[1].content[0]).toMatchObject({ type: "tool_use", name: "lookup" });
     expect(requestBody.messages[2].content[0]).toMatchObject({ type: "tool_result" });
     expect(response.choices[0]?.message.tool_calls?.[0]).toMatchObject({
       id: "toolu_1",
-      function: { name: "lookup", arguments: "{\"q\":\"hi\"}" },
+      function: { name: "lookup", arguments: '{"q":"hi"}' },
     });
     expect(response.choices[0]?.finish_reason).toBe("tool_calls");
   });

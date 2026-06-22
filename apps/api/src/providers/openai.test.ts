@@ -7,8 +7,12 @@ const { mockFetch } = vi.hoisted(() => ({
 vi.mock("../models-dev-provider-adapter", () => ({
   ModelsDevProviderAdapter: class {
     name: string;
-    constructor(input: { name: string }) { this.name = input.name; }
-    listModels() { return []; }
+    constructor(input: { name: string }) {
+      this.name = input.name;
+    }
+    listModels() {
+      return [];
+    }
   },
 }));
 
@@ -108,6 +112,7 @@ describe("OpenAIAdapter", () => {
       top_p: 0.9,
       stop: ["END"],
       seed: 1,
+      max_completion_tokens: 64,
       logprobs: true,
       top_logprobs: 2,
       reasoning_effort: "low",
@@ -122,6 +127,7 @@ describe("OpenAIAdapter", () => {
       top_p: 0.9,
       stop: ["END"],
       seed: 1,
+      max_completion_tokens: 64,
       logprobs: true,
       top_logprobs: 2,
       reasoning_effort: "low",

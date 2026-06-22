@@ -439,7 +439,8 @@ export class GoogleAdapter implements ProviderAdapter {
     const converted = this.convertMessages(request.messages);
     const generationConfig: Record<string, unknown> = {};
     if (request.temperature !== undefined) generationConfig.temperature = request.temperature;
-    if (request.max_tokens !== undefined) generationConfig.maxOutputTokens = request.max_tokens;
+    const maxOutputTokens = request.max_completion_tokens ?? request.max_tokens;
+    if (maxOutputTokens !== undefined) generationConfig.maxOutputTokens = maxOutputTokens;
     if (request.top_p !== undefined) generationConfig.topP = request.top_p;
     if (request.stop !== undefined)
       generationConfig.stopSequences = Array.isArray(request.stop) ? request.stop : [request.stop];
@@ -514,9 +515,8 @@ export class GoogleAdapter implements ProviderAdapter {
       .map((part) => part.text)
       .join("");
     const toolCalls = parts
-      .filter(
-        (part): part is { functionCall: { name: string; args?: unknown } } =>
-          Boolean(part.functionCall?.name),
+      .filter((part): part is { functionCall: { name: string; args?: unknown } } =>
+        Boolean(part.functionCall?.name),
       )
       .map(
         (part, index): ToolCall => ({
@@ -540,7 +540,7 @@ export class GoogleAdapter implements ProviderAdapter {
             content,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
           },
-          finish_reason: toolCalls.length > 0 ? "tool_calls" : candidate?.finishReason ?? "stop",
+          finish_reason: toolCalls.length > 0 ? "tool_calls" : (candidate?.finishReason ?? "stop"),
         },
       ],
       usage: {
@@ -644,7 +644,9 @@ export class GoogleAdapter implements ProviderAdapter {
           const c = chunk as {
             id?: string;
             candidates?: {
-              content?: { parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[] };
+              content?: {
+                parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[];
+              };
               finishReason?: string;
             }[];
             usageMetadata?: {
@@ -654,8 +656,9 @@ export class GoogleAdapter implements ProviderAdapter {
             };
           };
           const candidate = c.candidates?.[0];
-          const text = candidate?.content?.parts?.find((part) => typeof part.text === "string")
-            ?.text;
+          const text = candidate?.content?.parts?.find(
+            (part) => typeof part.text === "string",
+          )?.text;
           if (text !== undefined) {
             yield {
               id: c.id ?? `google-${Date.now()}`,
@@ -669,8 +672,9 @@ export class GoogleAdapter implements ProviderAdapter {
               ],
             };
           }
-          const functionCall = candidate?.content?.parts?.find((part) => part.functionCall)
-            ?.functionCall;
+          const functionCall = candidate?.content?.parts?.find(
+            (part) => part.functionCall,
+          )?.functionCall;
           if (functionCall?.name) {
             yield {
               id: c.id ?? `google-${Date.now()}`,
@@ -750,7 +754,9 @@ function safeJsonObject(value: string): Record<string, unknown> {
   }
 }
 
-function dataUrlToInlineData(url: string): { inlineData: { mimeType: string; data: string } } | null {
+function dataUrlToInlineData(
+  url: string,
+): { inlineData: { mimeType: string; data: string } } | null {
   const match = /^data:([^;]+);base64,(.+)$/.exec(url);
   if (!match) return null;
   return { inlineData: { mimeType: match[1] ?? "image/png", data: match[2] ?? "" } };

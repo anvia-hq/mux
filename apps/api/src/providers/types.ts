@@ -71,13 +71,14 @@ export type ChatAudioOptions = {
 
 export type ChatStreamOptions = {
   include_usage?: boolean;
-}
+};
 
 export interface ChatCompletionRequest {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
+  max_completion_tokens?: number;
   stream?: boolean;
   tools?: ChatTool[];
   tool_choice?: ChatToolChoice;
