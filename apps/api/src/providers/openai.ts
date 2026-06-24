@@ -819,6 +819,14 @@ export class UpstreamResponsesApiError extends Error {
 export type UpstreamResponsesQuery = Record<string, string | string[]>;
 
 function buildResponsesUrl(id: string, query?: UpstreamResponsesQuery): string {
+  return buildResponsesSubResourceUrl(id, undefined, query);
+}
+
+function buildResponsesSubResourceUrl(
+  id: string,
+  suffix: string | undefined,
+  query?: UpstreamResponsesQuery,
+): string {
   const params = new URLSearchParams();
   if (query) {
     for (const [key, value] of Object.entries(query)) {
@@ -830,7 +838,8 @@ function buildResponsesUrl(id: string, query?: UpstreamResponsesQuery): string {
     }
   }
   const qs = params.toString();
-  return `${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`;
+  const tail = suffix ? `/${suffix}` : "";
+  return `${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}${tail}${qs ? `?${qs}` : ""}`;
 }
 
 export class OpenAIAdapter implements ProviderAdapter {
@@ -1020,6 +1029,24 @@ export class OpenAIAdapter implements ProviderAdapter {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new UpstreamResponsesApiError(response.status, error);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async listResponseInputItems(
+    id: string,
+    query?: UpstreamResponsesQuery,
+  ): Promise<ResponseObject> {
+    const response = await fetch(buildResponsesSubResourceUrl(id, "input_items", query), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${this.apiKey}` },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 

@@ -423,4 +423,87 @@ describe("OpenAIAdapter", () => {
       UpstreamResponsesApiError,
     );
   });
+
+  it("lists input items for a response", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [
+          {
+            id: "msg_abc",
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Tell me a story." }],
+          },
+        ],
+        first_id: "msg_abc",
+        last_id: "msg_abc",
+        has_more: false,
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const result = await adapter.listResponseInputItems("resp_abc");
+
+    expect(result).toMatchObject({
+      object: "list",
+      data: [{ id: "msg_abc", role: "user" }],
+      has_more: false,
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp_abc/input_items",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Authorization: "Bearer sk-test" },
+      }),
+    );
+  });
+
+  it("encodes the response id in the input_items URL", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ object: "list", data: [] }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.listResponseInputItems("resp/x y");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp%2Fx%20y/input_items",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("forwards query params verbatim to input_items", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ object: "list", data: [] }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.listResponseInputItems("resp_abc", {
+      after: "msg_xyz",
+      include: ["file_search_call.results", "message.input_image.image_url"],
+      limit: "20",
+      order: "desc",
+    });
+
+    const calledUrl = String(mockFetch.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain("/v1/responses/resp_abc/input_items");
+    expect(calledUrl).toContain("after=msg_xyz");
+    expect(calledUrl).toContain("include=file_search_call.results");
+    expect(calledUrl).toContain("include=message.input_image.image_url");
+    expect(calledUrl).toContain("limit=20");
+    expect(calledUrl).toContain("order=desc");
+  });
+
+  it("throws UpstreamResponsesApiError when listResponseInputItems fails", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    let caught: unknown;
+    try {
+      await adapter.listResponseInputItems("resp_missing");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UpstreamResponsesApiError);
+    expect((caught as UpstreamResponsesApiError).status).toBe(404);
+  });
 });

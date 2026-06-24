@@ -256,5 +256,9 @@ export interface ProviderAdapter {
   deleteResponse?(id: string): Promise<ResponseObject>;
   cancelResponse?(id: string): Promise<ResponseObject>;
   compactResponse?(request: ResponseCompactRequest): Promise<ResponseObject>;
+  listResponseInputItems?(
+    id: string,
+    query?: Record<string, string | string[]>,
+  ): Promise<ResponseObject>;
   listModels(): Model[];
 }
