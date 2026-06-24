@@ -424,6 +424,64 @@ describe("OpenAIAdapter", () => {
     );
   });
 
+  it("counts input tokens for a request without creating a response", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ object: "response.input_tokens", input_tokens: 42 }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const result = await adapter.countResponseInputTokens({
+      model: "gpt-4o",
+      input: "Tell me a story",
+      instructions: "Be brief",
+    });
+
+    expect(result).toMatchObject({ object: "response.input_tokens", input_tokens: 42 });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/input_tokens",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "gpt-4o",
+      input: "Tell me a story",
+      instructions: "Be brief",
+    });
+  });
+
+  it("propagates upstream 404 from countResponseInputTokens", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    let caught: unknown;
+    try {
+      await adapter.countResponseInputTokens({ model: "gpt-4o", input: "hi" });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UpstreamResponsesApiError);
+    expect((caught as UpstreamResponsesApiError).status).toBe(404);
+  });
+
+  it("propagates upstream 500 from countResponseInputTokens", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("boom", { status: 500, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await expect(
+      adapter.countResponseInputTokens({ model: "gpt-4o", input: "hi" }),
+    ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+  });
+
   it("lists input items for a response", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({
