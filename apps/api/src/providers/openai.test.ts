@@ -176,6 +176,33 @@ describe("OpenAIAdapter", () => {
     });
   });
 
+  it("forwards stream_options.include_obfuscation to the upstream POST body", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp-1",
+        object: "response",
+        model: "gpt-4o",
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.createResponse({
+      model: "gpt-4o",
+      input: "hi",
+      stream: true,
+      stream_options: { include_obfuscation: true },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-4o",
+      input: "hi",
+      stream: true,
+      stream_options: { include_obfuscation: true },
+    });
+  });
+
   it("streams raw responses from the OpenAI Responses API", async () => {
     mockFetch.mockResolvedValueOnce(
       makeSSEStream([

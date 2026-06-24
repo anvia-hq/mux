@@ -31,6 +31,7 @@ const RESPONSE_CREATE_FIELDS = [
   "service_tier",
   "store",
   "stream",
+  "stream_options",
   "temperature",
   "text",
   "tool_choice",
