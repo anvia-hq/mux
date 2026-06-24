@@ -182,3 +182,21 @@ export const responseCreateRequestSchema = z
 });
 
 export type ResponseCreateRequestInput = z.infer<typeof responseCreateRequestSchema>;
+
+// --- Compact schema (P4.3) ---
+
+const responseCompactInputSchema = z.union([
+  z.string().min(1),
+  z.array(z.record(z.string(), z.unknown())).min(1),
+]);
+
+export const responseCompactRequestSchema = z
+  .object({
+    model: z
+      .string({ error: "model is required" })
+      .min(1, "model is required"),
+    input: responseCompactInputSchema.optional(),
+  })
+  .strict();
+
+export type ResponseCompactRequestInput = z.infer<typeof responseCompactRequestSchema>;

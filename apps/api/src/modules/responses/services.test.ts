@@ -55,6 +55,7 @@ vi.mock("../../providers/registry", () => ({
 import {
   ApiKeyUnbillableResponseUsageError,
   handleResponseCancel,
+  handleResponseCompact,
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
@@ -83,6 +84,7 @@ describe("responses services", () => {
     modelId: string,
     createResponse = vi.fn(),
     createResponseStream = vi.fn(),
+    compactResponse = vi.fn(),
   ) => ({
     provider: {
       name: provider,
@@ -90,6 +92,7 @@ describe("responses services", () => {
       chatCompletionStream: vi.fn(),
       createResponse,
       createResponseStream,
+      compactResponse,
       listModels: vi.fn().mockReturnValue([
         {
           id: modelId,
@@ -576,6 +579,227 @@ describe("responses services", () => {
       await expect(handleResponseCancel("resp_x", "key-1")).rejects.toBeInstanceOf(
         OpenAIResponseProviderNotConfiguredError,
       );
+    });
+  });
+
+  describe("handleResponseCompact", () => {
+    function makeProvider(
+      name: string,
+      compactResponse: ReturnType<typeof vi.fn> | undefined,
+    ) {
+      return {
+        name,
+        chatCompletion: vi.fn(),
+        chatCompletionStream: vi.fn(),
+        compactResponse,
+        listModels: vi.fn().mockReturnValue([
+          {
+            id: "model-1",
+            name: "Model 1",
+            provider: name,
+            inputPricePer1M: 1,
+            outputPricePer1M: 1,
+            contextWindow: 1,
+            maxOutputTokens: 1,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            reasoning: true,
+            toolCall: true,
+            structuredOutput: true,
+            weights: "closed",
+          },
+        ]),
+        capabilities: openAICompatibleCapabilities,
+      };
+    }
+
+    it("compacts via the resolved provider, rewrites the model id, and logs spend", async () => {
+      const compactResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_001",
+        object: "response.compaction",
+        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+      });
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", vi.fn(), vi.fn(), compactResponse),
+      });
+      mockGetModelPricing.mockReturnValueOnce({ id: "gpt-5" });
+      mockEstimateCost.mockReturnValueOnce(0.42);
+
+      const result = await handleResponseCompact(
+        { model: "openai:gpt-5", input: [{ role: "user", content: "hi" }] },
+        "key-1",
+        { requireBillableUsage: true },
+      );
+
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai:gpt-5",
+      });
+      expect(compactResponse).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gpt-5" }),
+      );
+      expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.42);
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/compact",
+          provider: "openai",
+          model: "openai:gpt-5",
+          estimatedCost: 0.42,
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("falls through to Azure when the primary provider returns 404", async () => {
+      const primaryCompact = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "not found"));
+      const azureCompact = vi.fn().mockResolvedValueOnce({
+        id: "resp_002",
+        object: "response.compaction",
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      });
+
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", vi.fn(), vi.fn(), primaryCompact),
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "azure-cognitive-services"
+          ? makeProvider("azure-cognitive-services", azureCompact)
+          : null,
+      );
+
+      const result = await handleResponseCompact(
+        { model: "openai:gpt-5", input: "hi" },
+        "key-1",
+      );
+
+      expect(result.provider).toBe("azure-cognitive-services");
+      expect(azureCompact).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "gpt-5" }),
+      );
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/compact",
+          provider: "azure-cognitive-services",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("throws ResponseNotFoundError when both providers return 404", async () => {
+      const primaryCompact = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      const azureCompact = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", vi.fn(), vi.fn(), primaryCompact),
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "azure-cognitive-services"
+          ? makeProvider("azure-cognitive-services", azureCompact)
+          : null,
+      );
+
+      await expect(
+        handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(ResponseNotFoundError);
+    });
+
+    it("does not retry Azure on a non-404 upstream error", async () => {
+      const primaryCompact = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const azureCompact = vi.fn();
+
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", vi.fn(), vi.fn(), primaryCompact),
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "azure-cognitive-services"
+          ? makeProvider("azure-cognitive-services", azureCompact)
+          : null,
+      );
+
+      await expect(
+        handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+      expect(azureCompact).not.toHaveBeenCalled();
+    });
+
+    it("throws ApiKeyUnbillableResponseUsageError when required and pricing is missing", async () => {
+      mockGetModelPricing.mockReturnValueOnce(undefined);
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel(
+          "openai",
+          "gpt-5",
+          vi.fn(),
+          vi.fn(),
+          vi.fn().mockResolvedValueOnce({
+            id: "resp_001",
+            usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+          }),
+        ),
+      });
+
+      await expect(
+        handleResponseCompact(
+          { model: "openai:gpt-5", input: "hi" },
+          "key-1",
+          { requireBillableUsage: true },
+        ),
+      ).rejects.toBeInstanceOf(ApiKeyUnbillableResponseUsageError);
+    });
+
+    it("rejects a model that does not resolve", async () => {
+      mockResolveResponseTarget.mockResolvedValueOnce(null);
+      mockResolveChatModel.mockResolvedValueOnce(null);
+
+      await expect(
+        handleResponseCompact({ model: "openai:gpt-5" }, "key-1"),
+      ).rejects.toThrow("No provider found");
+    });
+
+    it("rejects a non-Responses-capable model with UnsupportedResponseFeatureError", async () => {
+      mockResolveResponseTarget.mockResolvedValueOnce(null);
+      mockResolveChatModel.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "anthropic:claude",
+        targets: [createResolvedModel("anthropic", "claude")],
+      });
+
+      await expect(
+        handleResponseCompact({ model: "anthropic:claude" }, "key-1"),
+      ).rejects.toBeInstanceOf(UnsupportedResponseFeatureError);
+    });
+
+    it("logs and rethrows upstream non-404 errors", async () => {
+      const primaryCompact = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(400, "bad request"));
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", vi.fn(), vi.fn(), primaryCompact),
+      });
+      mockGetProviderByName.mockReturnValue(null);
+
+      await expect(
+        handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
     });
   });
 });

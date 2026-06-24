@@ -8,7 +8,7 @@ import {
   resolveResponseTarget,
   type ResolvedProviderModel,
 } from "../../providers/registry";
-import type { ResponseCreateRequest, ResponseObject } from "../../providers/types";
+import type { ResponseCompactRequest, ResponseCreateRequest, ResponseObject } from "../../providers/types";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
 const RESPONSE_CREATE_FIELDS = [
@@ -422,4 +422,121 @@ export async function handleResponseCancel(
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
   throw new ResponseNotFoundError(id);
+}
+
+export async function handleResponseCompact(
+  request: ResponseCompactRequest,
+  apiKeyId: string,
+  options: { requireBillableUsage?: boolean } = {},
+): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const resolved = await resolveResponseTarget(request.model);
+  if (!resolved) {
+    if (await resolveChatModel(request.model)) {
+      throw new UnsupportedResponseFeatureError(
+        "Selected model does not support the Responses API",
+      );
+    }
+    throw new Error(`No provider found for model: ${request.model}`);
+  }
+
+  const primary = resolved.target;
+  const primaryProvider = primary.providerName === "openai" ? "openai" : primary.providerName;
+  const candidates: Array<{ provider: typeof primary.provider; providerName: string }> = [
+    { provider: primary.provider, providerName: primaryProvider },
+  ];
+
+  const azure = primary.providerName !== "azure-cognitive-services"
+    ? getProviderByName("azure-cognitive-services")
+    : null;
+  if (azure?.compactResponse) {
+    candidates.push({ provider: azure, providerName: "azure-cognitive-services" });
+  }
+
+  if (options.requireBillableUsage && !getModelPricing(resolved.requestedModelId)) {
+    throw new ApiKeyUnbillableResponseUsageError();
+  }
+
+  const startTime = Date.now();
+  let lastError: unknown = null;
+
+  for (const candidate of candidates) {
+    if (!candidate.provider.compactResponse) continue;
+    try {
+      const response = await candidate.provider.compactResponse(
+        buildProviderCompactRequest(request, primary),
+      );
+      const latencyMs = Date.now() - startTime;
+      const usage = response.usage;
+      const estimatedCost = estimateCost(
+        resolved.requestedModelId,
+        usage?.input_tokens,
+        usage?.output_tokens,
+      );
+
+      if (options.requireBillableUsage && estimatedCost === undefined) {
+        await logRequest({
+          apiKeyId,
+          provider: candidate.providerName,
+          model: resolved.requestedModelId,
+          endpoint: "/v1/responses/compact",
+          latencyMs,
+          promptTokens: usage?.input_tokens,
+          completionTokens: usage?.output_tokens,
+          totalTokens: usage?.total_tokens,
+          statusCode: 429,
+          errorMessage: "Billable usage could not be determined",
+        });
+        throw new ApiKeyUnbillableResponseUsageError();
+      }
+
+      if (options.requireBillableUsage && estimatedCost !== undefined) {
+        await addApiKeySpendUsd(apiKeyId, estimatedCost);
+      }
+
+      await logRequest({
+        apiKeyId,
+        provider: candidate.providerName,
+        model: resolved.requestedModelId,
+        endpoint: "/v1/responses/compact",
+        latencyMs,
+        promptTokens: usage?.input_tokens,
+        completionTokens: usage?.output_tokens,
+        totalTokens: usage?.total_tokens,
+        estimatedCost,
+        statusCode: 200,
+      });
+
+      return {
+        provider: candidate.providerName,
+        model: resolved.requestedModelId,
+        response,
+      };
+    } catch (error) {
+      lastError = error;
+      if (error instanceof ApiKeyUnbillableResponseUsageError) throw error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: "unknown",
+    endpoint: "/v1/responses/compact",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(request.model);
+}
+
+function buildProviderCompactRequest(
+  request: ResponseCompactRequest,
+  target: ResolvedProviderModel,
+): ResponseCompactRequest {
+  return { ...request, model: target.modelId };
 }

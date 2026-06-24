@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { responseCreateRequestSchema } from "./responses-schema";
+import { responseCompactRequestSchema, responseCreateRequestSchema } from "./responses-schema";
 
 describe("responseCreateRequestSchema", () => {
   it("accepts a model only", () => {
@@ -502,5 +502,56 @@ describe("responseCreateRequestSchema — stream + background conflict", () => {
   it("accepts neither stream nor background set", () => {
     const result = responseCreateRequestSchema.safeParse({ model: "x" });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("responseCompactRequestSchema", () => {
+  it("accepts model only", () => {
+    const result = responseCompactRequestSchema.safeParse({ model: "gpt-5" });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts model with a string input", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "gpt-5",
+      input: "hello",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts model with an array input of arbitrary objects", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "gpt-5",
+      input: [{ role: "user", content: "hi" }, { id: "msg_1", type: "message" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty model", () => {
+    const result = responseCompactRequestSchema.safeParse({ model: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects missing model", () => {
+    const result = responseCompactRequestSchema.safeParse({});
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty string input", () => {
+    const result = responseCompactRequestSchema.safeParse({ model: "x", input: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects empty array input", () => {
+    const result = responseCompactRequestSchema.safeParse({ model: "x", input: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown fields (strict)", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "x",
+      instructions: "nope",
+    });
+    expect(result.success).toBe(false);
   });
 });
