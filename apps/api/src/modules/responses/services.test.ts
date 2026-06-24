@@ -7,6 +7,7 @@ const {
   mockGetProviderByName,
   mockLogRequest,
   mockResolveChatModel,
+  mockResolveResponseTarget,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockEstimateCost: vi.fn(),
@@ -14,6 +15,7 @@ const {
   mockGetProviderByName: vi.fn(),
   mockLogRequest: vi.fn(),
   mockResolveChatModel: vi.fn(),
+  mockResolveResponseTarget: vi.fn(),
 }));
 
 vi.mock("../keys/services", () => {
@@ -47,6 +49,7 @@ vi.mock("../../providers/registry", () => ({
   getModelPricing: mockGetModelPricing,
   getProviderByName: mockGetProviderByName,
   resolveChatModel: mockResolveChatModel,
+  resolveResponseTarget: mockResolveResponseTarget,
 }));
 
 import {
@@ -114,10 +117,10 @@ describe("responses services", () => {
       model: "gpt-4o",
       usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
     });
-    mockResolveChatModel.mockResolvedValueOnce({
+    mockResolveResponseTarget.mockResolvedValueOnce({
       kind: "direct",
       requestedModelId: "openai:gpt-4o",
-      targets: [createResolvedModel("openai", "gpt-4o", createResponse)],
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
     });
     mockEstimateCost.mockReturnValueOnce(0.01);
 
@@ -155,7 +158,7 @@ describe("responses services", () => {
     await expect(
       handleResponseCreate(createRequest({ background: true }), "key-1"),
     ).rejects.toThrow("background");
-    expect(mockResolveChatModel).not.toHaveBeenCalled();
+    expect(mockResolveResponseTarget).not.toHaveBeenCalled();
   });
 
   it("returns raw response streams for direct OpenAI models", async () => {
@@ -164,10 +167,10 @@ describe("responses services", () => {
     }
 
     const createResponseStream = vi.fn().mockReturnValue(stream());
-    mockResolveChatModel.mockResolvedValueOnce({
+    mockResolveResponseTarget.mockResolvedValueOnce({
       kind: "direct",
       requestedModelId: "openai:gpt-4o",
-      targets: [createResolvedModel("openai", "gpt-4o", vi.fn(), createResponseStream)],
+      target: createResolvedModel("openai", "gpt-4o", vi.fn(), createResponseStream),
     });
 
     const result = await handleResponseCreateStream(createRequest({ stream: true }));
@@ -183,28 +186,88 @@ describe("responses services", () => {
     expect(chunks).toEqual(['event: response.completed\ndata: {"type":"response.completed"}\n\n']);
   });
 
-  it("rejects fallback groups and non-OpenAI providers", async () => {
-    mockResolveChatModel
-      .mockResolvedValueOnce({
-        kind: "fallback-group",
-        groupId: "fast",
-        name: "Fast",
-        description: null,
-        requestedModelId: "mux:fast",
-        targets: [createResolvedModel("openai", "gpt-4o")],
-      })
-      .mockResolvedValueOnce({
-        kind: "direct",
-        requestedModelId: "anthropic:claude",
-        targets: [createResolvedModel("anthropic", "claude")],
-      });
+  it("routes through any Responses-capable provider (e.g. Azure)", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-1",
+      model: "gpt-5",
+      usage: { input_tokens: 5, output_tokens: 7, total_tokens: 12 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "azure-cognitive-services:gpt-5",
+      target: createResolvedModel("azure-cognitive-services", "gpt-5", createResponse),
+    });
 
-    await expect(
-      handleResponseCreate(createRequest({ model: "mux:fast" }), "key-1"),
-    ).rejects.toBeInstanceOf(UnsupportedResponseFeatureError);
+    const result = await handleResponseCreate(
+      createRequest({ model: "azure-cognitive-services:gpt-5" }),
+      "key-1",
+    );
+
+    expect(result).toMatchObject({
+      id: "resp-1",
+      model: "azure-cognitive-services:gpt-5",
+    });
+    expect(createResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-5" }),
+    );
+  });
+
+  it("routes through a fallback-group target that is Responses-capable", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-1",
+      model: "gpt-4o",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "fallback-group",
+      requestedModelId: "mux:fast",
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
+    });
+
+    const result = await handleResponseCreate(
+      createRequest({ model: "mux:fast" }),
+      "key-1",
+    );
+
+    expect(result).toMatchObject({ id: "resp-1", model: "mux:fast" });
+  });
+
+  it("rejects a model that resolves but is not Responses-capable", async () => {
+    mockResolveResponseTarget.mockResolvedValueOnce(null);
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "anthropic:claude",
+      targets: [createResolvedModel("anthropic", "claude")],
+    });
+
     await expect(
       handleResponseCreate(createRequest({ model: "anthropic:claude" }), "key-1"),
     ).rejects.toBeInstanceOf(UnsupportedResponseFeatureError);
+  });
+
+  it("rejects a fallback group with no Responses-capable targets", async () => {
+    mockResolveResponseTarget.mockResolvedValueOnce(null);
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      groupId: "anthropic-only",
+      name: "Anthropic only",
+      description: null,
+      requestedModelId: "mux:anthropic-only",
+      targets: [createResolvedModel("anthropic", "claude")],
+    });
+
+    await expect(
+      handleResponseCreate(createRequest({ model: "mux:anthropic-only" }), "key-1"),
+    ).rejects.toBeInstanceOf(UnsupportedResponseFeatureError);
+  });
+
+  it("throws when the model does not resolve to any provider", async () => {
+    mockResolveResponseTarget.mockResolvedValueOnce(null);
+    mockResolveChatModel.mockResolvedValueOnce(null);
+
+    await expect(
+      handleResponseCreate(createRequest({ model: "openai:gpt-4o" }), "key-1"),
+    ).rejects.toThrow("No provider found");
   });
 
   it("records spend for limited successful requests", async () => {
@@ -213,10 +276,10 @@ describe("responses services", () => {
       model: "gpt-4o",
       usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
     });
-    mockResolveChatModel.mockResolvedValueOnce({
+    mockResolveResponseTarget.mockResolvedValueOnce({
       kind: "direct",
       requestedModelId: "openai:gpt-4o",
-      targets: [createResolvedModel("openai", "gpt-4o", createResponse)],
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
     });
     mockGetModelPricing.mockReturnValueOnce({ id: "gpt-4o" });
     mockEstimateCost.mockReturnValueOnce(0.01);
@@ -232,10 +295,10 @@ describe("responses services", () => {
       model: "gpt-4o",
       usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
     });
-    mockResolveChatModel.mockResolvedValueOnce({
+    mockResolveResponseTarget.mockResolvedValueOnce({
       kind: "direct",
       requestedModelId: "openai:gpt-4o",
-      targets: [createResolvedModel("openai", "gpt-4o", createResponse)],
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
     });
     mockGetModelPricing.mockReturnValueOnce({ id: "gpt-4o" });
     mockEstimateCost.mockReturnValueOnce(undefined);

@@ -4,6 +4,7 @@ import {
   getModelPricing,
   getProviderByName,
   resolveChatModel,
+  resolveResponseTarget,
   type ResolvedProviderModel,
 } from "../../providers/registry";
 import type { ResponseCreateRequest, ResponseObject } from "../../providers/types";
@@ -305,25 +306,17 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
 async function resolveOpenAIResponseTarget(
   request: ResponseCreateRequest,
 ): Promise<{ requestedModelId: string; target: ResolvedProviderModel }> {
-  const resolved = await resolveChatModel(request.model);
+  const resolved = await resolveResponseTarget(request.model);
   if (!resolved) {
+    if (await resolveChatModel(request.model)) {
+      throw new UnsupportedResponseFeatureError(
+        "Selected model does not support the Responses API",
+      );
+    }
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  if (resolved.kind !== "direct") {
-    throw new UnsupportedResponseFeatureError(
-      "Responses API is only supported for direct OpenAI models in this release",
-    );
-  }
-
-  const target = resolved.targets[0];
-  if (target.providerName !== "openai") {
-    throw new UnsupportedResponseFeatureError(
-      "Responses API is only supported for OpenAI models in this release",
-    );
-  }
-
-  return { requestedModelId: resolved.requestedModelId, target };
+  return { requestedModelId: resolved.requestedModelId, target: resolved.target };
 }
 
 function buildOpenAIResponseCreateRequest(
