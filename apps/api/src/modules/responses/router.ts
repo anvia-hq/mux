@@ -31,6 +31,7 @@ import {
   handleResponseCreateStream,
   handleResponseDelete,
   handleResponseInputItems,
+  handleResponseInputTokens,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
@@ -262,6 +263,45 @@ responsesRouter.post(
     }
   },
 );
+
+responsesRouter.post("/input_tokens", async (c) => {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+
+  let body: ResponseCreateRequest;
+  try {
+    body = (await c.req.json()) as ResponseCreateRequest;
+  } catch {
+    return c.json({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  try {
+    const result = await handleResponseInputTokens(body, apiKeyId);
+    return c.json(result.response);
+  } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+    if (error instanceof ResponseNotFoundError) {
+      return c.json({ error: errorMessage }, 404);
+    }
+
+    if (error instanceof OpenAIResponseProviderNotConfiguredError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    if (error instanceof UnsupportedResponseFeatureError) {
+      return c.json({ error: errorMessage }, 422);
+    }
+
+    if (error instanceof RequestLoggingUnavailableError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    return c.json({ error: errorMessage }, 500);
+  }
+});
 
 responsesRouter.get("/:id", async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;

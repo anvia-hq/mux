@@ -10,6 +10,7 @@ const {
   mockHandleResponseCreateStream,
   mockHandleResponseDelete,
   mockHandleResponseInputItems,
+  mockHandleResponseInputTokens,
   mockHandleResponseRetrieve,
   mockLogStreamFinal,
   mockLogStreamStart,
@@ -24,6 +25,7 @@ const {
   mockHandleResponseCreateStream: vi.fn(),
   mockHandleResponseDelete: vi.fn(),
   mockHandleResponseInputItems: vi.fn(),
+  mockHandleResponseInputTokens: vi.fn(),
   mockHandleResponseRetrieve: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
@@ -72,6 +74,7 @@ vi.mock("./services", () => {
     handleResponseCreateStream: mockHandleResponseCreateStream,
     handleResponseDelete: mockHandleResponseDelete,
     handleResponseInputItems: mockHandleResponseInputItems,
+    handleResponseInputTokens: mockHandleResponseInputTokens,
     handleResponseRetrieve: mockHandleResponseRetrieve,
   };
 });
@@ -730,6 +733,128 @@ describe("responses router", () => {
     expect(
       await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
     ).toHaveProperty("status", 500);
+  });
+
+  it("POST /v1/responses/input_tokens returns 200 with the upstream body", async () => {
+    mockHandleResponseInputTokens.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai:gpt-4o",
+      response: { object: "response.input_tokens", input_tokens: 42 },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/input_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseInputTokens).toHaveBeenCalledWith(
+      { model: "openai:gpt-4o", input: "hi" },
+      "key-1",
+    );
+    await expect(res.json()).resolves.toMatchObject({
+      object: "response.input_tokens",
+      input_tokens: 42,
+    });
+  });
+
+  it("POST /v1/responses/input_tokens returns 400 for malformed JSON", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/input_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{not-json",
+    });
+
+    expect(res.status).toBe(400);
+    expect(mockHandleResponseInputTokens).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("valid JSON"),
+    });
+  });
+
+  it("POST /v1/responses/input_tokens returns 404 when the service raises ResponseNotFoundError", async () => {
+    mockHandleResponseInputTokens.mockRejectedValueOnce(
+      new ResponseNotFoundError("(model: gpt-4o)"),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/input_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4o", input: "hi" }),
+    });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Response not found"),
+    });
+  });
+
+  it("POST /v1/responses/input_tokens passes through the upstream envelope on non-404 errors", async () => {
+    mockHandleResponseInputTokens.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "Invalid model",
+            type: "invalid_request_error",
+            param: "model",
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/input_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "nope", input: "hi" }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "Invalid model",
+        type: "invalid_request_error",
+        param: "model",
+        code: "invalid_value",
+      },
+    });
+  });
+
+  it("POST /v1/responses/input_tokens maps known service errors", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const payload = JSON.stringify({ model: "gpt-4o", input: "hi" });
+    const opts = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    };
+
+    mockHandleResponseInputTokens.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseInputTokens.mockRejectedValueOnce(new UnsupportedResponseFeatureError("nope"));
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
+      "status",
+      422,
+    );
+
+    mockHandleResponseInputTokens.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseInputTokens.mockRejectedValueOnce(new Error("boom"));
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
+      "status",
+      500,
+    );
   });
 
   it("POST /v1/responses/compact returns 200 with the upstream body", async () => {
