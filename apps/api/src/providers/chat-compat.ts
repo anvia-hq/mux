@@ -16,6 +16,7 @@ export const openAICompatibleCapabilities: ProviderCapabilities = {
   reasoning: true,
   logprobs: true,
   openAICompatiblePassthrough: true,
+  responsesApi: true,
 };
 
 export const anthropicCapabilities: ProviderCapabilities = {

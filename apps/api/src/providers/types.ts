@@ -185,6 +185,14 @@ export interface ProviderCapabilities {
   reasoning: boolean;
   logprobs: boolean;
   openAICompatiblePassthrough: boolean;
+  /**
+   * Whether this adapter implements the OpenAI Responses API surface
+   * (`createResponse`, `createResponseStream`, `getResponse`,
+   * `deleteResponse`). Used by the `/v1/responses` router to decide
+   * which targets a model id (or fallback group) can resolve to.
+   * Defaults to `false`; opt in per adapter.
+   */
+  responsesApi?: boolean;
 }
 
 export interface Model {
