@@ -519,6 +519,53 @@ export function getProviderByName(name: string): ProviderAdapter | null {
   return providers.get(name) ?? null;
 }
 
+export type ResolvedResponseTarget = {
+  kind: "direct" | "fallback-group";
+  requestedModelId: string;
+  target: ResolvedProviderModel;
+};
+
+/**
+ * Pick the first Responses-capable target for a model id. Accepts:
+ *   - a direct provider model id (e.g. `openai:gpt-4o`): returns it if
+ *     the underlying adapter advertises `responsesApi: true`.
+ *   - a fallback group id (e.g. `mux:fast`): iterates the group's
+ *     targets in order and returns the first Responses-capable one.
+ *   - anything else, or a model/group with no Responses-capable
+ *     targets: returns `null`.
+ */
+export async function resolveResponseTarget(
+  model: string,
+): Promise<ResolvedResponseTarget | null> {
+  const resolved = await resolveChatModel(model);
+  if (!resolved) {
+    return null;
+  }
+
+  if (resolved.kind === "direct") {
+    const target = resolved.targets[0];
+    if (target.provider.capabilities.responsesApi !== true) {
+      return null;
+    }
+    return {
+      kind: "direct",
+      requestedModelId: resolved.requestedModelId,
+      target,
+    };
+  }
+
+  for (const target of resolved.targets) {
+    if (target.provider.capabilities.responsesApi === true) {
+      return {
+        kind: "fallback-group",
+        requestedModelId: resolved.requestedModelId,
+        target,
+      };
+    }
+  }
+  return null;
+}
+
 export function listAllModels(): Model[] {
   const models: Model[] = [];
   for (const provider of providers.values()) {
