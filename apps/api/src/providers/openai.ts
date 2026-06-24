@@ -990,6 +990,27 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
+  async cancelResponse(id: string): Promise<ResponseObject> {
+    const response = await fetch(
+      `${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}/cancel`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      },
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new UpstreamResponsesApiError(response.status, error);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
     return buildOpenAICompatibleRequestBody(request, stream);
   }

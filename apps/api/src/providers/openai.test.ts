@@ -320,4 +320,52 @@ describe("OpenAIAdapter", () => {
       UpstreamResponsesApiError,
     );
   });
+
+  it("cancels a response and returns the upstream body", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_abc",
+        object: "response",
+        status: "cancelled",
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.cancelResponse("resp_abc");
+
+    expect(response).toMatchObject({ id: "resp_abc", status: "cancelled" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp_abc/cancel",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+  });
+
+  it("encodes the response id in the cancel URL", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp/x y", status: "cancelled" }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.cancelResponse("resp/x y");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp%2Fx%20y/cancel",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("propagates upstream errors from cancelResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await expect(adapter.cancelResponse("resp_missing")).rejects.toBeInstanceOf(
+      UpstreamResponsesApiError,
+    );
+  });
 });

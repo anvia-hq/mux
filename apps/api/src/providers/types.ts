@@ -248,5 +248,6 @@ export interface ProviderAdapter {
   createResponseStream?(request: ResponseCreateRequest): AsyncIterable<string>;
   getResponse?(id: string, query?: Record<string, string | string[]>): Promise<ResponseObject>;
   deleteResponse?(id: string): Promise<ResponseObject>;
+  cancelResponse?(id: string): Promise<ResponseObject>;
   listModels(): Model[];
 }
