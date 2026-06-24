@@ -368,6 +368,66 @@ export async function handleResponseInputItems(
   throw new ResponseNotFoundError(id);
 }
 
+export async function handleResponseInputTokens(
+  body: ResponseCreateRequest,
+  apiKeyId: string,
+): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const openai = getProviderByName("openai");
+  const azure = getProviderByName("azure-cognitive-services");
+  const candidates = [openai, azure].filter(
+    (provider): provider is NonNullable<typeof provider> =>
+      Boolean(provider?.countResponseInputTokens),
+  );
+
+  if (candidates.length === 0) {
+    throw new OpenAIResponseProviderNotConfiguredError();
+  }
+
+  const startTime = Date.now();
+  let lastError: unknown = null;
+
+  for (const provider of candidates) {
+    try {
+      const response = await provider.countResponseInputTokens!(body);
+      const latencyMs = Date.now() - startTime;
+
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: typeof body.model === "string" ? body.model : provider.name,
+        endpoint: "/v1/responses/input_tokens",
+        latencyMs,
+        statusCode: 200,
+      });
+
+      return {
+        provider: provider.name,
+        model: typeof body.model === "string" ? body.model : provider.name,
+        response,
+      };
+    } catch (error) {
+      lastError = error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  // Every configured provider returned 404.
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: typeof body.model === "string" ? body.model : "unknown",
+    endpoint: "/v1/responses/input_tokens",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(`(model: ${typeof body.model === "string" ? body.model : "unknown"})`);
+}
+
 async function resolveOpenAIResponseTarget(
   request: ResponseCreateRequest,
 ): Promise<{ requestedModelId: string; target: ResolvedProviderModel }> {

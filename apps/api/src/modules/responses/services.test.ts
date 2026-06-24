@@ -60,6 +60,7 @@ import {
   handleResponseCreateStream,
   handleResponseDelete,
   handleResponseInputItems,
+  handleResponseInputTokens,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
@@ -961,6 +962,135 @@ describe("responses services", () => {
       const result = await handleResponseInputItems("resp_abc", "key-1");
       expect(result.provider).toBe("azure-cognitive-services");
       expect(azureList).toHaveBeenCalledWith("resp_abc", undefined);
+    });
+  });
+
+  describe("handleResponseInputTokens", () => {
+    function makeProvider(
+      name: string,
+      countResponseInputTokens: ReturnType<typeof vi.fn>,
+    ) {
+      return {
+        name,
+        chatCompletion: vi.fn(),
+        chatCompletionStream: vi.fn(),
+        countResponseInputTokens,
+        listModels: vi.fn().mockReturnValue([]),
+        capabilities: openAICompatibleCapabilities,
+      };
+    }
+
+    it("returns the OpenAI input-token count and logs a 200 entry without billing", async () => {
+      const countResponseInputTokens = vi.fn().mockResolvedValueOnce({
+        object: "response.input_tokens",
+        input_tokens: 42,
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", countResponseInputTokens) : null,
+      );
+
+      const result = await handleResponseInputTokens(
+        { model: "openai:gpt-4o", input: "hi" },
+        "key-1",
+      );
+
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai:gpt-4o",
+        response: { object: "response.input_tokens", input_tokens: 42 },
+      });
+      expect(countResponseInputTokens).toHaveBeenCalledWith({
+        model: "openai:gpt-4o",
+        input: "hi",
+      });
+      expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/input_tokens",
+          provider: "openai",
+          model: "openai:gpt-4o",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("falls through to Azure when OpenAI returns 404", async () => {
+      const openaiCount = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "not found"));
+      const azureCount = vi.fn().mockResolvedValueOnce({
+        object: "response.input_tokens",
+        input_tokens: 9,
+      });
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCount);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCount);
+        return null;
+      });
+
+      const result = await handleResponseInputTokens(
+        { model: "gpt-4o", input: "hi" },
+        "key-1",
+      );
+
+      expect(result).toMatchObject({
+        provider: "azure-cognitive-services",
+        response: { object: "response.input_tokens", input_tokens: 9 },
+      });
+      expect(azureCount).toHaveBeenCalledWith({ model: "gpt-4o", input: "hi" });
+      expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+    });
+
+    it("throws ResponseNotFoundError when both providers return 404", async () => {
+      const openaiCount = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      const azureCount = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCount);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCount);
+        return null;
+      });
+
+      await expect(
+        handleResponseInputTokens({ model: "gpt-4o", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(ResponseNotFoundError);
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/input_tokens",
+          statusCode: 404,
+        }),
+      );
+    });
+
+    it("does not retry Azure on a non-404 upstream error", async () => {
+      const openaiCount = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const azureCount = vi.fn();
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCount);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCount);
+        return null;
+      });
+
+      await expect(
+        handleResponseInputTokens({ model: "gpt-4o", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+      expect(azureCount).not.toHaveBeenCalled();
+    });
+
+    it("throws OpenAIResponseProviderNotConfiguredError when no adapter implements the method", async () => {
+      mockGetProviderByName.mockReturnValue(null);
+
+      await expect(
+        handleResponseInputTokens({ model: "gpt-4o", input: "hi" }, "key-1"),
+      ).rejects.toBeInstanceOf(OpenAIResponseProviderNotConfiguredError);
     });
   });
 });
