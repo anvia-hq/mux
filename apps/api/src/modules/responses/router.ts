@@ -10,7 +10,10 @@ import {
 } from "../../middleware/logger";
 import { UpstreamResponsesApiError } from "../../providers/openai";
 import { estimateCost } from "../../providers/registry";
-import { responseCreateRequestSchema } from "../../providers/responses-schema";
+import {
+  responseCompactRequestSchema,
+  responseCreateRequestSchema,
+} from "../../providers/responses-schema";
 import { parseResponseStreamBlock, SseBlockParser } from "../../providers/responses-stream";
 import type { ResponseCreateRequest, ResponseUsage } from "../../providers/types";
 import {
@@ -23,6 +26,7 @@ import { authValidationHook } from "../auth/utils";
 import {
   ApiKeyUnbillableResponseUsageError,
   handleResponseCancel,
+  handleResponseCompact,
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
@@ -199,6 +203,62 @@ responsesRouter.post(
 
     return c.json({ error: errorMessage }, 500);
   }
+  },
+);
+
+responsesRouter.post(
+  "/compact",
+  zValidator("json", responseCompactRequestSchema, authValidationHook),
+  async (c) => {
+    const apiKeyId = c.get("apiKeyId" as never) as string;
+    const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
+    const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
+    const body = c.req.valid("json") as ResponseCreateRequest;
+
+    try {
+      if (isLimitedKey) {
+        await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
+      }
+
+      const result = await handleResponseCompact(body, apiKeyId, {
+        requireBillableUsage: isLimitedKey,
+      });
+      return c.json(result.response);
+    } catch (error) {
+      const upstream = upstreamErrorResponse(c, error);
+      if (upstream) return upstream;
+
+      const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+      if (errorMessage.startsWith("No provider found")) {
+        return c.json({ error: errorMessage }, 404);
+      }
+
+      if (error instanceof ApiKeySpendLimitExceededError) {
+        return c.json({ error: errorMessage }, 429);
+      }
+
+      if (error instanceof ApiKeyUnbillableResponseUsageError) {
+        return c.json({ error: errorMessage }, 429);
+      }
+
+      if (error instanceof ResponseNotFoundError) {
+        return c.json({ error: errorMessage }, 404);
+      }
+
+      if (
+        error instanceof RequestLoggingUnavailableError ||
+        error instanceof ApiKeySpendLedgerUnavailableError
+      ) {
+        return c.json({ error: errorMessage }, 503);
+      }
+
+      if (error instanceof UnsupportedResponseFeatureError) {
+        return c.json({ error: errorMessage }, 422);
+      }
+
+      return c.json({ error: errorMessage }, 500);
+    }
   },
 );
 

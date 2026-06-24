@@ -5,6 +5,7 @@ const {
   mockAssertApiKeyCanSpend,
   mockEstimateCost,
   mockHandleResponseCancel,
+  mockHandleResponseCompact,
   mockHandleResponseCreate,
   mockHandleResponseCreateStream,
   mockHandleResponseDelete,
@@ -17,6 +18,7 @@ const {
   mockAssertApiKeyCanSpend: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockHandleResponseCancel: vi.fn(),
+  mockHandleResponseCompact: vi.fn(),
   mockHandleResponseCreate: vi.fn(),
   mockHandleResponseCreateStream: vi.fn(),
   mockHandleResponseDelete: vi.fn(),
@@ -63,6 +65,7 @@ vi.mock("./services", () => {
     ResponseNotFoundError,
     UnsupportedResponseFeatureError,
     handleResponseCancel: mockHandleResponseCancel,
+    handleResponseCompact: mockHandleResponseCompact,
     handleResponseCreate: mockHandleResponseCreate,
     handleResponseCreateStream: mockHandleResponseCreateStream,
     handleResponseDelete: mockHandleResponseDelete,
@@ -615,5 +618,131 @@ describe("responses router", () => {
       "status",
       500,
     );
+  });
+
+  it("POST /v1/responses/compact returns 200 with the upstream body", async () => {
+    mockHandleResponseCompact.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai:gpt-5",
+      response: {
+        id: "resp_001",
+        object: "response.compaction",
+        output: [{ id: "cmp_001", type: "compaction" }],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-5", input: "hi" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseCompact).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "openai:gpt-5" }),
+      "key-1",
+      { requireBillableUsage: false },
+    );
+    await expect(res.json()).resolves.toMatchObject({
+      id: "resp_001",
+      object: "response.compaction",
+    });
+  });
+
+  it("POST /v1/responses/compact returns 400 on a missing model", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "hi" }),
+    });
+    expect(res.status).toBe(400);
+    expect(mockHandleResponseCompact).not.toHaveBeenCalled();
+  });
+
+  it("POST /v1/responses/compact returns 400 on unknown fields (strict)", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-5", instructions: "nope" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /v1/responses/compact passes through the upstream envelope on non-404 errors", async () => {
+    mockHandleResponseCompact.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "compact failed",
+            type: "invalid_request_error",
+            param: null,
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-5", input: "hi" }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "compact failed",
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_value",
+      },
+    });
+  });
+
+  it("POST /v1/responses/compact returns 404 on ResponseNotFoundError", async () => {
+    mockHandleResponseCompact.mockRejectedValueOnce(new ResponseNotFoundError("openai:gpt-5"));
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-5", input: "hi" }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /v1/responses/compact maps known service errors", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const body = JSON.stringify({ model: "openai:gpt-5", input: "hi" });
+
+    mockHandleResponseCompact.mockRejectedValueOnce(new UnsupportedResponseFeatureError("nope"));
+    expect(
+      await app.request("/v1/responses/compact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }),
+    ).toHaveProperty("status", 422);
+
+    mockHandleResponseCompact.mockRejectedValueOnce(new ApiKeyUnbillableResponseUsageError());
+    expect(
+      await app.request("/v1/responses/compact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }),
+    ).toHaveProperty("status", 429);
+
+    mockHandleResponseCompact.mockRejectedValueOnce(new Error("boom"));
+    expect(
+      await app.request("/v1/responses/compact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      }),
+    ).toHaveProperty("status", 500);
   });
 });
