@@ -9,24 +9,53 @@ export {
   type RequestLogPayload,
 } from "./request-log-queue";
 
+export {
+  BACKGROUND_POLL_QUEUE_NAME,
+  backgroundPollQueue,
+  closeBackgroundPollQueue,
+  enqueueBackgroundPoll,
+  type BackgroundPollJob,
+} from "./background-response-queue";
+
+export {
+  backoffMs,
+  processBackgroundPollJob,
+  startBackgroundResponseWorker,
+} from "./background-response-worker";
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const [{ startRequestLogWorker }, { closeRequestLogQueue }] = await Promise.all([
+  const [
+    { startRequestLogWorker },
+    { closeRequestLogQueue },
+    { startBackgroundResponseWorker },
+    { closeBackgroundPollQueue },
+  ] = await Promise.all([
     import("./request-log-worker"),
     import("./request-log-queue"),
+    import("./background-response-worker"),
+    import("./background-response-queue"),
   ]);
-  const worker = await startRequestLogWorker();
 
-  worker.on("completed", (job) => {
+  const requestLogWorker = await startRequestLogWorker();
+  const backgroundPollWorker = await startBackgroundResponseWorker();
+
+  requestLogWorker.on("completed", (job) => {
     console.log(`Request log job ${job.id} completed`);
   });
-
-  worker.on("failed", (job, error) => {
+  requestLogWorker.on("failed", (job, error) => {
     console.error(`Request log job ${job?.id} failed`, error);
   });
 
+  backgroundPollWorker.on("completed", (job) => {
+    console.log(`Background poll job ${job.id} completed`);
+  });
+  backgroundPollWorker.on("failed", (job, error) => {
+    console.error(`Background poll job ${job?.id} failed`, error);
+  });
+
   const shutdown = async () => {
-    await worker.close();
-    await closeRequestLogQueue();
+    await Promise.all([requestLogWorker.close(), backgroundPollWorker.close()]);
+    await Promise.all([closeRequestLogQueue(), closeBackgroundPollQueue()]);
   };
 
   process.on("SIGTERM", () => {
