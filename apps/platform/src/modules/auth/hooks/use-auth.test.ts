@@ -27,7 +27,11 @@ import {
 } from "./use-auth";
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
-  React.createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
+  React.createElement(
+    QueryClientProvider,
+    { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+    children,
+  );
 
 describe("auth hooks", () => {
   afterEach(() => {

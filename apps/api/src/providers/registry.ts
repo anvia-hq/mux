@@ -527,9 +527,7 @@ export function listAllModels(): Model[] {
   return models;
 }
 
-export async function listFallbackGroupModels(
-  disabledModels?: Set<string>,
-): Promise<Model[]> {
+export async function listFallbackGroupModels(disabledModels?: Set<string>): Promise<Model[]> {
   const disabled = disabledModels ?? (await listDisabledModelKeys());
   const groups = await prisma.fallbackGroup.findMany({
     where: { enabled: true },

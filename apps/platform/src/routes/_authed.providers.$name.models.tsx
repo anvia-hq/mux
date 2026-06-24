@@ -8,8 +8,8 @@ export const Route = createFileRoute("/_authed/providers/$name/models")({
 
 function ProviderModelsView() {
   const { name } = Route.useParams();
-  if (!PROVIDER_NAMES.includes(name as typeof PROVIDER_NAMES[number])) {
+  if (!PROVIDER_NAMES.includes(name as (typeof PROVIDER_NAMES)[number])) {
     return <p className="p-4 text-sm text-muted-foreground">Unknown provider.</p>;
   }
-  return <ProviderModelsPage provider={name as typeof PROVIDER_NAMES[number]} />;
+  return <ProviderModelsPage provider={name as (typeof PROVIDER_NAMES)[number]} />;
 }

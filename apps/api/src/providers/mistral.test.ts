@@ -7,8 +7,12 @@ const { mockFetch } = vi.hoisted(() => ({
 vi.mock("../models-dev-provider-adapter", () => ({
   ModelsDevProviderAdapter: class {
     name: string;
-    constructor(input: { name: string }) { this.name = input.name; }
-    listModels() { return []; }
+    constructor(input: { name: string }) {
+      this.name = input.name;
+    }
+    listModels() {
+      return [];
+    }
   },
 }));
 

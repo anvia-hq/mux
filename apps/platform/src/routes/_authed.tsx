@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, Outlet } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AppShell } from "../modules/dashboard/components/app-shell";
 import { meQueryOptions } from "../modules/auth/hooks/use-auth";
 import { ApiError, UnauthorizedError } from "../lib/api-client";

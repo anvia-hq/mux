@@ -5,7 +5,9 @@ const { mockPrisma, mockListAllModels, mockReloadProvider } = vi.hoisted(() => (
   mockPrisma: {
     providerKey: {
       findMany: vi.fn(),
-      upsert: vi.fn().mockResolvedValue({ provider: "openai", lastFour: "abcd", updatedAt: new Date() }),
+      upsert: vi
+        .fn()
+        .mockResolvedValue({ provider: "openai", lastFour: "abcd", updatedAt: new Date() }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     disabledModel: {
@@ -13,20 +15,40 @@ const { mockPrisma, mockListAllModels, mockReloadProvider } = vi.hoisted(() => (
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       upsert: vi.fn().mockResolvedValue({ modelId: "gpt-4", provider: "openai" }),
     },
-    user: { findUnique: vi.fn().mockResolvedValue({
-      id: "admin-1", email: "a@b.com", name: "Admin", role: "ADMIN",
-      passwordHash: "h", createdAt: new Date(), updatedAt: new Date(),
-    }) },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: "admin-1",
+        email: "a@b.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "h",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    },
   },
   mockListAllModels: vi.fn().mockReturnValue([]),
   mockReloadProvider: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../utils/prisma", () => ({ prisma: mockPrisma }));
-vi.mock("../../providers/registry", () => ({ listAllModels: mockListAllModels, reloadProvider: mockReloadProvider }));
-vi.mock("./crypto", () => ({ encrypt: vi.fn().mockReturnValue("enc"), lastFour: vi.fn().mockReturnValue("abcd") }));
-vi.mock("hono/cookie", () => ({ getCookie: vi.fn().mockReturnValue("jwt"), setCookie: vi.fn(), deleteCookie: vi.fn() }));
-vi.mock("hono/jwt", () => ({ sign: vi.fn().mockResolvedValue("jwt"), verify: vi.fn().mockResolvedValue({ sub: "admin-1", role: "ADMIN" }) }));
+vi.mock("../../providers/registry", () => ({
+  listAllModels: mockListAllModels,
+  reloadProvider: mockReloadProvider,
+}));
+vi.mock("./crypto", () => ({
+  encrypt: vi.fn().mockReturnValue("enc"),
+  lastFour: vi.fn().mockReturnValue("abcd"),
+}));
+vi.mock("hono/cookie", () => ({
+  getCookie: vi.fn().mockReturnValue("jwt"),
+  setCookie: vi.fn(),
+  deleteCookie: vi.fn(),
+}));
+vi.mock("hono/jwt", () => ({
+  sign: vi.fn().mockResolvedValue("jwt"),
+  verify: vi.fn().mockResolvedValue({ sub: "admin-1", role: "ADMIN" }),
+}));
 
 import { providersRouter } from "./router";
 

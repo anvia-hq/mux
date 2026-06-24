@@ -48,7 +48,10 @@ vi.mock("../../providers/registry", () => ({
 
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
 import type { ChatCompletionRequest } from "../../providers/types";
-import { openAICompatibleCapabilities, unsupportedNativeCapabilities } from "../../providers/chat-compat";
+import {
+  openAICompatibleCapabilities,
+  unsupportedNativeCapabilities,
+} from "../../providers/chat-compat";
 
 describe("chat services", () => {
   afterEach(() => {
@@ -90,7 +93,8 @@ describe("chat services", () => {
           weights: "closed",
         },
       ]),
-      capabilities: provider === "openai" ? openAICompatibleCapabilities : unsupportedNativeCapabilities,
+      capabilities:
+        provider === "openai" ? openAICompatibleCapabilities : unsupportedNativeCapabilities,
     },
     providerName: provider,
     modelId,

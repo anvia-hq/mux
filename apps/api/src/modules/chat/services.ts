@@ -76,7 +76,11 @@ export async function handleChatCompletion(
     throw new ApiKeyUnbillableUsageError();
   }
 
-  const targets = compatibleTargetsForRequest(request, resolved.targets, resolved.kind === "direct");
+  const targets = compatibleTargetsForRequest(
+    request,
+    resolved.targets,
+    resolved.kind === "direct",
+  );
   const startTime = Date.now();
 
   if (request.stream) {
@@ -95,16 +99,10 @@ export async function handleChatCompletion(
     };
   }
 
-  return handleNonStreamingCompletion(
-    request,
-    apiKeyId,
-    resolved.requestedModelId,
-    targets,
-    {
-      requireBillableUsage: options.requireBillableUsage,
-      startTime,
-    },
-  );
+  return handleNonStreamingCompletion(request, apiKeyId, resolved.requestedModelId, targets, {
+    requireBillableUsage: options.requireBillableUsage,
+    startTime,
+  });
 }
 
 function compatibleTargetsForRequest(

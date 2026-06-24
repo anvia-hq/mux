@@ -8,9 +8,19 @@ const { mockPrisma } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../utils/prisma", () => ({ prisma: mockPrisma }));
-vi.mock("./password", () => ({ hashPassword: vi.fn().mockResolvedValue("hashed"), verifyPassword: vi.fn().mockResolvedValue(true) }));
-vi.mock("hono/jwt", () => ({ sign: vi.fn().mockResolvedValue("jwt"), verify: vi.fn().mockResolvedValue({ sub: "user-1" }) }));
-vi.mock("hono/cookie", () => ({ getCookie: vi.fn().mockReturnValue("jwt"), setCookie: vi.fn(), deleteCookie: vi.fn() }));
+vi.mock("./password", () => ({
+  hashPassword: vi.fn().mockResolvedValue("hashed"),
+  verifyPassword: vi.fn().mockResolvedValue(true),
+}));
+vi.mock("hono/jwt", () => ({
+  sign: vi.fn().mockResolvedValue("jwt"),
+  verify: vi.fn().mockResolvedValue({ sub: "user-1" }),
+}));
+vi.mock("hono/cookie", () => ({
+  getCookie: vi.fn().mockReturnValue("jwt"),
+  setCookie: vi.fn(),
+  deleteCookie: vi.fn(),
+}));
 
 import { authRouter } from "./router";
 
@@ -33,7 +43,15 @@ describe("auth router", () => {
 
   it("POST /onboard creates first admin", async () => {
     mockPrisma.user.count.mockResolvedValueOnce(0);
-    mockPrisma.user.create.mockResolvedValueOnce({ id: "1", email: "a@b.com", name: "Admin", role: "ADMIN", passwordHash: "h", createdAt: new Date(), updatedAt: new Date() });
+    mockPrisma.user.create.mockResolvedValueOnce({
+      id: "1",
+      email: "a@b.com",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/onboard", {
       method: "POST",
@@ -56,8 +74,13 @@ describe("auth router", () => {
 
   it("POST /login success", async () => {
     mockPrisma.user.findUnique.mockResolvedValueOnce({
-      id: "1", email: "test@test.com", name: "Test", role: "USER",
-      passwordHash: "hashed", createdAt: new Date(), updatedAt: new Date(),
+      id: "1",
+      email: "test@test.com",
+      name: "Test",
+      role: "USER",
+      passwordHash: "hashed",
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/login", {
@@ -81,8 +104,13 @@ describe("auth router", () => {
 
   it("POST /register success", async () => {
     mockPrisma.user.create.mockResolvedValueOnce({
-      id: "2", email: "new@test.com", name: "New", role: "USER",
-      passwordHash: "h", createdAt: new Date(), updatedAt: new Date(),
+      id: "2",
+      email: "new@test.com",
+      name: "New",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/register", {
@@ -95,8 +123,13 @@ describe("auth router", () => {
 
   it("GET /me returns user", async () => {
     mockPrisma.user.findUnique.mockResolvedValueOnce({
-      id: "user-1", email: "u@b.com", name: "U", role: "USER",
-      passwordHash: "h", createdAt: new Date(), updatedAt: new Date(),
+      id: "user-1",
+      email: "u@b.com",
+      name: "U",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/me");

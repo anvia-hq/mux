@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeEmail, normalizeName, sanitizeUser, isUniqueConstraintError, getValidationErrorMessage } from "./utils";
+import {
+  normalizeEmail,
+  normalizeName,
+  sanitizeUser,
+  isUniqueConstraintError,
+  getValidationErrorMessage,
+} from "./utils";
 
 describe("auth utils", () => {
   describe("normalizeEmail", () => {
@@ -53,7 +59,9 @@ describe("auth utils", () => {
 
   describe("getValidationErrorMessage", () => {
     it("returns first issue message", () => {
-      expect(getValidationErrorMessage({ issues: [{ message: "missing field" }] })).toBe("missing field");
+      expect(getValidationErrorMessage({ issues: [{ message: "missing field" }] })).toBe(
+        "missing field",
+      );
     });
     it("returns default when no issues", () => {
       expect(getValidationErrorMessage({ issues: [] })).toBe("invalid request body");

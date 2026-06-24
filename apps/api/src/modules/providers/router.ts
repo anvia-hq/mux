@@ -45,11 +45,7 @@ providersRouter.get("/", async (c) => {
  */
 providersRouter.put(
   "/:name",
-  zValidator(
-    "param",
-    z.object({ name: providerNameSchema }),
-    authValidationHook,
-  ),
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
   zValidator("json", setProviderKeySchema, authValidationHook),
   async (c) => {
     const { name } = c.req.valid("param");
@@ -82,11 +78,7 @@ providersRouter.put(
  */
 providersRouter.delete(
   "/:name",
-  zValidator(
-    "param",
-    z.object({ name: providerNameSchema }),
-    authValidationHook,
-  ),
+  zValidator("param", z.object({ name: providerNameSchema }), authValidationHook),
   async (c) => {
     const { name } = c.req.valid("param");
 

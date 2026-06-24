@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 describe("prisma", () => {
   it("exports a prisma instance with DATABASE_URL set", async () => {

@@ -64,15 +64,17 @@ vi.mock("../../providers/chat-compat", () => {
 
   return {
     UnsupportedChatFeatureError,
-    validateChatCompletionRequestShape: vi.fn((body: { model?: string; messages?: { role?: string; tool_call_id?: string }[] }) => {
-      if (!body.model) return "request must include a model";
-      if (!Array.isArray(body.messages) || body.messages.length === 0)
-        return "request must include a non-empty messages array";
-      const toolMessage = body.messages?.find((message) => message.role === "tool");
-      return toolMessage && typeof toolMessage.tool_call_id !== "string"
-        ? "messages[0].tool_call_id is required for tool messages"
-        : null;
-    }),
+    validateChatCompletionRequestShape: vi.fn(
+      (body: { model?: string; messages?: { role?: string; tool_call_id?: string }[] }) => {
+        if (!body.model) return "request must include a model";
+        if (!Array.isArray(body.messages) || body.messages.length === 0)
+          return "request must include a non-empty messages array";
+        const toolMessage = body.messages?.find((message) => message.role === "tool");
+        return toolMessage && typeof toolMessage.tool_call_id !== "string"
+          ? "messages[0].tool_call_id is required for tool messages"
+          : null;
+      },
+    ),
   };
 });
 vi.mock("../keys/services", () => {

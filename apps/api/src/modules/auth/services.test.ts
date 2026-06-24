@@ -23,12 +23,7 @@ vi.mock("./password", () => ({
   verifyPassword: vi.fn().mockImplementation((pw: string) => pw === "correct"),
 }));
 
-import {
-  authenticateUser,
-  createAdminUser,
-  createUserAccount,
-  getUserCount,
-} from "./services";
+import { authenticateUser, createAdminUser, createUserAccount, getUserCount } from "./services";
 
 describe("auth services", () => {
   afterEach(() => {
@@ -38,7 +33,9 @@ describe("auth services", () => {
   describe("authenticateUser", () => {
     it("returns user on valid credentials", async () => {
       mockPrisma.user.findUnique.mockResolvedValueOnce({
-        id: "1", email: "test@example.com", passwordHash: "hashed-password",
+        id: "1",
+        email: "test@example.com",
+        passwordHash: "hashed-password",
       });
       const user = await authenticateUser("test@example.com", "correct");
       expect(user).toBeDefined();

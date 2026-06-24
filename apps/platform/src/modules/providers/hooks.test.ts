@@ -8,26 +8,45 @@ vi.mock("../../lib/api-client", () => ({
 }));
 
 import { apiFetch } from "../../lib/api-client";
-import { useProvidersQuery, useSetProviderKeyMutation, useDeleteProviderKeyMutation, useProviderModelsQuery, useToggleModelMutation, useEnableAllMutation, useDisableAllMutation } from "./hooks";
+import {
+  useProvidersQuery,
+  useSetProviderKeyMutation,
+  useDeleteProviderKeyMutation,
+  useProviderModelsQuery,
+  useToggleModelMutation,
+  useEnableAllMutation,
+  useDisableAllMutation,
+} from "./hooks";
 
 const wrapper = ({ children }: { children: React.ReactNode }) =>
-  React.createElement(QueryClientProvider, { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) }, children);
+  React.createElement(
+    QueryClientProvider,
+    { client: new QueryClient({ defaultOptions: { queries: { retry: false } } }) },
+    children,
+  );
 
 describe("providers hooks", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("useProvidersQuery fetches /providers", async () => {
-    vi.mocked(apiFetch).mockResolvedValueOnce({ providers: [{ provider: "openai", lastFour: "abcd" }] });
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      providers: [{ provider: "openai", lastFour: "abcd" }],
+    });
     const { result } = renderHook(() => useProvidersQuery(), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(apiFetch).toHaveBeenCalledWith("/providers");
   });
 
   it("useSetProviderKeyMutation puts to /providers/:name", async () => {
-    vi.mocked(apiFetch).mockResolvedValueOnce({ provider: { provider: "openai", lastFour: "abcd" } });
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      provider: { provider: "openai", lastFour: "abcd" },
+    });
     const { result } = renderHook(() => useSetProviderKeyMutation(), { wrapper });
     await act(() => result.current.mutateAsync({ provider: "openai", apiKey: "sk-key" }));
-    expect(apiFetch).toHaveBeenCalledWith("/providers/openai", { method: "PUT", body: { apiKey: "sk-key" } });
+    expect(apiFetch).toHaveBeenCalledWith("/providers/openai", {
+      method: "PUT",
+      body: { apiKey: "sk-key" },
+    });
   });
 
   it("useDeleteProviderKeyMutation deletes", async () => {
@@ -49,7 +68,8 @@ describe("providers hooks", () => {
     const { result } = renderHook(() => useToggleModelMutation("openai"), { wrapper });
     await act(() => result.current.mutateAsync({ modelId: "gpt-4", enabled: true }));
     expect(apiFetch).toHaveBeenCalledWith("/providers/openai/models/toggle", {
-      method: "PUT", body: { modelId: "gpt-4", enabled: true },
+      method: "PUT",
+      body: { modelId: "gpt-4", enabled: true },
     });
   });
 
@@ -64,6 +84,8 @@ describe("providers hooks", () => {
     vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true });
     const { result } = renderHook(() => useDisableAllMutation("openai"), { wrapper });
     await act(() => result.current.mutateAsync());
-    expect(apiFetch).toHaveBeenCalledWith("/providers/openai/models/disable-all", { method: "PUT" });
+    expect(apiFetch).toHaveBeenCalledWith("/providers/openai/models/disable-all", {
+      method: "PUT",
+    });
   });
 });

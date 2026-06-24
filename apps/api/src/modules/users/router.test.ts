@@ -16,8 +16,13 @@ vi.mock("../../utils/prisma", () => ({
   prisma: {
     user: {
       findUnique: vi.fn().mockResolvedValue({
-        id: "admin-1", email: "admin@test.com", name: "Admin", role: "ADMIN",
-        passwordHash: "hash", createdAt: new Date(), updatedAt: new Date(),
+        id: "admin-1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        createdAt: new Date(),
+        updatedAt: new Date(),
       }),
       findMany: vi.fn().mockResolvedValue([]),
     },

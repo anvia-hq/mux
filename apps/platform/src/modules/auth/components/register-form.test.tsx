@@ -4,7 +4,7 @@ import React from "react";
 
 vi.mock("@repo/ui/components/button", () => ({
   Button: ({ children, ...props }: Record<string, unknown> & { children?: React.ReactNode }) =>
-    React.createElement("button", props, children),
+    React.createElement("button", { type: "button", ...props }, children),
 }));
 vi.mock("@repo/ui/components/card", () => ({
   Card: ({ children }: Record<string, unknown> & { children?: React.ReactNode }) =>
