@@ -781,6 +781,57 @@ const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const REQUEST_TIMEOUT_MS = 60_000;
 
+export class UpstreamResponsesApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+
+  constructor(status: number, body: string) {
+    super(`OpenAI Responses API error: ${status} - ${body}`);
+    this.name = "UpstreamResponsesApiError";
+    this.status = status;
+    this.body = body;
+  }
+
+  get jsonError(): {
+    message?: string;
+    type?: string;
+    param?: string | null;
+    code?: string | null;
+  } | null {
+    try {
+      const parsed = JSON.parse(this.body) as { error?: unknown };
+      if (parsed && typeof parsed === "object" && "error" in parsed) {
+        return parsed.error as {
+          message?: string;
+          type?: string;
+          param?: string | null;
+          code?: string | null;
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+export type UpstreamResponsesQuery = Record<string, string | string[]>;
+
+function buildResponsesUrl(id: string, query?: UpstreamResponsesQuery): string {
+  const params = new URLSearchParams();
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (Array.isArray(value)) {
+        for (const v of value) params.append(key, v);
+      } else if (value !== undefined) {
+        params.append(key, value);
+      }
+    }
+  }
+  const qs = params.toString();
+  return `${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`;
+}
+
 export class OpenAIAdapter implements ProviderAdapter {
   name = "openai";
   capabilities = openAICompatibleCapabilities;
@@ -868,7 +919,7 @@ export class OpenAIAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+      throw new UpstreamResponsesApiError(response.status, error);
     }
 
     return (await response.json()) as ResponseObject;
@@ -887,7 +938,7 @@ export class OpenAIAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+      throw new UpstreamResponsesApiError(response.status, error);
     }
 
     const reader = response.body?.getReader();
@@ -905,8 +956,8 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (final) yield final;
   }
 
-  async getResponse(id: string): Promise<ResponseObject> {
-    const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}`, {
+  async getResponse(id: string, query?: UpstreamResponsesQuery): Promise<ResponseObject> {
+    const response = await fetch(buildResponsesUrl(id, query), {
       method: "GET",
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
@@ -916,7 +967,24 @@ export class OpenAIAdapter implements ProviderAdapter {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+      throw new UpstreamResponsesApiError(response.status, error);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async deleteResponse(id: string): Promise<ResponseObject> {
+    const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new UpstreamResponsesApiError(response.status, error);
     }
 
     return (await response.json()) as ResponseObject;

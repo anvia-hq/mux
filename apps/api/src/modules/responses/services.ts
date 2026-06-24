@@ -61,15 +61,6 @@ export type ResponseStreamResult = {
   startTime: number;
 };
 
-export function validateResponseCreateRequestShape(value: unknown): string | null {
-  if (!value || typeof value !== "object") return "request body must be an object";
-  const request = value as Partial<ResponseCreateRequest>;
-  if (typeof request.model !== "string" || request.model.length === 0) {
-    return "request must include a model";
-  }
-  return null;
-}
-
 export async function handleResponseCreate(
   request: ResponseCreateRequest,
   apiKeyId: string,
@@ -210,6 +201,7 @@ export class OpenAIResponseProviderNotConfiguredError extends Error {
 export async function handleResponseRetrieve(
   id: string,
   apiKeyId: string,
+  query?: Record<string, string | string[]>,
 ): Promise<ResponseObject> {
   const provider = getProviderByName("openai");
   if (!provider) {
@@ -225,7 +217,57 @@ export async function handleResponseRetrieve(
   const startTime = Date.now();
 
   try {
-    const response = await provider.getResponse(id);
+    const response = await provider.getResponse(id, query);
+    const latencyMs = Date.now() - startTime;
+
+    await logRequest({
+      apiKeyId,
+      provider: provider.name,
+      model: "openai",
+      endpoint: "/v1/responses/:id",
+      latencyMs,
+      statusCode: 200,
+    });
+
+    return response;
+  } catch (error) {
+    if (error instanceof RequestLoggingUnavailableError) {
+      throw error;
+    }
+
+    const latencyMs = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    await logRequest({
+      apiKeyId,
+      provider: provider.name,
+      model: "openai",
+      endpoint: "/v1/responses/:id",
+      latencyMs,
+      statusCode: 500,
+      errorMessage,
+    });
+
+    throw error;
+  }
+}
+
+export async function handleResponseDelete(id: string, apiKeyId: string): Promise<ResponseObject> {
+  const provider = getProviderByName("openai");
+  if (!provider) {
+    throw new OpenAIResponseProviderNotConfiguredError();
+  }
+
+  if (!provider.deleteResponse) {
+    throw new UnsupportedResponseFeatureError(
+      "Selected provider does not support response deletion",
+    );
+  }
+
+  const startTime = Date.now();
+
+  try {
+    const response = await provider.deleteResponse(id);
     const latencyMs = Date.now() - startTime;
 
     await logRequest({

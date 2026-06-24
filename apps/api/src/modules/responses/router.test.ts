@@ -6,6 +6,7 @@ const {
   mockEstimateCost,
   mockHandleResponseCreate,
   mockHandleResponseCreateStream,
+  mockHandleResponseDelete,
   mockHandleResponseRetrieve,
   mockLogStreamFinal,
   mockLogStreamStart,
@@ -16,6 +17,7 @@ const {
   mockEstimateCost: vi.fn(),
   mockHandleResponseCreate: vi.fn(),
   mockHandleResponseCreateStream: vi.fn(),
+  mockHandleResponseDelete: vi.fn(),
   mockHandleResponseRetrieve: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
@@ -52,12 +54,8 @@ vi.mock("./services", () => {
     UnsupportedResponseFeatureError,
     handleResponseCreate: mockHandleResponseCreate,
     handleResponseCreateStream: mockHandleResponseCreateStream,
+    handleResponseDelete: mockHandleResponseDelete,
     handleResponseRetrieve: mockHandleResponseRetrieve,
-    validateResponseCreateRequestShape: vi.fn((body: { model?: string }) =>
-      typeof body.model === "string" && body.model.length > 0
-        ? null
-        : "request must include a model",
-    ),
   };
 });
 
@@ -115,6 +113,7 @@ vi.mock("../keys/services", () => {
 
 import { Hono } from "hono";
 import { RequestLoggingUnavailableError } from "../../middleware/logger";
+import { UpstreamResponsesApiError } from "../../providers/openai";
 import { ApiKeySpendLedgerUnavailableError, ApiKeySpendLimitExceededError } from "../keys/services";
 import {
   ApiKeyUnbillableResponseUsageError,
@@ -350,7 +349,7 @@ describe("responses router", () => {
     const res = await app.request("/v1/responses/resp_abc", { method: "GET" });
 
     expect(res.status).toBe(200);
-    expect(mockHandleResponseRetrieve).toHaveBeenCalledWith("resp_abc", "key-1");
+    expect(mockHandleResponseRetrieve).toHaveBeenCalledWith("resp_abc", "key-1", undefined);
     await expect(res.json()).resolves.toMatchObject({ id: "resp_abc" });
   });
 
@@ -380,15 +379,135 @@ describe("responses router", () => {
     );
 
     mockHandleResponseRetrieve.mockRejectedValueOnce(
-      new Error("OpenAI Responses API error: 404 - not found"),
+      new UpstreamResponsesApiError(404, JSON.stringify({ error: { message: "not found" } })),
     );
-    expect(await app.request("/v1/responses/resp_abc", { method: "GET" })).toHaveProperty(
-      "status",
-      404,
-    );
+    const notFound = await app.request("/v1/responses/resp_abc", { method: "GET" });
+    expect(notFound.status).toBe(404);
+    await expect(notFound.json()).resolves.toMatchObject({
+      error: { message: "not found" },
+    });
 
     mockHandleResponseRetrieve.mockRejectedValueOnce(new Error("boom"));
     expect(await app.request("/v1/responses/resp_abc", { method: "GET" })).toHaveProperty(
+      "status",
+      500,
+    );
+  });
+
+  it("GET /v1/responses/:id forwards repeated query params to the service", async () => {
+    mockHandleResponseRetrieve.mockResolvedValueOnce({ id: "resp_abc" });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request(
+      "/v1/responses/resp_abc?include=file_search_call.results&include=message.input_image&include_obfuscation=true",
+      { method: "GET" },
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseRetrieve).toHaveBeenCalledWith("resp_abc", "key-1", {
+      include: ["file_search_call.results", "message.input_image"],
+      include_obfuscation: "true",
+    });
+  });
+
+  it("POST /v1/responses surfaces the OpenAI error envelope with the original status", async () => {
+    mockHandleResponseCreate.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "Invalid value for 'model'",
+            type: "invalid_request_error",
+            param: "model",
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:bogus", input: "hi" }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "Invalid value for 'model'",
+        type: "invalid_request_error",
+        param: "model",
+        code: "invalid_value",
+      },
+    });
+  });
+
+  it("POST /v1/responses falls back to message body for non-JSON upstream errors", async () => {
+    mockHandleResponseCreate.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(500, "internal server error"),
+    );
+
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi" }),
+    });
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("OpenAI Responses API error: 500"),
+    });
+  });
+
+  it("DELETE /v1/responses/:id returns 200 with the OpenAI confirmation body", async () => {
+    mockHandleResponseDelete.mockResolvedValueOnce({
+      id: "resp_abc",
+      object: "response",
+      deleted: true,
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc", { method: "DELETE" });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseDelete).toHaveBeenCalledWith("resp_abc", "key-1");
+    await expect(res.json()).resolves.toMatchObject({ id: "resp_abc", deleted: true });
+  });
+
+  it("DELETE /v1/responses/:id surfaces the OpenAI error envelope on 404", async () => {
+    mockHandleResponseDelete.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(404, JSON.stringify({ error: { message: "not found" } })),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_missing", { method: "DELETE" });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({ error: { message: "not found" } });
+  });
+
+  it("DELETE /v1/responses/:id maps known service errors", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    mockHandleResponseDelete.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
+    expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseDelete.mockRejectedValueOnce(new UnsupportedResponseFeatureError("nope"));
+    expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
+      "status",
+      422,
+    );
+
+    mockHandleResponseDelete.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseDelete.mockRejectedValueOnce(new Error("boom"));
+    expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
       "status",
       500,
     );

@@ -162,6 +162,21 @@ export type ResponseObject = {
   [key: string]: unknown;
 };
 
+export {
+  type ResponseInputItem,
+  type ResponseInputMessage,
+  type ResponseInputTextParam,
+  type ResponseReferenceItemParam,
+  type ResponseOutputItem,
+  type ResponseOutputMessage,
+  type ResponseOutputText,
+  type ResponseOutputRefusal,
+  type ResponseFunctionToolCall,
+  type ResponseUsage as ResponseUsageDetailed,
+  type ResponseObject as ResponseObjectDetailed,
+  assertNever,
+} from "./responses-types";
+
 export interface ProviderCapabilities {
   tools: boolean;
   structuredOutput: boolean;
@@ -223,6 +238,7 @@ export interface ProviderAdapter {
   chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk>;
   createResponse?(request: ResponseCreateRequest): Promise<ResponseObject>;
   createResponseStream?(request: ResponseCreateRequest): AsyncIterable<string>;
-  getResponse?(id: string): Promise<ResponseObject>;
+  getResponse?(id: string, query?: Record<string, string | string[]>): Promise<ResponseObject>;
+  deleteResponse?(id: string): Promise<ResponseObject>;
   listModels(): Model[];
 }

@@ -53,10 +53,10 @@ import {
   ApiKeyUnbillableResponseUsageError,
   handleResponseCreate,
   handleResponseCreateStream,
+  handleResponseDelete,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   UnsupportedResponseFeatureError,
-  validateResponseCreateRequestShape,
 } from "./services";
 import { openAICompatibleCapabilities } from "../../providers/chat-compat";
 import type { ResponseCreateRequest } from "../../providers/types";
@@ -106,14 +106,6 @@ describe("responses services", () => {
     providerName: provider,
     modelId,
     publicModelId: `${provider}:${modelId}`,
-  });
-
-  it("validates request shape", () => {
-    expect(validateResponseCreateRequestShape(null)).toBe("request body must be an object");
-    expect(validateResponseCreateRequestShape({ input: "hi" })).toBe(
-      "request must include a model",
-    );
-    expect(validateResponseCreateRequestShape(createRequest())).toBeNull();
   });
 
   it("calls OpenAI response create, logs request, and rewrites model", async () => {
@@ -269,7 +261,7 @@ describe("responses services", () => {
     const result = await handleResponseRetrieve("resp_abc", "key-1");
 
     expect(result).toMatchObject({ id: "resp_abc" });
-    expect(getResponse).toHaveBeenCalledWith("resp_abc");
+    expect(getResponse).toHaveBeenCalledWith("resp_abc", undefined);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKeyId: "key-1",
@@ -311,6 +303,87 @@ describe("responses services", () => {
     });
 
     await expect(handleResponseRetrieve("resp_abc", "key-1")).rejects.toThrow(
+      "OpenAI Responses API error: 404",
+    );
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses/:id",
+        statusCode: 500,
+        errorMessage: expect.stringContaining("404"),
+      }),
+    );
+  });
+
+  it("forwards query params to the openai provider on retrieve", async () => {
+    const getResponse = vi.fn().mockResolvedValueOnce({ id: "resp_abc" });
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      getResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    await handleResponseRetrieve("resp_abc", "key-1", { include: ["file_search_call.results"] });
+
+    expect(getResponse).toHaveBeenCalledWith("resp_abc", { include: ["file_search_call.results"] });
+  });
+
+  it("deletes a response via the openai provider and logs a 200 entry", async () => {
+    const deleteResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp_abc",
+      object: "response",
+      deleted: true,
+    });
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      deleteResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    const result = await handleResponseDelete("resp_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_abc", deleted: true });
+    expect(deleteResponse).toHaveBeenCalledWith("resp_abc");
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKeyId: "key-1",
+        provider: "openai",
+        endpoint: "/v1/responses/:id",
+        statusCode: 200,
+      }),
+    );
+  });
+
+  it("throws when the openai provider is not configured for delete", async () => {
+    mockGetProviderByName.mockReturnValueOnce(null);
+
+    await expect(handleResponseDelete("resp_abc", "key-1")).rejects.toBeInstanceOf(
+      OpenAIResponseProviderNotConfiguredError,
+    );
+    expect(mockLogRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects providers that do not implement deleteResponse", async () => {
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    await expect(handleResponseDelete("resp_abc", "key-1")).rejects.toBeInstanceOf(
+      UnsupportedResponseFeatureError,
+    );
+  });
+
+  it("logs upstream errors before rethrowing on delete", async () => {
+    const deleteResponse = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("OpenAI Responses API error: 404 - not found"));
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      deleteResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    await expect(handleResponseDelete("resp_abc", "key-1")).rejects.toThrow(
       "OpenAI Responses API error: 404",
     );
     expect(mockLogRequest).toHaveBeenCalledWith(

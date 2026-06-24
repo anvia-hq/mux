@@ -1,12 +1,17 @@
+import type { Context } from "hono";
 import { Hono } from "hono";
 import { stream as honoStream } from "hono/streaming";
+import { zValidator } from "@hono/zod-validator";
 import { apiKeyAuth } from "../../middleware/api-key";
 import {
   logStreamFinal,
   logStreamStart,
   RequestLoggingUnavailableError,
 } from "../../middleware/logger";
+import { UpstreamResponsesApiError } from "../../providers/openai";
 import { estimateCost } from "../../providers/registry";
+import { responseCreateRequestSchema } from "../../providers/responses-schema";
+import { parseResponseStreamBlock, SseBlockParser } from "../../providers/responses-stream";
 import type { ResponseCreateRequest, ResponseUsage } from "../../providers/types";
 import {
   addApiKeySpendUsd,
@@ -14,40 +19,52 @@ import {
   ApiKeySpendLimitExceededError,
   assertApiKeyCanSpend,
 } from "../keys/services";
+import { authValidationHook } from "../auth/utils";
 import {
   ApiKeyUnbillableResponseUsageError,
   handleResponseCreate,
   handleResponseCreateStream,
+  handleResponseDelete,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   UnsupportedResponseFeatureError,
-  validateResponseCreateRequestShape,
 } from "./services";
 
 export const responsesRouter = new Hono();
 
 responsesRouter.use("*", apiKeyAuth);
 
-responsesRouter.post("/", async (c) => {
-  const apiKeyId = c.get("apiKeyId" as never) as string;
-  const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
-  const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
-
-  let body: ResponseCreateRequest;
-  try {
-    body = (await c.req.json()) as ResponseCreateRequest;
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
+function upstreamErrorResponse(c: Context, error: unknown): Response | null {
+  if (!(error instanceof UpstreamResponsesApiError)) {
+    return null;
   }
+  const envelope = error.jsonError;
+  return c.json({ error: envelope ?? error.message }, error.status as 400 | 404 | 422 | 500);
+}
 
-  const validationError = validateResponseCreateRequestShape(body);
-  if (validationError) {
-    return c.json({ error: validationError }, 400);
+function collectQueryParams(c: Context): Record<string, string | string[]> | undefined {
+  const url = new URL(c.req.url);
+  const result: Record<string, string | string[]> = {};
+  for (const key of new Set(url.searchParams.keys())) {
+    const values = url.searchParams.getAll(key);
+    result[key] = values.length > 1 ? values : (values[0] ?? "");
   }
+  return Object.keys(result).length === 0 ? undefined : result;
+}
 
-  if (body.background === true) {
-    return c.json({ error: "Responses background mode is not supported yet" }, 422);
-  }
+responsesRouter.post(
+  "/",
+  zValidator("json", responseCreateRequestSchema, authValidationHook),
+  async (c) => {
+    const apiKeyId = c.get("apiKeyId" as never) as string;
+    const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
+    const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
+
+    const body = c.req.valid("json") as ResponseCreateRequest;
+
+    if (body.background === true) {
+      return c.json({ error: "Responses background mode is not supported yet" }, 422);
+    }
 
   try {
     if (isLimitedKey) {
@@ -72,16 +89,27 @@ responsesRouter.post("/", async (c) => {
       c.header("Connection", "keep-alive");
 
       return honoStream(c, async (streamWriter) => {
-        const usageObserver = createResponseStreamUsageObserver();
+        const blockParser = new SseBlockParser();
+        let usage: ResponseUsage | undefined;
 
         try {
           for await (const chunk of streamIterable) {
-            observeResponseStreamUsage(chunk, usageObserver);
             await streamWriter.write(chunk);
+            for (const block of blockParser.push(chunk)) {
+              const event = parseResponseStreamBlock(block);
+              if (event?.type === "response.completed") {
+                usage = event.response.usage;
+              }
+            }
+          }
+          for (const block of blockParser.end()) {
+            const event = parseResponseStreamBlock(block);
+            if (event?.type === "response.completed") {
+              usage = event.response.usage;
+            }
           }
 
           const latencyMs = Date.now() - startTime;
-          const usage = usageObserver.usage;
           const estimatedCost = estimateCost(model, usage?.input_tokens, usage?.output_tokens);
 
           if (isLimitedKey && estimatedCost !== undefined) {
@@ -139,6 +167,9 @@ responsesRouter.post("/", async (c) => {
 
     return c.json(response);
   } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     if (errorMessage.startsWith("No provider found")) {
@@ -166,16 +197,21 @@ responsesRouter.post("/", async (c) => {
 
     return c.json({ error: errorMessage }, 500);
   }
-});
+  },
+);
 
 responsesRouter.get("/:id", async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;
   const id = c.req.param("id");
+  const query = collectQueryParams(c);
 
   try {
-    const response = await handleResponseRetrieve(id, apiKeyId);
+    const response = await handleResponseRetrieve(id, apiKeyId, query);
     return c.json(response);
   } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     if (error instanceof OpenAIResponseProviderNotConfiguredError) {
@@ -190,74 +226,35 @@ responsesRouter.get("/:id", async (c) => {
       return c.json({ error: errorMessage }, 503);
     }
 
-    if (errorMessage.startsWith("OpenAI Responses API error: 404")) {
-      return c.json({ error: errorMessage }, 404);
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+responsesRouter.delete("/:id", async (c) => {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+  const id = c.req.param("id");
+
+  try {
+    const response = await handleResponseDelete(id, apiKeyId);
+    return c.json(response);
+  } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+    if (error instanceof OpenAIResponseProviderNotConfiguredError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    if (error instanceof UnsupportedResponseFeatureError) {
+      return c.json({ error: errorMessage }, 422);
+    }
+
+    if (error instanceof RequestLoggingUnavailableError) {
+      return c.json({ error: errorMessage }, 503);
     }
 
     return c.json({ error: errorMessage }, 500);
   }
 });
-
-type ResponseStreamUsageObserver = {
-  buffer: string;
-  usage?: ResponseUsage;
-};
-
-function createResponseStreamUsageObserver(): ResponseStreamUsageObserver {
-  return { buffer: "" };
-}
-
-function observeResponseStreamUsage(chunk: string, observer: ResponseStreamUsageObserver): void {
-  observer.buffer += chunk;
-
-  while (true) {
-    const eventBlock = shiftSseEventBlock(observer);
-    if (eventBlock === null) return;
-    const usage = extractResponseCompletedUsage(eventBlock);
-    if (usage) observer.usage = usage;
-  }
-}
-
-function shiftSseEventBlock(observer: ResponseStreamUsageObserver): string | null {
-  const lfIndex = observer.buffer.indexOf("\n\n");
-  const crlfIndex = observer.buffer.indexOf("\r\n\r\n");
-  const indexes = [lfIndex, crlfIndex].filter((index) => index >= 0);
-  if (indexes.length === 0) return null;
-
-  const delimiterIndex = Math.min(...indexes);
-  const delimiterLength = observer.buffer.startsWith("\r\n\r\n", delimiterIndex) ? 4 : 2;
-  const eventBlock = observer.buffer.slice(0, delimiterIndex);
-  observer.buffer = observer.buffer.slice(delimiterIndex + delimiterLength);
-  return eventBlock;
-}
-
-function extractResponseCompletedUsage(eventBlock: string): ResponseUsage | undefined {
-  const lines = eventBlock.split(/\r?\n/);
-  let eventName: string | undefined;
-  const dataLines: string[] = [];
-
-  for (const line of lines) {
-    if (line.startsWith("event:")) {
-      eventName = line.slice("event:".length).trim();
-    } else if (line.startsWith("data:")) {
-      dataLines.push(line.slice("data:".length).trimStart());
-    }
-  }
-
-  const data = dataLines.join("\n");
-  if (!data || data === "[DONE]") return undefined;
-
-  try {
-    const payload = JSON.parse(data) as {
-      type?: string;
-      response?: { usage?: ResponseUsage };
-      usage?: ResponseUsage;
-    };
-    if (eventName !== "response.completed" && payload.type !== "response.completed") {
-      return undefined;
-    }
-    return payload.response?.usage ?? payload.usage;
-  } catch {
-    return undefined;
-  }
-}

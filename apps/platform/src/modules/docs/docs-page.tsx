@@ -263,6 +263,23 @@ console.log(response.status);`,
   },
 ];
 
+const responseDeleteSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl -X DELETE __MUX_GATEWAY_BASE_URL__/responses/resp_abc123 \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const result = await client.responses.delete("resp_abc123");
+console.log(result.deleted);`,
+  },
+];
+
 const responseStreamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -583,7 +600,7 @@ export function DocsPage() {
                 {[
                   "Direct OpenAI provider models only.",
                   "Streaming Responses events are passed through unchanged from OpenAI.",
-                  "Non-OpenAI providers, mux fallback groups, background mode, and lifecycle routes are not supported yet.",
+                  "Non-OpenAI providers, mux fallback groups, and background mode are not supported yet. GET and DELETE lifecycle routes are available.",
                 ].map((item) => (
                   <div key={item} className="flex gap-2">
                     <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
@@ -595,9 +612,19 @@ export function DocsPage() {
             <CodeTabs samples={responseStreamingSamples} />
             <p>
               Retrieve a previously created response with <code>GET /v1/responses/{`{id}`}</code>.
-              This is a pass-through to the OpenAI Responses API.
+              This is a pass-through to the OpenAI Responses API; query params such as{" "}
+              <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
+              Upstream errors are returned in OpenAI's{" "}
+              <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
+              status code.
             </p>
             <CodeTabs samples={responseRetrieveSamples} />
+            <p>
+              Delete a stored response with <code>DELETE /v1/responses/{`{id}`}</code>. Returns the
+              OpenAI confirmation body (<code>{`{ id, object: "response", deleted: true }`}</code>)
+              on success.
+            </p>
+            <CodeTabs samples={responseDeleteSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">

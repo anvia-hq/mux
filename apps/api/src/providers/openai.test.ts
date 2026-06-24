@@ -16,7 +16,7 @@ vi.mock("../models-dev-provider-adapter", () => ({
   },
 }));
 
-import { OpenAIAdapter } from "./openai";
+import { OpenAIAdapter, UpstreamResponsesApiError } from "./openai";
 
 vi.stubGlobal("fetch", mockFetch);
 
@@ -251,6 +251,73 @@ describe("OpenAIAdapter", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       "https://api.openai.com/v1/responses/resp%2Fx%20y",
       expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("throws UpstreamResponsesApiError with status and body on getResponse failures", async () => {
+    const errorBody = JSON.stringify({
+      error: { message: "not found", type: "not_found", param: null, code: null },
+    });
+    mockFetch.mockResolvedValueOnce(
+      new Response(errorBody, { status: 404, headers: { "Content-Type": "application/json" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    let caught: unknown;
+    try {
+      await adapter.getResponse("resp_missing");
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UpstreamResponsesApiError);
+    expect((caught as UpstreamResponsesApiError).status).toBe(404);
+    expect((caught as UpstreamResponsesApiError).jsonError).toMatchObject({
+      message: "not found",
+      type: "not_found",
+    });
+  });
+
+  it("forwards repeated query params to the upstream GET URL", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_abc", object: "response" }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.getResponse("resp_abc", {
+      include: ["file_search_call.results", "message.input_image"],
+      include_obfuscation: "true",
+    });
+
+    const calledUrl = String(mockFetch.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain("include=file_search_call.results");
+    expect(calledUrl).toContain("include=message.input_image");
+    expect(calledUrl).toContain("include_obfuscation=true");
+  });
+
+  it("deletes a response via the OpenAI Responses API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ id: "resp_abc", object: "response", deleted: true }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.deleteResponse("resp_abc");
+
+    expect(response).toMatchObject({ id: "resp_abc", deleted: true });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp_abc",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: { Authorization: "Bearer sk-test" },
+      }),
+    );
+  });
+
+  it("throws UpstreamResponsesApiError when deleteResponse fails", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await expect(adapter.deleteResponse("resp_missing")).rejects.toBeInstanceOf(
+      UpstreamResponsesApiError,
     );
   });
 });
