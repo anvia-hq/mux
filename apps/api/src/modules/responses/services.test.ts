@@ -238,6 +238,35 @@ describe("responses services", () => {
     );
   });
 
+  it("forwards include array entries verbatim on Responses create", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-include",
+      model: "gpt-4o",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4o",
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
+    });
+    mockEstimateCost.mockReturnValueOnce(0.000002);
+
+    await handleResponseCreate(
+      createRequest({
+        include: ["file_search_call.results", "reasoning.encrypted_content"],
+      }),
+      "key-1",
+    );
+
+    expect(createResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-4o",
+        input: "hello",
+        include: ["file_search_call.results", "reasoning.encrypted_content"],
+      }),
+    );
+  });
+
   it("rejects unsupported response features before resolving providers", async () => {
     await expect(handleResponseCreate(createRequest({ stream: true }), "key-1")).rejects.toThrow(
       "streaming",
