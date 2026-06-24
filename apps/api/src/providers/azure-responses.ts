@@ -59,6 +59,14 @@ export class AzureResponsesClient {
     return `${normalized}/openai/v1/responses/${encodeURIComponent(id)}?api-version=${encodeURIComponent(this.apiVersion)}`;
   }
 
+  private getResponsesCancelUrl(id: string): string {
+    if (!this.endpoint) {
+      throw new AzureResponsesEndpointNotConfiguredError(this.providerName);
+    }
+    const normalized = this.endpoint.replace(/\/$/, "");
+    return `${normalized}/openai/v1/responses/${encodeURIComponent(id)}/cancel?api-version=${encodeURIComponent(this.apiVersion)}`;
+  }
+
   private buildHeaders(): Record<string, string> {
     return {
       "Content-Type": "application/json",
@@ -128,6 +136,21 @@ export class AzureResponsesClient {
     const response = await fetch(this.getResponsesItemUrl(id), {
       method: "DELETE",
       headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async cancelResponse(id: string): Promise<ResponseObject> {
+    const response = await fetch(this.getResponsesCancelUrl(id), {
+      method: "POST",
+      headers: this.buildHeaders(),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 

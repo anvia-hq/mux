@@ -1643,4 +1643,8 @@ export class AzureAdapter extends ModelsDevProviderAdapter {
   deleteResponse(id: string): Promise<ResponseObject> {
     return this.responses.deleteResponse(id);
   }
+
+  cancelResponse(id: string): Promise<ResponseObject> {
+    return this.responses.cancelResponse(id);
+  }
 }
