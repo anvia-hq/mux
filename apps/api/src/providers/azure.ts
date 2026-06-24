@@ -1,5 +1,6 @@
 import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
-import type { Model } from "./types";
+import type { Model, ResponseCreateRequest, ResponseObject } from "./types";
+import { AzureResponsesClient, azureCapabilities } from "./azure-responses";
 
 const MODELS: Model[] = [
   {
@@ -1610,7 +1611,36 @@ const MODELS: Model[] = [
 ];
 
 export class AzureAdapter extends ModelsDevProviderAdapter {
+  capabilities = azureCapabilities;
+  private responses: AzureResponsesClient;
+
   constructor(apiKey: string) {
-    super({ name: "azure", apiKey, models: MODELS });
+    super({
+      name: "azure",
+      apiKey,
+      models: MODELS,
+      responsesEndpoint: process.env.AZURE_OPENAI_RESPONSES_ENDPOINT,
+    });
+    this.responses = new AzureResponsesClient({
+      providerName: this.name,
+      apiKey,
+      endpoint: this.responsesEndpoint,
+    });
+  }
+
+  createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
+    return this.responses.createResponse(request);
+  }
+
+  createResponseStream(request: ResponseCreateRequest): AsyncIterable<string> {
+    return this.responses.createResponseStream(request);
+  }
+
+  getResponse(id: string): Promise<ResponseObject> {
+    return this.responses.getResponse(id);
+  }
+
+  deleteResponse(id: string): Promise<ResponseObject> {
+    return this.responses.deleteResponse(id);
   }
 }
