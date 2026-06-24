@@ -437,6 +437,26 @@ describe("responses router", () => {
     await expect(res.json()).resolves.toMatchObject({ id: "resp_abc" });
   });
 
+  it("GET /v1/responses/:id returns 202 + Location when the row is still pending", async () => {
+    mockHandleResponseRetrieve.mockResolvedValueOnce({
+      id: "resp_bg_abc",
+      object: "response",
+      status: "queued",
+      _pending: true,
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_bg_abc", { method: "GET" });
+
+    expect(res.status).toBe(202);
+    expect(res.headers.get("Location")).toBe("/v1/responses/resp_bg_abc");
+    const body = await res.json();
+    expect(body).toMatchObject({
+      id: "resp_bg_abc",
+      status: "queued",
+    });
+    expect(body).not.toHaveProperty("_pending");
+  });
+
   it("GET /v1/responses/:id maps known service errors", async () => {
     const app = new Hono().route("/v1/responses", responsesRouter);
 

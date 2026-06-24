@@ -7,6 +7,8 @@ const {
   mockGetProviderByName,
   mockLogRequest,
   mockPrismaBackgroundResponseJobCreate,
+  mockPrismaBackgroundResponseJobFindUnique,
+  mockPrismaBackgroundResponseJobUpdate,
   mockResolveChatModel,
   mockResolveResponseTarget,
 } = vi.hoisted(() => ({
@@ -16,6 +18,8 @@ const {
   mockGetProviderByName: vi.fn(),
   mockLogRequest: vi.fn(),
   mockPrismaBackgroundResponseJobCreate: vi.fn(),
+  mockPrismaBackgroundResponseJobFindUnique: vi.fn(),
+  mockPrismaBackgroundResponseJobUpdate: vi.fn(),
   mockResolveChatModel: vi.fn(),
   mockResolveResponseTarget: vi.fn(),
 }));
@@ -57,6 +61,8 @@ vi.mock("../../utils/prisma", () => ({
   prisma: {
     backgroundResponseJob: {
       create: mockPrismaBackgroundResponseJobCreate,
+      findUnique: mockPrismaBackgroundResponseJobFindUnique,
+      update: mockPrismaBackgroundResponseJobUpdate,
     },
   },
 }));
@@ -532,6 +538,63 @@ describe("responses services", () => {
     await handleResponseRetrieve("resp_abc", "key-1", { include: ["file_search_call.results"] });
 
     expect(getResponse).toHaveBeenCalledWith("resp_abc", { include: ["file_search_call.results"] });
+  });
+
+  it("returns the local row response when a BackgroundResponseJob exists", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+      id: "resp_bg_abc",
+      apiKeyId: "key-1",
+      provider: "openai",
+      model: "openai:gpt-5",
+      status: "completed",
+      response: { id: "resp_bg_abc", status: "completed", model: "gpt-5" },
+    });
+
+    const result = await handleResponseRetrieve("resp_bg_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_bg_abc", status: "completed" });
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses/:id",
+        provider: "openai",
+        model: "openai:gpt-5",
+        statusCode: 200,
+      }),
+    );
+  });
+
+  it("returns a synthesized pending envelope when a BackgroundResponseJob has no response yet", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+      id: "resp_bg_xyz",
+      apiKeyId: "key-1",
+      provider: "openai",
+      model: "openai:gpt-5",
+      status: "queued",
+      response: null,
+    });
+
+    const result = await handleResponseRetrieve("resp_bg_xyz", "key-1");
+
+    expect(result).toMatchObject({
+      id: "resp_bg_xyz",
+      status: "queued",
+      _pending: true,
+    });
+  });
+
+  it("falls through to the OpenAI provider when no local row exists", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
+    const getResponse = vi.fn().mockResolvedValueOnce({ id: "resp_abc" });
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      getResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    const result = await handleResponseRetrieve("resp_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_abc" });
+    expect(getResponse).toHaveBeenCalledWith("resp_abc", undefined);
   });
 
   it("deletes a response via the openai provider and logs a 200 entry", async () => {

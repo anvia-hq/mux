@@ -290,6 +290,33 @@ export async function handleResponseRetrieve(
   apiKeyId: string,
   query?: Record<string, string | string[]>,
 ): Promise<ResponseObject> {
+  const localRow = await prisma.backgroundResponseJob.findUnique({
+    where: { id },
+  });
+
+  if (localRow) {
+    if (localRow.response !== null && localRow.response !== undefined) {
+      const startTime = Date.now();
+      const latencyMs = Date.now() - startTime;
+      await logRequest({
+        apiKeyId,
+        provider: localRow.provider,
+        model: localRow.model,
+        endpoint: "/v1/responses/:id",
+        latencyMs,
+        statusCode: 200,
+      });
+      return localRow.response as ResponseObject;
+    }
+
+    return {
+      id: localRow.id,
+      object: "response",
+      status: localRow.status,
+      _pending: true,
+    } as ResponseObject;
+  }
+
   const provider = getProviderByName("openai");
   if (!provider) {
     throw new OpenAIResponseProviderNotConfiguredError();

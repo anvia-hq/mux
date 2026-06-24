@@ -15,7 +15,7 @@ import {
   responseCreateRequestSchema,
 } from "../../providers/responses-schema";
 import { parseResponseStreamBlock, SseBlockParser } from "../../providers/responses-stream";
-import type { ResponseCreateRequest, ResponseUsage } from "../../providers/types";
+import type { ResponseCreateRequest, ResponseObject, ResponseUsage } from "../../providers/types";
 import {
   addApiKeySpendUsd,
   ApiKeySpendLedgerUnavailableError,
@@ -59,6 +59,10 @@ function collectQueryParams(c: Context): Record<string, string | string[]> | und
     result[key] = values.length > 1 ? values : (values[0] ?? "");
   }
   return Object.keys(result).length === 0 ? undefined : result;
+}
+
+function isPendingResponse(response: ResponseObject): boolean {
+  return Boolean((response as ResponseObject & { _pending?: boolean })._pending);
 }
 
 responsesRouter.post(
@@ -337,6 +341,11 @@ responsesRouter.get("/:id", async (c) => {
 
   try {
     const response = await handleResponseRetrieve(id, apiKeyId, query);
+    if (isPendingResponse(response)) {
+      c.header("Location", `/v1/responses/${id}`);
+      const { _pending, ...body } = response as ResponseObject & { _pending?: boolean };
+      return c.json(body, 202);
+    }
     return c.json(response);
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
