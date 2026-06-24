@@ -297,6 +297,41 @@ console.log(result.status);`,
   },
 ];
 
+const responseCompactSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl __MUX_GATEWAY_BASE_URL__/responses/compact \\
+  -H "Authorization: Bearer $MUX_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+        "model": "openai:gpt-5.1-codex-max",
+        "input": [
+          { "role": "user", "content": "Create a simple landing page for a dog petting cafe." },
+          { "role": "assistant", "content": "Below is a single file, ready-to-use landing page:..." }
+        ]
+      }'`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const compacted = await client.responses.compact({
+  model: "openai:gpt-5.1-codex-max",
+  input: longInputItems,
+});
+
+const nextResponse = await client.responses.create({
+  model: "openai:gpt-5.1-codex-max",
+  input: [
+    ...compacted.output,
+    { role: "user", content: getNextUserInput() },
+  ],
+});`,
+  },
+];
+
 const responseStreamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -657,6 +692,17 @@ export function DocsPage() {
               execution and let the gateway cancel responses it owns.
             </p>
             <CodeTabs samples={responseCancelSamples} />
+            <p>
+              Compact a long input window with{" "}
+              <code>POST /v1/responses/compact</code>. The endpoint takes <code>model</code>{" "}
+              (required) and <code>input</code> (optional, string or array of input items) and
+              returns a compacted window with a token-usage block. The gateway tries the resolved
+              provider (and falls through to Azure Cognitive Services on a 404) and bills the
+              call against the API key the same way <code>POST /v1/responses</code> does. Pass
+              the returned <code>output</code> array into your next <code>POST /v1/responses</code>{" "}
+              call verbatim; do not prune it.
+            </p>
+            <CodeTabs samples={responseCompactSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">
