@@ -660,12 +660,21 @@ export function getModelPricing(modelId: string): Model | null {
 /**
  * Computes the estimated cost (in USD) of a request given prompt and
  * completion token counts and the model's per-1M-token pricing.
+ *
+ * The optional `cachedTokens` argument is accepted so callers can
+ * thread `usage.input_tokens_details.cached_tokens` through, but is
+ * intentionally ignored today: Mux charges full input price for all
+ * input tokens regardless of whether upstream served them from the
+ * prompt cache. A future phase may apply a discount; the parameter is
+ * already plumbed through so call sites will not need to change.
  */
 export function estimateCost(
   modelId: string,
   promptTokens: number | undefined,
   completionTokens: number | undefined,
+  cachedTokens?: number,
 ): number | undefined {
+  void cachedTokens;
   const pricing = getModelPricing(modelId);
   if (!pricing) return undefined;
   const p = promptTokens ?? 0;

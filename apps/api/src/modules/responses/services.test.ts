@@ -162,6 +162,12 @@ describe("responses services", () => {
       }),
     );
     expect(createResponse.mock.calls[0]?.[0]).not.toHaveProperty("unknown");
+    expect(mockEstimateCost).toHaveBeenCalledWith(
+      "openai:gpt-4o",
+      10,
+      20,
+      undefined,
+    );
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: "/v1/responses",
@@ -172,6 +178,34 @@ describe("responses services", () => {
         estimatedCost: 0.01,
         statusCode: 200,
       }),
+    );
+  });
+
+  it("forwards cached_tokens to estimateCost when upstream reports them", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-cached",
+      model: "gpt-5",
+      usage: {
+        input_tokens: 100,
+        output_tokens: 50,
+        total_tokens: 150,
+        input_tokens_details: { cached_tokens: 80 },
+      },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-5",
+      target: createResolvedModel("openai", "gpt-5", createResponse),
+    });
+    mockEstimateCost.mockReturnValueOnce(0.000625);
+
+    await handleResponseCreate(createRequest({ model: "openai:gpt-5" }), "key-1");
+
+    expect(mockEstimateCost).toHaveBeenCalledWith(
+      "openai:gpt-5",
+      100,
+      50,
+      80,
     );
   });
 

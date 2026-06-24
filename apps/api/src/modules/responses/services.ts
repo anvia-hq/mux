@@ -99,10 +99,12 @@ export async function handleResponseCreate(
     );
     const latencyMs = Date.now() - startTime;
     const usage = response.usage;
+    const cachedTokens = readCachedTokens(usage);
     const estimatedCost = estimateCost(
       target.publicModelId,
       usage?.input_tokens,
       usage?.output_tokens,
+      cachedTokens,
     );
 
     if (options.requireBillableUsage && estimatedCost === undefined) {
@@ -565,6 +567,14 @@ function buildOpenAIResponseCreateRequest(
   return body as ResponseCreateRequest;
 }
 
+function readCachedTokens(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const details = (usage as { input_tokens_details?: unknown }).input_tokens_details;
+  if (!details || typeof details !== "object") return undefined;
+  const cached = (details as { cached_tokens?: unknown }).cached_tokens;
+  return typeof cached === "number" && Number.isFinite(cached) ? cached : undefined;
+}
+
 function withPublicModelId(response: ResponseObject, publicModelId: string): ResponseObject {
   if (!Object.hasOwn(response, "model")) return response;
   return { ...response, model: publicModelId };
@@ -762,10 +772,12 @@ export async function handleResponseCompact(
       );
       const latencyMs = Date.now() - startTime;
       const usage = response.usage;
+      const cachedTokens = readCachedTokens(usage);
       const estimatedCost = estimateCost(
         resolved.requestedModelId,
         usage?.input_tokens,
         usage?.output_tokens,
+        cachedTokens,
       );
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
