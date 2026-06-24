@@ -311,6 +311,63 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
   }
 }
 
+export async function handleResponseInputItems(
+  id: string,
+  apiKeyId: string,
+  query?: Record<string, string | string[]>,
+): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const openai = getProviderByName("openai");
+  const azure = getProviderByName("azure-cognitive-services");
+  const candidates = [openai, azure].filter(
+    (provider): provider is NonNullable<typeof provider> =>
+      Boolean(provider?.listResponseInputItems),
+  );
+
+  if (candidates.length === 0) {
+    throw new OpenAIResponseProviderNotConfiguredError();
+  }
+
+  const startTime = Date.now();
+  let lastError: unknown = null;
+
+  for (const provider of candidates) {
+    try {
+      const response = await provider.listResponseInputItems!(id, query);
+      const latencyMs = Date.now() - startTime;
+
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id/input_items",
+        latencyMs,
+        statusCode: 200,
+      });
+
+      return { provider: provider.name, model: provider.name, response };
+    } catch (error) {
+      lastError = error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  // Every configured provider returned 404.
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: "unknown",
+    endpoint: "/v1/responses/:id/input_items",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(id);
+}
+
 async function resolveOpenAIResponseTarget(
   request: ResponseCreateRequest,
 ): Promise<{ requestedModelId: string; target: ResolvedProviderModel }> {

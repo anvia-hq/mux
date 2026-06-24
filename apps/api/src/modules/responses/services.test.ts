@@ -59,6 +59,7 @@ import {
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
+  handleResponseInputItems,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
@@ -800,6 +801,166 @@ describe("responses services", () => {
       await expect(
         handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1"),
       ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+    });
+  });
+
+  describe("handleResponseInputItems", () => {
+    function makeProvider(
+      name: string,
+      listResponseInputItems: ReturnType<typeof vi.fn>,
+    ) {
+      return {
+        name,
+        chatCompletion: vi.fn(),
+        chatCompletionStream: vi.fn(),
+        listResponseInputItems,
+        listModels: vi.fn().mockReturnValue([]),
+        capabilities: openAICompatibleCapabilities,
+      };
+    }
+
+    it("returns the OpenAI list response and logs a 200 entry", async () => {
+      const listResponseInputItems = vi.fn().mockResolvedValueOnce({
+        object: "list",
+        data: [{ id: "msg_abc", type: "message", role: "user" }],
+        first_id: "msg_abc",
+        last_id: "msg_abc",
+        has_more: false,
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", listResponseInputItems) : null,
+      );
+
+      const result = await handleResponseInputItems("resp_abc", "key-1", {
+        include: ["file_search_call.results"],
+        limit: "10",
+      });
+
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai",
+        response: { object: "list", has_more: false },
+      });
+      expect(listResponseInputItems).toHaveBeenCalledWith("resp_abc", {
+        include: ["file_search_call.results"],
+        limit: "10",
+      });
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/input_items",
+          provider: "openai",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("falls through to Azure when OpenAI returns 404", async () => {
+      const openaiList = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "not found"));
+      const azureList = vi.fn().mockResolvedValueOnce({
+        object: "list",
+        data: [],
+        first_id: "",
+        last_id: "",
+        has_more: false,
+      });
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiList);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureList);
+        return null;
+      });
+
+      const result = await handleResponseInputItems("resp_abc", "key-1");
+      expect(result.provider).toBe("azure-cognitive-services");
+      expect(azureList).toHaveBeenCalledWith("resp_abc", undefined);
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/input_items",
+          provider: "azure-cognitive-services",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("throws ResponseNotFoundError when both providers return 404", async () => {
+      const openaiList = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      const azureList = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiList);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureList);
+        return null;
+      });
+
+      await expect(
+        handleResponseInputItems("resp_x", "key-1"),
+      ).rejects.toBeInstanceOf(ResponseNotFoundError);
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/input_items",
+          statusCode: 404,
+        }),
+      );
+    });
+
+    it("does not retry Azure on a non-404 upstream error", async () => {
+      const openaiList = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const azureList = vi.fn();
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiList);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureList);
+        return null;
+      });
+
+      await expect(
+        handleResponseInputItems("resp_x", "key-1"),
+      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+      expect(azureList).not.toHaveBeenCalled();
+    });
+
+    it("throws OpenAIResponseProviderNotConfiguredError when no adapter implements the method", async () => {
+      mockGetProviderByName.mockReturnValue(null);
+
+      await expect(
+        handleResponseInputItems("resp_x", "key-1"),
+      ).rejects.toBeInstanceOf(OpenAIResponseProviderNotConfiguredError);
+    });
+
+    it("skips providers that do not implement listResponseInputItems", async () => {
+      const azureList = vi.fn().mockResolvedValueOnce({
+        object: "list",
+        data: [],
+        first_id: "",
+        last_id: "",
+        has_more: false,
+      });
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") {
+          return {
+            name: "openai",
+            chatCompletion: vi.fn(),
+            chatCompletionStream: vi.fn(),
+            listModels: vi.fn().mockReturnValue([]),
+            capabilities: openAICompatibleCapabilities,
+          };
+        }
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureList);
+        return null;
+      });
+
+      const result = await handleResponseInputItems("resp_abc", "key-1");
+      expect(result.provider).toBe("azure-cognitive-services");
+      expect(azureList).toHaveBeenCalledWith("resp_abc", undefined);
     });
   });
 });
