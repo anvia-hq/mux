@@ -9,17 +9,40 @@ import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/**
+ * Pinned api-version for Azure Responses on Azure OpenAI / Microsoft
+ * Foundry. The OpenAI Responses spec on Azure requires this query
+ * parameter. Overridable per adapter if Azure ships a newer preview
+ * the gateway wants to opt into.
+ */
+export const AZURE_OPENAI_RESPONSES_API_VERSION = "2025-04-01-preview";
+
 export class ModelsDevProviderAdapter implements ProviderAdapter {
   name: string;
   capabilities = openAICompatibleCapabilities;
   private apiKey: string;
   private chatCompletionsUrl?: string;
+  /**
+   * Base URL the adapter posts to for Responses API calls, if the
+   * upstream exposes the OpenAI Responses surface. Set via the
+   * `responsesEndpoint` constructor argument. Used by adapters such
+   * as `AzureCognitiveServicesAdapter` and `AzureAdapter` that need
+   * to call a vendor-specific base for Responses.
+   */
+  protected responsesEndpoint?: string;
   private models: Model[];
 
-  constructor(input: { name: string; apiKey: string; apiBase?: string; models: Model[] }) {
+  constructor(input: {
+    name: string;
+    apiKey: string;
+    apiBase?: string;
+    responsesEndpoint?: string;
+    models: Model[];
+  }) {
     this.name = input.name;
     this.apiKey = input.apiKey;
     this.chatCompletionsUrl = input.apiBase ? this.toChatCompletionsUrl(input.apiBase) : undefined;
+    this.responsesEndpoint = input.responsesEndpoint;
     this.models = input.models;
   }
 
