@@ -148,6 +148,12 @@ export type ResponseCreateRequest = {
   [key: string]: unknown;
 };
 
+export type ResponseCompactRequest = {
+  model: string;
+  input?: unknown;
+  [key: string]: unknown;
+};
+
 export type ResponseUsage = {
   input_tokens?: number;
   output_tokens?: number;
@@ -249,5 +255,6 @@ export interface ProviderAdapter {
   getResponse?(id: string, query?: Record<string, string | string[]>): Promise<ResponseObject>;
   deleteResponse?(id: string): Promise<ResponseObject>;
   cancelResponse?(id: string): Promise<ResponseObject>;
+  compactResponse?(request: ResponseCompactRequest): Promise<ResponseObject>;
   listModels(): Model[];
 }

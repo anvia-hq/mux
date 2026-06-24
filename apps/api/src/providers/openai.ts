@@ -4,6 +4,7 @@ import type {
   ChatCompletionChunk,
   ProviderAdapter,
   Model,
+  ResponseCompactRequest,
   ResponseCreateRequest,
   ResponseObject,
 } from "./types";
@@ -1002,6 +1003,25 @@ export class OpenAIAdapter implements ProviderAdapter {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       },
     );
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new UpstreamResponsesApiError(response.status, error);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
+    const response = await fetch(`${OPENAI_RESPONSES_URL}/compact`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       const error = await response.text();

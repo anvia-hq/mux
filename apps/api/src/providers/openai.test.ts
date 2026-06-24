@@ -368,4 +368,59 @@ describe("OpenAIAdapter", () => {
       UpstreamResponsesApiError,
     );
   });
+
+  it("compacts a response and returns the upstream body", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_001",
+        object: "response.compaction",
+        output: [
+          { id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." },
+        ],
+        usage: { input_tokens: 139, output_tokens: 438, total_tokens: 577 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const result = await adapter.compactResponse({
+      model: "gpt-5.1-codex-max",
+      input: [{ role: "user", content: "hello" }],
+    });
+
+    expect(result).toMatchObject({
+      id: "resp_001",
+      object: "response.compaction",
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/compact",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+  });
+
+  it("serializes the compact body as JSON", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_001", object: "response.compaction" }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.compactResponse({ model: "gpt-5", input: "hello" });
+
+    const init = mockFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ model: "gpt-5", input: "hello" });
+  });
+
+  it("propagates upstream errors from compactResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await expect(adapter.compactResponse({ model: "gpt-5" })).rejects.toBeInstanceOf(
+      UpstreamResponsesApiError,
+    );
+  });
 });
