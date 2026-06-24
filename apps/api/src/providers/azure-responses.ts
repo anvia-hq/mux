@@ -82,6 +82,14 @@ export class AzureResponsesClient {
     return `${normalized}/openai/v1/responses/compact?api-version=${encodeURIComponent(this.apiVersion)}`;
   }
 
+  private getResponsesInputTokensUrl(): string {
+    if (!this.endpoint) {
+      throw new AzureResponsesEndpointNotConfiguredError(this.providerName);
+    }
+    const normalized = this.endpoint.replace(/\/$/, "");
+    return `${normalized}/openai/v1/responses/input_tokens?api-version=${encodeURIComponent(this.apiVersion)}`;
+  }
+
   private buildResponsesQueryString(query?: AzureResponsesQuery): string {
     const params = new URLSearchParams();
     if (query) {
@@ -204,6 +212,22 @@ export class AzureResponsesClient {
 
   async compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesCompactUrl(), {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async countResponseInputTokens(request: ResponseCreateRequest): Promise<ResponseObject> {
+    const response = await fetch(this.getResponsesInputTokensUrl(), {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(request),

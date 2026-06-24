@@ -260,6 +260,46 @@ describe("AzureResponsesClient", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("counts input tokens for a request without creating a response", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ object: "response.input_tokens", input_tokens: 17 }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    const result = await client.countResponseInputTokens({
+      model: "gpt-4o",
+      input: "hi",
+    });
+
+    expect(result).toMatchObject({ object: "response.input_tokens", input_tokens: 17 });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `https://example.openai.azure.com/openai/v1/responses/input_tokens?api-version=${encodeURIComponent(AZURE_OPENAI_RESPONSES_API_VERSION)}`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
+      }),
+    );
+    const init = mockFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ model: "gpt-4o", input: "hi" });
+  });
+
+  it("propagates upstream errors from countResponseInputTokens", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("nope", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    await expect(
+      client.countResponseInputTokens({ model: "gpt-4o", input: "hi" }),
+    ).rejects.toThrow("azure-cognitive-services Responses API error: 404 - nope");
+  });
+
+  it("throws AzureResponsesEndpointNotConfiguredError on input_tokens when endpoint is missing", async () => {
+    const client = makeClient(undefined);
+    await expect(
+      client.countResponseInputTokens({ model: "gpt-4o", input: "hi" }),
+    ).rejects.toBeInstanceOf(AzureResponsesEndpointNotConfiguredError);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("lists input items for a response", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({

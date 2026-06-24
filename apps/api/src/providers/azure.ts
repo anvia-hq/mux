@@ -1657,6 +1657,10 @@ export class AzureAdapter extends ModelsDevProviderAdapter {
     return this.responses.compactResponse(request);
   }
 
+  countResponseInputTokens(request: ResponseCreateRequest): Promise<ResponseObject> {
+    return this.responses.countResponseInputTokens(request);
+  }
+
   listResponseInputItems(
     id: string,
     query?: Record<string, string | string[]>,
