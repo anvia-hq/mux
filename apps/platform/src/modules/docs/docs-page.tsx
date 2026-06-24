@@ -332,6 +332,30 @@ const nextResponse = await client.responses.create({
   },
 ];
 
+const responseInputItemsSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl "__MUX_GATEWAY_BASE_URL__/responses/resp_abc123/input_items?include[]=file_search_call.results&limit=20" \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const page = await client.responses.inputItems.list("resp_abc123", {
+  include: ["file_search_call.results"],
+  limit: 20,
+  order: "desc",
+});
+
+for (const item of page.data) {
+  console.log(item.id, item.type);
+}`,
+  },
+];
+
 const responseStreamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -703,6 +727,16 @@ export function DocsPage() {
               call verbatim; do not prune it.
             </p>
             <CodeTabs samples={responseCompactSamples} />
+            <p>
+              List the input items that produced a response with{" "}
+              <code>GET /v1/responses/{`{id}`}/input_items</code>. The gateway forwards all
+              query params (<code>after</code>, <code>include[]</code>, <code>limit</code>,
+              <code>order</code>) verbatim to the upstream provider, tries OpenAI first, and
+              falls through to Azure Cognitive Services on a 404. Upstream errors are returned
+              in OpenAI's <code>{`{ error: { message, type, param, code } }`}</code> shape with
+              the original status code.
+            </p>
+            <CodeTabs samples={responseInputItemsSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">
