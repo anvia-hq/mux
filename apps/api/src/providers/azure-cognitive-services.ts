@@ -1461,4 +1461,11 @@ export class AzureCognitiveServicesAdapter extends ModelsDevProviderAdapter {
   compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
     return this.responses.compactResponse(request);
   }
+
+  listResponseInputItems(
+    id: string,
+    query?: Record<string, string | string[]>,
+  ): Promise<ResponseObject> {
+    return this.responses.listResponseInputItems(id, query);
+  }
 }

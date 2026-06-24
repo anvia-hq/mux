@@ -260,6 +260,89 @@ describe("AzureResponsesClient", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("lists input items for a response", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [
+          {
+            id: "msg_abc",
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Tell me a story." }],
+          },
+        ],
+        first_id: "msg_abc",
+        last_id: "msg_abc",
+        has_more: false,
+      }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    const result = await client.listResponseInputItems("resp_abc");
+
+    expect(result).toMatchObject({
+      object: "list",
+      data: [{ id: "msg_abc", role: "user" }],
+      has_more: false,
+    });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `https://example.openai.azure.com/openai/v1/responses/resp_abc/input_items?api-version=${encodeURIComponent(AZURE_OPENAI_RESPONSES_API_VERSION)}`,
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
+      }),
+    );
+  });
+
+  it("encodes the response id in the input_items URL", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ object: "list", data: [] }));
+    const client = makeClient("https://example.openai.azure.com");
+    await client.listResponseInputItems("resp/abc");
+
+    const url = mockFetch.mock.calls[0]?.[0] as string;
+    expect(url).toContain("/openai/v1/responses/resp%2Fabc/input_items");
+    expect(url).toContain(`api-version=${encodeURIComponent(AZURE_OPENAI_RESPONSES_API_VERSION)}`);
+    expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
+  });
+
+  it("forwards query params verbatim to input_items", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ object: "list", data: [] }));
+    const client = makeClient("https://example.openai.azure.com");
+    await client.listResponseInputItems("resp_abc", {
+      after: "msg_xyz",
+      include: ["file_search_call.results", "message.input_image.image_url"],
+      limit: "20",
+      order: "desc",
+    });
+
+    const url = mockFetch.mock.calls[0]?.[0] as string;
+    expect(url).toContain("/openai/v1/responses/resp_abc/input_items");
+    expect(url).toContain("after=msg_xyz");
+    expect(url).toContain("include=file_search_call.results");
+    expect(url).toContain("include=message.input_image.image_url");
+    expect(url).toContain("limit=20");
+    expect(url).toContain("order=desc");
+    expect(url).toContain(`api-version=${encodeURIComponent(AZURE_OPENAI_RESPONSES_API_VERSION)}`);
+  });
+
+  it("propagates upstream errors from listResponseInputItems", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("nope", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    await expect(client.listResponseInputItems("resp_x")).rejects.toThrow(
+      "azure-cognitive-services Responses API error: 404 - nope",
+    );
+  });
+
+  it("throws AzureResponsesEndpointNotConfiguredError on input_items when endpoint is missing", async () => {
+    const client = makeClient(undefined);
+    await expect(client.listResponseInputItems("resp_x")).rejects.toBeInstanceOf(
+      AzureResponsesEndpointNotConfiguredError,
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("trims trailing slashes from the endpoint", async () => {
     mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_1" }));
     const client = makeClient("https://example.openai.azure.com/");

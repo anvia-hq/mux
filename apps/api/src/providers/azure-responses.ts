@@ -7,6 +7,8 @@ import type {
 import { openAICompatibleCapabilities } from "./chat-compat";
 import { AZURE_OPENAI_RESPONSES_API_VERSION } from "./models-dev-provider-adapter";
 
+export type AzureResponsesQuery = Record<string, string | string[]>;
+
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export const azureCapabilities: ProviderCapabilities = {
@@ -78,6 +80,31 @@ export class AzureResponsesClient {
     }
     const normalized = this.endpoint.replace(/\/$/, "");
     return `${normalized}/openai/v1/responses/compact?api-version=${encodeURIComponent(this.apiVersion)}`;
+  }
+
+  private buildResponsesQueryString(query?: AzureResponsesQuery): string {
+    const params = new URLSearchParams();
+    if (query) {
+      for (const [key, value] of Object.entries(query)) {
+        if (Array.isArray(value)) {
+          for (const v of value) params.append(key, v);
+        } else if (value !== undefined) {
+          params.append(key, value);
+        }
+      }
+    }
+    return params.toString();
+  }
+
+  private getResponsesInputItemsUrl(id: string, query?: AzureResponsesQuery): string {
+    if (!this.endpoint) {
+      throw new AzureResponsesEndpointNotConfiguredError(this.providerName);
+    }
+    const normalized = this.endpoint.replace(/\/$/, "");
+    const qs = this.buildResponsesQueryString(query);
+    const base = `${normalized}/openai/v1/responses/${encodeURIComponent(id)}/input_items`;
+    const tail = `?api-version=${encodeURIComponent(this.apiVersion)}`;
+    return qs ? `${base}${tail}&${qs}` : `${base}${tail}`;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -180,6 +207,21 @@ export class AzureResponsesClient {
       method: "POST",
       headers: this.buildHeaders(),
       body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async listResponseInputItems(id: string, query?: AzureResponsesQuery): Promise<ResponseObject> {
+    const response = await fetch(this.getResponsesInputItemsUrl(id, query), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${this.apiKey}` },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
