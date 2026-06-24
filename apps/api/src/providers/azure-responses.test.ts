@@ -206,6 +206,60 @@ describe("AzureResponsesClient", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  it("compacts a response and returns the upstream body", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_001",
+        object: "response.compaction",
+        output: [
+          { id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    const result = await client.compactResponse({ model: "gpt-5", input: "hi" });
+
+    expect(result).toMatchObject({ id: "resp_001", object: "response.compaction" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      `https://example.openai.azure.com/openai/v1/responses/compact?api-version=${encodeURIComponent(AZURE_OPENAI_RESPONSES_API_VERSION)}`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
+      }),
+    );
+  });
+
+  it("serializes the compact body as JSON", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_001" }));
+    const client = makeClient("https://example.openai.azure.com");
+    await client.compactResponse({ model: "gpt-5", input: [{ role: "user", content: "hi" }] });
+
+    const init = mockFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({
+      model: "gpt-5",
+      input: [{ role: "user", content: "hi" }],
+    });
+  });
+
+  it("propagates upstream errors from compactResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("nope", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+    const client = makeClient("https://example.openai.azure.com");
+    await expect(client.compactResponse({ model: "gpt-5" })).rejects.toThrow(
+      "azure-cognitive-services Responses API error: 404 - nope",
+    );
+  });
+
+  it("throws AzureResponsesEndpointNotConfiguredError on compact when endpoint is missing", async () => {
+    const client = makeClient(undefined);
+    await expect(client.compactResponse({ model: "gpt-5" })).rejects.toBeInstanceOf(
+      AzureResponsesEndpointNotConfiguredError,
+    );
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("trims trailing slashes from the endpoint", async () => {
     mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_1" }));
     const client = makeClient("https://example.openai.azure.com/");

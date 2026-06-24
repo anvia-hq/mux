@@ -1,5 +1,10 @@
 import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
-import type { Model, ResponseCreateRequest, ResponseObject } from "./types";
+import type {
+  Model,
+  ResponseCompactRequest,
+  ResponseCreateRequest,
+  ResponseObject,
+} from "./types";
 import { AzureResponsesClient, azureCapabilities } from "./azure-responses";
 
 const MODELS: Model[] = [
@@ -1646,5 +1651,9 @@ export class AzureAdapter extends ModelsDevProviderAdapter {
 
   cancelResponse(id: string): Promise<ResponseObject> {
     return this.responses.cancelResponse(id);
+  }
+
+  compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
+    return this.responses.compactResponse(request);
   }
 }

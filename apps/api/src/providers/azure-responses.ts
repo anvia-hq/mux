@@ -1,4 +1,9 @@
-import type { ProviderCapabilities, ResponseCreateRequest, ResponseObject } from "./types";
+import type {
+  ProviderCapabilities,
+  ResponseCompactRequest,
+  ResponseCreateRequest,
+  ResponseObject,
+} from "./types";
 import { openAICompatibleCapabilities } from "./chat-compat";
 import { AZURE_OPENAI_RESPONSES_API_VERSION } from "./models-dev-provider-adapter";
 
@@ -65,6 +70,14 @@ export class AzureResponsesClient {
     }
     const normalized = this.endpoint.replace(/\/$/, "");
     return `${normalized}/openai/v1/responses/${encodeURIComponent(id)}/cancel?api-version=${encodeURIComponent(this.apiVersion)}`;
+  }
+
+  private getResponsesCompactUrl(): string {
+    if (!this.endpoint) {
+      throw new AzureResponsesEndpointNotConfiguredError(this.providerName);
+    }
+    const normalized = this.endpoint.replace(/\/$/, "");
+    return `${normalized}/openai/v1/responses/compact?api-version=${encodeURIComponent(this.apiVersion)}`;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -151,6 +164,22 @@ export class AzureResponsesClient {
     const response = await fetch(this.getResponsesCancelUrl(id), {
       method: "POST",
       headers: this.buildHeaders(),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
+    const response = await fetch(this.getResponsesCompactUrl(), {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
