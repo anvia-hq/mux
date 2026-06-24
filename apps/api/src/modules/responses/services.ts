@@ -1,4 +1,5 @@
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
+import { UpstreamResponsesApiError } from "../../providers/openai";
 import {
   estimateCost,
   getModelPricing,
@@ -199,6 +200,13 @@ export class OpenAIResponseProviderNotConfiguredError extends Error {
   }
 }
 
+export class ResponseNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Response not found: ${id}`);
+    this.name = "ResponseNotFoundError";
+  }
+}
+
 export async function handleResponseRetrieve(
   id: string,
   apiKeyId: string,
@@ -358,4 +366,60 @@ async function prefetchFirstResponseStreamChunk(
       }
     },
   };
+}
+
+export async function handleResponseCancel(
+  id: string,
+  apiKeyId: string,
+): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const openai = getProviderByName("openai");
+  const azure = getProviderByName("azure-cognitive-services");
+  const candidates = [openai, azure].filter(
+    (provider): provider is NonNullable<typeof provider> =>
+      Boolean(provider?.cancelResponse),
+  );
+
+  if (candidates.length === 0) {
+    throw new OpenAIResponseProviderNotConfiguredError();
+  }
+
+  const startTime = Date.now();
+  let lastError: unknown = null;
+
+  for (const provider of candidates) {
+    try {
+      const response = await provider.cancelResponse!(id);
+      const latencyMs = Date.now() - startTime;
+
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id/cancel",
+        latencyMs,
+        statusCode: 200,
+      });
+
+      return { provider: provider.name, model: provider.name, response };
+    } catch (error) {
+      lastError = error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  // Every configured provider returned 404.
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: "unknown",
+    endpoint: "/v1/responses/:id/cancel",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(id);
 }

@@ -54,13 +54,16 @@ vi.mock("../../providers/registry", () => ({
 
 import {
   ApiKeyUnbillableResponseUsageError,
+  handleResponseCancel,
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
+  ResponseNotFoundError,
   UnsupportedResponseFeatureError,
 } from "./services";
+import { UpstreamResponsesApiError } from "../../providers/openai";
 import { openAICompatibleCapabilities } from "../../providers/chat-compat";
 import type { ResponseCreateRequest } from "../../providers/types";
 
@@ -456,5 +459,123 @@ describe("responses services", () => {
         errorMessage: expect.stringContaining("404"),
       }),
     );
+  });
+
+  describe("handleResponseCancel", () => {
+    function makeProvider(name: string, cancelResponse: ReturnType<typeof vi.fn>) {
+      return {
+        name,
+        chatCompletion: vi.fn(),
+        chatCompletionStream: vi.fn(),
+        cancelResponse,
+        listModels: vi.fn().mockReturnValue([]),
+        capabilities: openAICompatibleCapabilities,
+      };
+    }
+
+    it("cancels via OpenAI when configured and logs a 200 entry", async () => {
+      const cancelResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_abc",
+        object: "response",
+        status: "cancelled",
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", cancelResponse) : null,
+      );
+
+      const result = await handleResponseCancel("resp_abc", "key-1");
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai",
+        response: { id: "resp_abc", status: "cancelled" },
+      });
+      expect(cancelResponse).toHaveBeenCalledWith("resp_abc");
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/cancel",
+          provider: "openai",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("falls through to Azure when OpenAI returns 404", async () => {
+      const openaiCancel = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "not found"));
+      const azureCancel = vi.fn().mockResolvedValueOnce({
+        id: "resp_abc",
+        object: "response",
+        status: "cancelled",
+      });
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCancel);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCancel);
+        return null;
+      });
+
+      const result = await handleResponseCancel("resp_abc", "key-1");
+      expect(result.provider).toBe("azure-cognitive-services");
+      expect(azureCancel).toHaveBeenCalledWith("resp_abc");
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/cancel",
+          provider: "azure-cognitive-services",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("throws ResponseNotFoundError when both providers return 404", async () => {
+      const openaiCancel = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      const azureCancel = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCancel);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCancel);
+        return null;
+      });
+
+      await expect(handleResponseCancel("resp_x", "key-1")).rejects.toBeInstanceOf(
+        ResponseNotFoundError,
+      );
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/cancel",
+          statusCode: 404,
+        }),
+      );
+    });
+
+    it("does not retry Azure when OpenAI returns a non-404 upstream error", async () => {
+      const openaiCancel = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const azureCancel = vi.fn();
+      mockGetProviderByName.mockImplementation((name: string) => {
+        if (name === "openai") return makeProvider("openai", openaiCancel);
+        if (name === "azure-cognitive-services")
+          return makeProvider("azure-cognitive-services", azureCancel);
+        return null;
+      });
+
+      await expect(handleResponseCancel("resp_x", "key-1")).rejects.toBeInstanceOf(
+        UpstreamResponsesApiError,
+      );
+      expect(azureCancel).not.toHaveBeenCalled();
+    });
+
+    it("throws OpenAIResponseProviderNotConfiguredError when no adapter implements cancel", async () => {
+      mockGetProviderByName.mockReturnValue(null);
+
+      await expect(handleResponseCancel("resp_x", "key-1")).rejects.toBeInstanceOf(
+        OpenAIResponseProviderNotConfiguredError,
+      );
+    });
   });
 });
