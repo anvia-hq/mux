@@ -280,6 +280,23 @@ console.log(result.deleted);`,
   },
 ];
 
+const responseCancelSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl -X POST __MUX_GATEWAY_BASE_URL__/responses/resp_abc123/cancel \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const result = await client.responses.cancel("resp_abc123");
+console.log(result.status);`,
+  },
+];
+
 const responseStreamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -629,6 +646,17 @@ export function DocsPage() {
               on success.
             </p>
             <CodeTabs samples={responseDeleteSamples} />
+            <p>
+              Cancel an in-progress response with{" "}
+              <code>POST /v1/responses/{`{id}`}/cancel</code>. The gateway tries the OpenAI
+              provider first and falls through to Azure Cognitive Services on a 404. The upstream
+              response body is returned verbatim, including its <code>status</code> field
+              (<code>cancelled</code> on success). Upstream errors are returned in OpenAI's{" "}
+              <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
+              status code. Today this is a pass-through; Phase 7 will add Mux-side background
+              execution and let the gateway cancel responses it owns.
+            </p>
+            <CodeTabs samples={responseCancelSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">
