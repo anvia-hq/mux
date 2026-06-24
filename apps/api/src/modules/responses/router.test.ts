@@ -9,6 +9,7 @@ const {
   mockHandleResponseCreate,
   mockHandleResponseCreateStream,
   mockHandleResponseDelete,
+  mockHandleResponseInputItems,
   mockHandleResponseRetrieve,
   mockLogStreamFinal,
   mockLogStreamStart,
@@ -22,6 +23,7 @@ const {
   mockHandleResponseCreate: vi.fn(),
   mockHandleResponseCreateStream: vi.fn(),
   mockHandleResponseDelete: vi.fn(),
+  mockHandleResponseInputItems: vi.fn(),
   mockHandleResponseRetrieve: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
@@ -69,6 +71,7 @@ vi.mock("./services", () => {
     handleResponseCreate: mockHandleResponseCreate,
     handleResponseCreateStream: mockHandleResponseCreateStream,
     handleResponseDelete: mockHandleResponseDelete,
+    handleResponseInputItems: mockHandleResponseInputItems,
     handleResponseRetrieve: mockHandleResponseRetrieve,
   };
 });
@@ -618,6 +621,115 @@ describe("responses router", () => {
       "status",
       500,
     );
+  });
+
+  it("GET /v1/responses/:id/input_items returns 200 with the upstream body", async () => {
+    mockHandleResponseInputItems.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai",
+      response: {
+        object: "list",
+        data: [{ id: "msg_abc", type: "message", role: "user" }],
+        first_id: "msg_abc",
+        last_id: "msg_abc",
+        has_more: false,
+      },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc/input_items", { method: "GET" });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseInputItems).toHaveBeenCalledWith("resp_abc", "key-1", undefined);
+    await expect(res.json()).resolves.toMatchObject({
+      object: "list",
+      has_more: false,
+    });
+  });
+
+  it("GET /v1/responses/:id/input_items forwards query params to the service", async () => {
+    mockHandleResponseInputItems.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai",
+      response: { object: "list", data: [], has_more: false },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const url =
+      "/v1/responses/resp_abc/input_items" +
+      "?after=msg_xyz&include=file_search_call.results" +
+      "&include=message.input_image.image_url&limit=20&order=desc";
+    const res = await app.request(url, { method: "GET" });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseInputItems).toHaveBeenCalledWith("resp_abc", "key-1", {
+      after: "msg_xyz",
+      include: ["file_search_call.results", "message.input_image.image_url"],
+      limit: "20",
+      order: "desc",
+    });
+  });
+
+  it("GET /v1/responses/:id/input_items returns 404 when the service raises ResponseNotFoundError", async () => {
+    mockHandleResponseInputItems.mockRejectedValueOnce(new ResponseNotFoundError("resp_x"));
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_x/input_items", { method: "GET" });
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Response not found"),
+    });
+  });
+
+  it("GET /v1/responses/:id/input_items passes through the upstream envelope on non-404 errors", async () => {
+    mockHandleResponseInputItems.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "Invalid include value",
+            type: "invalid_request_error",
+            param: "include",
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc/input_items?include=foo", {
+      method: "GET",
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "Invalid include value",
+        type: "invalid_request_error",
+        param: "include",
+        code: "invalid_value",
+      },
+    });
+  });
+
+  it("GET /v1/responses/:id/input_items maps known service errors", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    mockHandleResponseInputItems.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
+    expect(
+      await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
+    ).toHaveProperty("status", 503);
+
+    mockHandleResponseInputItems.mockRejectedValueOnce(new UnsupportedResponseFeatureError("nope"));
+    expect(
+      await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
+    ).toHaveProperty("status", 422);
+
+    mockHandleResponseInputItems.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    expect(
+      await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
+    ).toHaveProperty("status", 503);
+
+    mockHandleResponseInputItems.mockRejectedValueOnce(new Error("boom"));
+    expect(
+      await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
+    ).toHaveProperty("status", 500);
   });
 
   it("POST /v1/responses/compact returns 200 with the upstream body", async () => {

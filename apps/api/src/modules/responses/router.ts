@@ -30,6 +30,7 @@ import {
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
+  handleResponseInputItems,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
@@ -340,6 +341,40 @@ responsesRouter.post("/:id/cancel", async (c) => {
 
     if (error instanceof OpenAIResponseProviderNotConfiguredError) {
       return c.json({ error: errorMessage }, 503);
+    }
+
+    if (error instanceof RequestLoggingUnavailableError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+responsesRouter.get("/:id/input_items", async (c) => {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+  const id = c.req.param("id");
+  const query = collectQueryParams(c);
+
+  try {
+    const result = await handleResponseInputItems(id, apiKeyId, query);
+    return c.json(result.response);
+  } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+    if (error instanceof ResponseNotFoundError) {
+      return c.json({ error: errorMessage }, 404);
+    }
+
+    if (error instanceof OpenAIResponseProviderNotConfiguredError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    if (error instanceof UnsupportedResponseFeatureError) {
+      return c.json({ error: errorMessage }, 422);
     }
 
     if (error instanceof RequestLoggingUnavailableError) {
