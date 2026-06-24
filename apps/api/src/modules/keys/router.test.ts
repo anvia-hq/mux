@@ -31,6 +31,15 @@ vi.mock("../../utils/redis", () => ({
 }));
 
 import { keysRouter } from "./router";
+import { revokeApiKey } from "./services";
+
+vi.mock("./services", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./services")>();
+  return {
+    ...original,
+    revokeApiKey: vi.fn(original.revokeApiKey),
+  };
+});
 
 describe("keys router", () => {
   afterEach(() => vi.clearAllMocks());
@@ -95,5 +104,24 @@ describe("keys router", () => {
     const app = new Hono().route("/api-keys", keysRouter);
     const res = await app.request("/api-keys/key-1", { method: "DELETE" });
     expect(res.status).toBe(200);
+  });
+
+  it("DELETE /:id returns 404 when the key does not exist", async () => {
+    vi.mocked(revokeApiKey).mockRejectedValueOnce({ code: "P2025" });
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/missing", { method: "DELETE" });
+
+    expect(res.status).toBe(404);
+  });
+
+  it("DELETE /:id returns 500 for non-error failures", async () => {
+    vi.mocked(revokeApiKey).mockRejectedValueOnce("failed");
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/key-1", { method: "DELETE" });
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: "Internal server error" });
   });
 });
