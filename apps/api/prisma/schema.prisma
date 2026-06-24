@@ -33,6 +33,7 @@ model ApiKey {
   spendLimitUsd Float?
   createdAt     DateTime @default(now())
   logs          RequestLog[]
+  backgroundJobs BackgroundResponseJob[]
 
   @@index([isActive])
 }
@@ -112,4 +113,29 @@ model FallbackTarget {
 
   @@unique([groupId, position])
   @@index([provider, modelId])
+}
+
+/// Tracks background response jobs submitted via POST /v1/responses
+/// with background: true. The primary key is the upstream response id
+/// (e.g. resp_abc123) returned by the provider, so the row can be
+/// looked up directly by client polling on GET /v1/responses/:id.
+/// The actual generation is performed server-side by the provider; a
+/// future worker (Phase 7.3) will poll upstream and update status.
+model BackgroundResponseJob {
+  id           String   @id
+  apiKeyId     String
+  apiKey       ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  provider     String
+  model        String
+  request      Json
+  status       String
+  response     Json?
+  errorMessage String?
+  createdAt    DateTime @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+
+  @@index([apiKeyId])
+  @@index([status])
+  @@index([createdAt])
 }
