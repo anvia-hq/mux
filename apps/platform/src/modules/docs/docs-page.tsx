@@ -590,17 +590,20 @@ export function DocsPage() {
           <Section id="responses" title="Responses API">
             <p>
               Use <code>POST /v1/responses</code> for OpenAI Responses-compatible requests. This
-              surface currently supports direct OpenAI models such as <code>openai:gpt-4o</code> and
-              both non-streaming and <code>stream: true</code> requests.
+              surface accepts any direct provider model whose adapter advertises
+              {" "}<code>responsesApi: true</code>{" "}(OpenAI and Azure Cognitive Services today),
+              and any fallback group that includes at least one Responses-capable target. Both
+              non-streaming and <code>stream: true</code> requests are supported.
             </p>
             <CodeTabs samples={responseSamples} />
             <div className="grid gap-2 rounded-md border p-4">
               <div className="text-sm font-medium text-foreground">Current support</div>
               <div className="grid gap-2">
                 {[
-                  "Direct OpenAI provider models only.",
-                  "Streaming Responses events are passed through unchanged from OpenAI.",
-                  "Non-OpenAI providers, mux fallback groups, and background mode are not supported yet. GET and DELETE lifecycle routes are available.",
+                  "Direct provider models with responsesApi: true (OpenAI, Azure Cognitive Services).",
+                  "Fallback groups whose first Responses-capable target is selected automatically.",
+                  "Streaming Responses events are passed through unchanged from the upstream provider.",
+                  "Background mode is not implemented yet. GET and DELETE lifecycle routes are routed to OpenAI today.",
                 ].map((item) => (
                   <div key={item} className="flex gap-2">
                     <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
@@ -612,11 +615,12 @@ export function DocsPage() {
             <CodeTabs samples={responseStreamingSamples} />
             <p>
               Retrieve a previously created response with <code>GET /v1/responses/{`{id}`}</code>.
-              This is a pass-through to the OpenAI Responses API; query params such as{" "}
-              <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
+              This is a pass-through to the upstream provider's Responses API; query params such
+              as <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
               Upstream errors are returned in OpenAI's{" "}
               <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
-              status code.
+              status code. The route is currently routed to the OpenAI provider; cross-provider
+              retrieval (e.g. for an Azure-hosted response) is a follow-up.
             </p>
             <CodeTabs samples={responseRetrieveSamples} />
             <p>
