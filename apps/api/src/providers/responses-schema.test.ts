@@ -101,7 +101,7 @@ describe("responseCreateRequestSchema — extended fields", () => {
   it("accepts tools as opaque array (P1.2 tightens)", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
-      tools: [{ type: "function", function: { name: "lookup" } }],
+      tools: [{ type: "function", name: "lookup" }],
     });
     expect(result.success).toBe(true);
   });
@@ -195,5 +195,312 @@ describe("responseCreateRequestSchema — extended fields", () => {
         reasoning: { effort: "ultra" },
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("responseCreateRequestSchema — tools", () => {
+  it("accepts a function tool", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [
+        {
+          type: "function",
+          name: "lookup",
+          description: "look up a record",
+          parameters: { type: "object", properties: { q: { type: "string" } } },
+          strict: true,
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a web_search tool with filters", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [
+        {
+          type: "web_search",
+          filters: { allowed_domains: ["openai.com"] },
+          search_context_size: "high",
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a file_search tool with vector store ids", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "file_search", vector_store_ids: ["vs_1"] }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects file_search without vector_store_ids", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "file_search" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a code_interpreter tool", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "code_interpreter", container: { type: "auto" } }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an mcp tool with required server fields", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [
+        {
+          type: "mcp",
+          server_label: "github",
+          server_url: "https://mcp.example.com",
+          headers: { Authorization: "Bearer x" },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects mcp without server_url", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "mcp", server_label: "github" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects mcp with malformed server_url", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "mcp", server_label: "github", server_url: "not-a-url" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a custom tool", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "custom", name: "render", description: "render a chart" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts an apply_patch tool", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "apply_patch" }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects unknown tool type via discriminator", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [{ type: "bogus" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a mixed list of tool types", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tools: [
+        { type: "function", name: "lookup" },
+        { type: "web_search" },
+        { type: "apply_patch" },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("responseCreateRequestSchema — tool_choice hosted form", () => {
+  it.each([
+    "web_search",
+    "file_search",
+    "code_interpreter",
+    "mcp",
+    "custom",
+    "apply_patch",
+  ] as const)("accepts hosted tool_choice type=%s", (type) => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tool_choice: { type },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts hosted tool_choice with name", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tool_choice: { type: "custom", name: "render" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects hosted tool_choice with unknown type", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tool_choice: { type: "bogus" },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects function tool_choice when name is missing", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      tool_choice: { type: "function", function: {} },
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("responseCreateRequestSchema — text.format", () => {
+  it("accepts text format", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: { format: { type: "text" } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts json_object format", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: { format: { type: "json_object" } },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts json_schema format with name, schema, strict", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: {
+        format: {
+          type: "json_schema",
+          name: "answer",
+          description: "structured answer",
+          schema: { type: "object", properties: { value: { type: "string" } } },
+          strict: true,
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects json_schema without name", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: { format: { type: "json_schema", schema: { type: "object" } } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects json_schema without schema", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: { format: { type: "json_schema", name: "answer" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown format type", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: { format: { type: "yaml" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects text as a free-form string", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      text: "free-form",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("responseCreateRequestSchema — service_tier and safety_identifier", () => {
+  it.each(["auto", "default", "flex", "priority"] as const)(
+    "accepts service_tier=%s",
+    (tier) => {
+      const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: tier });
+      expect(result.success).toBe(true);
+    },
+  );
+
+  it("rejects unknown service_tier", () => {
+    const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: "pro" });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a 1–64 char safety_identifier", () => {
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "u1" }).success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "u".repeat(64) })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects empty safety_identifier", () => {
+    const result = responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects safety_identifier over 64 chars", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      safety_identifier: "u".repeat(65),
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("responseCreateRequestSchema — stream + background conflict", () => {
+  it("rejects stream=true and background=true with param=background", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      stream: true,
+      background: true,
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues[0];
+      expect(issue?.path).toEqual(["background"]);
+      expect(issue?.message).toMatch(/stream and background/);
+    }
+  });
+
+  it("accepts stream=true with background=false", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      stream: true,
+      background: false,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts stream=false with background=true (handler returns 422)", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      stream: false,
+      background: true,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts neither stream nor background set", () => {
+    const result = responseCreateRequestSchema.safeParse({ model: "x" });
+    expect(result.success).toBe(true);
   });
 });

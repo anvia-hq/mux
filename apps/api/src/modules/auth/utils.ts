@@ -1,4 +1,5 @@
 import type { Context } from "hono";
+import type { ZodIssue } from "zod";
 import type { User } from "../../utils/prisma";
 import type { SanitizedUser } from "./types";
 
@@ -31,11 +32,54 @@ export function getValidationErrorMessage(error: { issues: Array<{ message: stri
   return error.issues[0]?.message ?? "invalid request body";
 }
 
+/**
+ * Map a Zod issue code to an OpenAI-style error code. The OpenAI Responses
+ * API returns one of: `invalid_value`, `unrecognized_parameter`,
+ * `out_of_range`, `invalid_type`. Anything else collapses to
+ * `invalid_value` to keep the envelope stable.
+ */
+function mapZodCodeToOpenAI(code: ZodIssue["code"] | undefined): string {
+  switch (code) {
+    case "invalid_type":
+    case "invalid_value":
+    case "invalid_format":
+    case "invalid_union":
+    case "invalid_key":
+    case "invalid_element":
+    case "not_multiple_of":
+      return "invalid_value";
+    case "unrecognized_keys":
+      return "unrecognized_parameter";
+    case "too_small":
+    case "too_big":
+      return "out_of_range";
+    default:
+      return "invalid_value";
+  }
+}
+
+function issueParamPath(issue: ZodIssue | undefined): string | null {
+  if (!issue?.path || issue.path.length === 0) return null;
+  return issue.path.join(".");
+}
+
 export function authValidationHook(
-  result: { success: true } | { success: false; error: { issues: Array<{ message: string }> } },
+  result:
+    | { success: true }
+    | { success: false; error: { issues: Array<ZodIssue> } },
   c: Context,
 ) {
-  if (!result.success) {
-    return c.json({ error: getValidationErrorMessage(result.error) }, 400);
-  }
+  if (result.success) return;
+  const issue = result.error.issues[0];
+  return c.json(
+    {
+      error: {
+        message: issue?.message ?? "invalid request body",
+        type: "invalid_request_error",
+        param: issueParamPath(issue),
+        code: mapZodCodeToOpenAI(issue?.code),
+      },
+    },
+    400,
+  );
 }

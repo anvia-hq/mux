@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   normalizeEmail,
@@ -6,6 +6,7 @@ import {
   sanitizeUser,
   isUniqueConstraintError,
   getValidationErrorMessage,
+  authValidationHook,
 } from "./utils";
 
 describe("auth utils", () => {
@@ -65,6 +66,165 @@ describe("auth utils", () => {
     });
     it("returns default when no issues", () => {
       expect(getValidationErrorMessage({ issues: [] })).toBe("invalid request body");
+    });
+  });
+
+  describe("authValidationHook — rich 400 envelope", () => {
+    function makeContext() {
+      return {
+        json: vi.fn((body: unknown, status: number) => ({ body, status })),
+      } as unknown as Parameters<typeof authValidationHook>[1];
+    }
+
+    it("returns nothing on success", () => {
+      const c = makeContext();
+      const result = authValidationHook({ success: true }, c);
+      expect(result).toBeUndefined();
+      expect(c.json).not.toHaveBeenCalled();
+    });
+
+    it("returns OpenAI envelope for missing field (invalid_type)", () => {
+      const c = makeContext();
+      const result = authValidationHook(
+        {
+          success: false,
+          error: {
+            issues: [
+              {
+                code: "invalid_type",
+                path: ["model"],
+                message: "model is required",
+              } as never,
+            ],
+          },
+        },
+        c,
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: {
+            message: "model is required",
+            type: "invalid_request_error",
+            param: "model",
+            code: "invalid_value",
+          },
+        },
+        400,
+      );
+      expect(result).toEqual({
+        body: {
+          error: {
+            message: "model is required",
+            type: "invalid_request_error",
+            param: "model",
+            code: "invalid_value",
+          },
+        },
+        status: 400,
+      });
+    });
+
+    it("returns param from nested path", () => {
+      const c = makeContext();
+      authValidationHook(
+        {
+          success: false,
+          error: {
+            issues: [
+              {
+                code: "too_small",
+                path: ["tools", 0, "vector_store_ids"],
+                message: "must have at least 1",
+              } as never,
+            ],
+          },
+        },
+        c,
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: {
+            message: "must have at least 1",
+            type: "invalid_request_error",
+            param: "tools.0.vector_store_ids",
+            code: "out_of_range",
+          },
+        },
+        400,
+      );
+    });
+
+    it("maps unrecognized_keys to unrecognized_parameter", () => {
+      const c = makeContext();
+      authValidationHook(
+        {
+          success: false,
+          error: {
+            issues: [
+              {
+                code: "unrecognized_keys",
+                path: ["unknown_field"],
+                message: "unrecognized key",
+                keys: ["unknown_field"],
+              } as never,
+            ],
+          },
+        },
+        c,
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: {
+            message: "unrecognized key",
+            type: "invalid_request_error",
+            param: "unknown_field",
+            code: "unrecognized_parameter",
+          },
+        },
+        400,
+      );
+    });
+
+    it("uses null param when path is empty", () => {
+      const c = makeContext();
+      authValidationHook(
+        {
+          success: false,
+          error: {
+            issues: [
+              { code: "custom", path: [], message: "bad" } as never,
+            ],
+          },
+        },
+        c,
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: {
+            message: "bad",
+            type: "invalid_request_error",
+            param: null,
+            code: "invalid_value",
+          },
+        },
+        400,
+      );
+    });
+
+    it("falls back to default message when no issues", () => {
+      const c = makeContext();
+      authValidationHook({ success: false, error: { issues: [] } }, c);
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: {
+            message: "invalid request body",
+            type: "invalid_request_error",
+            param: null,
+            code: "invalid_value",
+          },
+        },
+        400,
+      );
     });
   });
 });
