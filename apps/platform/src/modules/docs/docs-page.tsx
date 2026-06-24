@@ -356,6 +356,32 @@ for (const item of page.data) {
   },
 ];
 
+const responseInputTokensSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl __MUX_GATEWAY_BASE_URL__/responses/input_tokens \\
+  -H "Authorization: Bearer $MUX_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+        "model": "openai:gpt-4o",
+        "input": "Tell me a three sentence bedtime story about a unicorn."
+      }'`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const { input_tokens } = await client.responses.inputTokens.count({
+  model: "openai:gpt-4o",
+  input: prompt,
+});
+
+console.log(\`This prompt would cost about $\${(input_tokens / 1_000_000) * 2.5} on gpt-4o.\`);`,
+  },
+];
+
 const responseStreamingSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -737,6 +763,16 @@ export function DocsPage() {
               the original status code.
             </p>
             <CodeTabs samples={responseInputItemsSamples} />
+            <p>
+              Estimate how many input tokens a prompt will consume with{" "}
+              <code>POST /v1/responses/input_tokens</code>. The body shape matches{" "}
+              <code>POST /v1/responses</code> (model, input, optional instructions and tools)
+              and the response is <code>{`{ object: "response.input_tokens", input_tokens }`}</code>
+              . The gateway forwards the body verbatim, tries OpenAI first, and falls through
+              to Azure Cognitive Services on a 404. This is a free dry-run; the call does not
+              bill the API key and is not gated by spend limits.
+            </p>
+            <CodeTabs samples={responseInputTokensSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">
