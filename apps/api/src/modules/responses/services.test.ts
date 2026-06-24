@@ -6,6 +6,7 @@ const {
   mockGetModelPricing,
   mockGetProviderByName,
   mockLogRequest,
+  mockPrismaBackgroundResponseJobCreate,
   mockResolveChatModel,
   mockResolveResponseTarget,
 } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const {
   mockGetModelPricing: vi.fn(),
   mockGetProviderByName: vi.fn(),
   mockLogRequest: vi.fn(),
+  mockPrismaBackgroundResponseJobCreate: vi.fn(),
   mockResolveChatModel: vi.fn(),
   mockResolveResponseTarget: vi.fn(),
 }));
@@ -51,6 +53,13 @@ vi.mock("../../providers/registry", () => ({
   resolveChatModel: mockResolveChatModel,
   resolveResponseTarget: mockResolveResponseTarget,
 }));
+vi.mock("../../utils/prisma", () => ({
+  prisma: {
+    backgroundResponseJob: {
+      create: mockPrismaBackgroundResponseJobCreate,
+    },
+  },
+}));
 
 import {
   ApiKeyUnbillableResponseUsageError,
@@ -64,6 +73,7 @@ import {
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
+  submitBackgroundResponse,
   UnsupportedResponseFeatureError,
 } from "./services";
 import { UpstreamResponsesApiError } from "../../providers/openai";
@@ -192,6 +202,132 @@ describe("responses services", () => {
       chunks.push(chunk);
     }
     expect(chunks).toEqual(['event: response.completed\ndata: {"type":"response.completed"}\n\n']);
+  });
+
+  describe("submitBackgroundResponse", () => {
+    it("persists a job keyed by upstream id and returns the upstream body", async () => {
+      const createResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        object: "response",
+        status: "queued",
+        model: "gpt-5",
+      });
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", createResponse),
+      });
+      mockPrismaBackgroundResponseJobCreate.mockResolvedValueOnce({ id: "resp_bg_abc" });
+
+      const result = await submitBackgroundResponse(
+        createRequest({ model: "openai:gpt-5", background: true }),
+        "key-1",
+      );
+
+      expect(result).toEqual({
+        id: "resp_bg_abc",
+        response: {
+          id: "resp_bg_abc",
+          object: "response",
+          status: "queued",
+          model: "openai:gpt-5",
+        },
+      });
+      expect(mockPrismaBackgroundResponseJobCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            id: "resp_bg_abc",
+            apiKeyId: "key-1",
+            provider: "openai",
+            model: "openai:gpt-5",
+            status: "queued",
+          }),
+        }),
+      );
+      const createCall = mockPrismaBackgroundResponseJobCreate.mock.calls[0]?.[0] as {
+        data: { request: Record<string, unknown>; response: Record<string, unknown> };
+      };
+      expect(createCall.data.request).toMatchObject({ model: "openai:gpt-5", background: true });
+      expect(createCall.data.response).toMatchObject({ id: "resp_bg_abc", status: "queued" });
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses",
+          provider: "openai",
+          model: "openai:gpt-5",
+          statusCode: 202,
+        }),
+      );
+      expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+    });
+
+    it("does not write a row when the upstream call fails", async () => {
+      const createResponse = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", createResponse),
+      });
+
+      await expect(
+        submitBackgroundResponse(createRequest({ background: true }), "key-1"),
+      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+      expect(mockPrismaBackgroundResponseJobCreate).not.toHaveBeenCalled();
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ statusCode: 500 }),
+      );
+    });
+
+    it("throws when the model does not resolve", async () => {
+      mockResolveResponseTarget.mockResolvedValueOnce(null);
+      mockResolveChatModel.mockResolvedValueOnce(null);
+
+      await expect(
+        submitBackgroundResponse(createRequest({ background: true }), "key-1"),
+      ).rejects.toThrow("No provider found");
+      expect(mockPrismaBackgroundResponseJobCreate).not.toHaveBeenCalled();
+    });
+
+    it("rejects a model that is not Responses-capable", async () => {
+      mockResolveResponseTarget.mockResolvedValueOnce(null);
+      mockResolveChatModel.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "anthropic:claude",
+        targets: [createResolvedModel("anthropic", "claude")],
+      });
+
+      await expect(
+        submitBackgroundResponse(createRequest({ model: "anthropic:claude" }), "key-1"),
+      ).rejects.toBeInstanceOf(UnsupportedResponseFeatureError);
+      expect(mockPrismaBackgroundResponseJobCreate).not.toHaveBeenCalled();
+    });
+
+    it("falls back to status 'queued' when the upstream response omits status", async () => {
+      const createResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_bg_xyz",
+        object: "response",
+        model: "gpt-5",
+      });
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", createResponse),
+      });
+      mockPrismaBackgroundResponseJobCreate.mockResolvedValueOnce({ id: "resp_bg_xyz" });
+
+      const result = await submitBackgroundResponse(
+        createRequest({ background: true }),
+        "key-1",
+      );
+
+      expect(result.id).toBe("resp_bg_xyz");
+      expect(mockPrismaBackgroundResponseJobCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "queued" }),
+        }),
+      );
+    });
   });
 
   it("routes through any Responses-capable provider (e.g. Azure)", async () => {

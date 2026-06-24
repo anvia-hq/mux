@@ -9,6 +9,7 @@ import {
   type ResolvedProviderModel,
 } from "../../providers/registry";
 import type { ResponseCompactRequest, ResponseCreateRequest, ResponseObject } from "../../providers/types";
+import { prisma } from "../../utils/prisma";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
 const RESPONSE_CREATE_FIELDS = [
@@ -73,7 +74,9 @@ export async function handleResponseCreate(
   }
 
   if (request.background === true) {
-    throw new UnsupportedResponseFeatureError("Responses background mode is not supported yet");
+    throw new UnsupportedResponseFeatureError(
+      "Responses background mode is handled by submitBackgroundResponse, not handleResponseCreate",
+    );
   }
 
   const { requestedModelId, target } = await resolveOpenAIResponseTarget(request);
@@ -170,7 +173,9 @@ export async function handleResponseCreateStream(
   request: ResponseCreateRequest,
 ): Promise<ResponseStreamResult> {
   if (request.background === true) {
-    throw new UnsupportedResponseFeatureError("Responses background mode is not supported yet");
+    throw new UnsupportedResponseFeatureError(
+      "Responses background mode cannot be combined with streaming",
+    );
   }
 
   const { target } = await resolveOpenAIResponseTarget(request);
@@ -190,6 +195,79 @@ export async function handleResponseCreateStream(
     provider: target.provider.name,
     model: target.publicModelId,
     startTime,
+  };
+}
+
+export async function submitBackgroundResponse(
+  request: ResponseCreateRequest,
+  apiKeyId: string,
+): Promise<{ id: string; response: ResponseObject }> {
+  const { requestedModelId, target } = await resolveOpenAIResponseTarget(request);
+
+  if (!target.provider.createResponse) {
+    throw new UnsupportedResponseFeatureError(
+      "Selected provider does not support the Responses API",
+    );
+  }
+
+  const startTime = Date.now();
+  let response: ResponseObject;
+
+  try {
+    response = await target.provider.createResponse(
+      buildOpenAIResponseCreateRequest(request, target),
+    );
+  } catch (error) {
+    const latencyMs = Date.now() - startTime;
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+    await logRequest({
+      apiKeyId,
+      provider: target.provider.name,
+      model: target.publicModelId,
+      endpoint: "/v1/responses",
+      latencyMs,
+      statusCode: 500,
+      errorMessage,
+    });
+
+    throw error;
+  }
+
+  const latencyMs = Date.now() - startTime;
+
+  const upstreamId = typeof response.id === "string" ? response.id : null;
+  if (!upstreamId) {
+    throw new Error("Upstream provider did not return a response id");
+  }
+
+  const upstreamStatus =
+    typeof response.status === "string" ? response.status : "queued";
+
+  await prisma.backgroundResponseJob.create({
+    data: {
+      id: upstreamId,
+      apiKeyId,
+      provider: target.provider.name,
+      model: target.publicModelId,
+      request: request as object,
+      status: upstreamStatus,
+      response: response as object,
+    },
+  });
+
+  await logRequest({
+    apiKeyId,
+    provider: target.provider.name,
+    model: target.publicModelId,
+    endpoint: "/v1/responses",
+    latencyMs,
+    statusCode: 202,
+  });
+
+  return {
+    id: upstreamId,
+    response: withPublicModelId(response, requestedModelId),
   };
 }
 

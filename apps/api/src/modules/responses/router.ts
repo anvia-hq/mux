@@ -35,6 +35,7 @@ import {
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
   ResponseNotFoundError,
+  submitBackgroundResponse,
   UnsupportedResponseFeatureError,
 } from "./services";
 
@@ -71,7 +72,33 @@ responsesRouter.post(
     const body = c.req.valid("json") as ResponseCreateRequest;
 
     if (body.background === true) {
-      return c.json({ error: "Responses background mode is not supported yet" }, 422);
+      try {
+        const submitted = await submitBackgroundResponse(body, apiKeyId);
+        c.header("Location", `/v1/responses/${submitted.id}`);
+        return c.json(submitted.response, 202);
+      } catch (error) {
+        const upstream = upstreamErrorResponse(c, error);
+        if (upstream) return upstream;
+
+        const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+        if (errorMessage.startsWith("No provider found")) {
+          return c.json({ error: errorMessage }, 404);
+        }
+
+        if (error instanceof UnsupportedResponseFeatureError) {
+          return c.json({ error: errorMessage }, 422);
+        }
+
+        if (
+          error instanceof RequestLoggingUnavailableError ||
+          error instanceof ApiKeySpendLedgerUnavailableError
+        ) {
+          return c.json({ error: errorMessage }, 503);
+        }
+
+        return c.json({ error: errorMessage }, 500);
+      }
     }
 
   try {

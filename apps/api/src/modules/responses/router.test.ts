@@ -15,6 +15,7 @@ const {
   mockLogStreamFinal,
   mockLogStreamStart,
   mockSpendLimit,
+  mockSubmitBackgroundResponse,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockAssertApiKeyCanSpend: vi.fn(),
@@ -30,6 +31,7 @@ const {
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
   mockSpendLimit: { value: null as number | null },
+  mockSubmitBackgroundResponse: vi.fn(),
 }));
 
 vi.mock("./services", () => {
@@ -76,6 +78,7 @@ vi.mock("./services", () => {
     handleResponseInputItems: mockHandleResponseInputItems,
     handleResponseInputTokens: mockHandleResponseInputTokens,
     handleResponseRetrieve: mockHandleResponseRetrieve,
+    submitBackgroundResponse: mockSubmitBackgroundResponse,
   };
 });
 
@@ -191,18 +194,78 @@ describe("responses router", () => {
     });
   });
 
-  it("POST /v1/responses 422 for unsupported background mode before spend checks", async () => {
-    mockSpendLimit.value = 10;
+  it("POST /v1/responses 202 with Location header for background submissions", async () => {
+    mockSubmitBackgroundResponse.mockResolvedValueOnce({
+      id: "resp_bg_abc",
+      response: {
+        id: "resp_bg_abc",
+        object: "response",
+        status: "queued",
+        model: "openai:gpt-4o",
+      },
+    });
     const app = new Hono().route("/v1/responses", responsesRouter);
-
-    const background = await app.request("/v1/responses", {
+    const res = await app.request("/v1/responses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", background: true }),
     });
-    expect(background.status).toBe(422);
+
+    expect(res.status).toBe(202);
+    expect(res.headers.get("Location")).toBe("/v1/responses/resp_bg_abc");
+    expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "openai:gpt-4o", background: true }),
+      "key-1",
+    );
     expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockHandleResponseCreate).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toMatchObject({
+      id: "resp_bg_abc",
+      status: "queued",
+    });
+  });
+
+  it("POST /v1/responses 404 when background submission targets an unknown model", async () => {
+    mockSubmitBackgroundResponse.mockRejectedValueOnce(
+      new Error("No provider found for model: nope:nada"),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "nope:nada", input: "hi", background: true }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it("POST /v1/responses passes through upstream envelopes from background submissions", async () => {
+    mockSubmitBackgroundResponse.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "Background mode requires gpt-5 family",
+            type: "invalid_request_error",
+            param: "model",
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", background: true }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "Background mode requires gpt-5 family",
+        type: "invalid_request_error",
+      },
+    });
   });
 
   it("POST /v1/responses streams raw SSE and finalizes usage logs", async () => {
