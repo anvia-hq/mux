@@ -1,4 +1,10 @@
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
+import {
+  getResponsesCacheTtlSeconds,
+  isResponsesCacheEnabled,
+  readCachedResponse,
+  writeCachedResponse,
+} from "../../providers/responses-cache";
 import { UpstreamResponsesApiError } from "../../providers/openai";
 import {
   estimateCost,
@@ -323,6 +329,13 @@ export async function handleResponseRetrieve(
     } as ResponseObject;
   }
 
+  if (isResponsesCacheEnabled()) {
+    const cached = await readCachedResponse(apiKeyId, "openai", id);
+    if (cached) {
+      return cached;
+    }
+  }
+
   const provider = getProviderByName("openai");
   if (!provider) {
     throw new OpenAIResponseProviderNotConfiguredError();
@@ -339,6 +352,10 @@ export async function handleResponseRetrieve(
   try {
     const response = await provider.getResponse(id, query);
     const latencyMs = Date.now() - startTime;
+
+    if (isResponsesCacheEnabled()) {
+      await writeCachedResponse(apiKeyId, provider.name, id, response, getResponsesCacheTtlSeconds());
+    }
 
     await logRequest({
       apiKeyId,

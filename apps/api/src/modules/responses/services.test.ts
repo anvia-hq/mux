@@ -5,23 +5,31 @@ const {
   mockEstimateCost,
   mockGetModelPricing,
   mockGetProviderByName,
+  mockIsResponsesCacheEnabled,
   mockLogRequest,
   mockPrismaBackgroundResponseJobCreate,
   mockPrismaBackgroundResponseJobFindUnique,
   mockPrismaBackgroundResponseJobUpdate,
+  mockReadCachedResponse,
   mockResolveChatModel,
   mockResolveResponseTarget,
+  mockWriteCachedResponse,
+  mockGetResponsesCacheTtlSeconds,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockGetModelPricing: vi.fn(),
   mockGetProviderByName: vi.fn(),
+  mockIsResponsesCacheEnabled: vi.fn(),
   mockLogRequest: vi.fn(),
   mockPrismaBackgroundResponseJobCreate: vi.fn(),
   mockPrismaBackgroundResponseJobFindUnique: vi.fn(),
   mockPrismaBackgroundResponseJobUpdate: vi.fn(),
+  mockReadCachedResponse: vi.fn(),
   mockResolveChatModel: vi.fn(),
   mockResolveResponseTarget: vi.fn(),
+  mockWriteCachedResponse: vi.fn(),
+  mockGetResponsesCacheTtlSeconds: vi.fn(),
 }));
 
 vi.mock("../keys/services", () => {
@@ -67,6 +75,13 @@ vi.mock("../../utils/prisma", () => ({
   },
 }));
 
+vi.mock("../../providers/responses-cache", () => ({
+  isResponsesCacheEnabled: mockIsResponsesCacheEnabled,
+  getResponsesCacheTtlSeconds: mockGetResponsesCacheTtlSeconds,
+  readCachedResponse: mockReadCachedResponse,
+  writeCachedResponse: mockWriteCachedResponse,
+}));
+
 import {
   ApiKeyUnbillableResponseUsageError,
   handleResponseCancel,
@@ -89,6 +104,10 @@ import type { ResponseCreateRequest } from "../../providers/types";
 describe("responses services", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockIsResponsesCacheEnabled.mockReturnValue(false);
+    mockReadCachedResponse.mockResolvedValue(null);
+    mockWriteCachedResponse.mockResolvedValue(undefined);
+    mockGetResponsesCacheTtlSeconds.mockReturnValue(300);
   });
 
   const createRequest = (overrides?: Partial<ResponseCreateRequest>): ResponseCreateRequest => ({
@@ -720,6 +739,68 @@ describe("responses services", () => {
 
     expect(result).toMatchObject({ id: "resp_abc" });
     expect(getResponse).toHaveBeenCalledWith("resp_abc", undefined);
+  });
+
+  it("returns the cached response without calling upstream when cache hits", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValue(null);
+    mockIsResponsesCacheEnabled.mockReturnValue(true);
+    mockReadCachedResponse.mockResolvedValue({
+      id: "resp_abc",
+      object: "response",
+      _fromCache: true,
+    });
+    const getResponse = vi.fn();
+    mockGetProviderByName.mockReturnValue({
+      name: "openai",
+      getResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    const result = await handleResponseRetrieve("resp_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_abc", _fromCache: true });
+    expect(mockReadCachedResponse).toHaveBeenCalledWith("key-1", "openai", "resp_abc");
+    expect(getResponse).not.toHaveBeenCalled();
+  });
+
+  it("writes the upstream response to the cache when enabled and the entry is missing", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
+    mockIsResponsesCacheEnabled.mockReturnValue(true);
+    mockReadCachedResponse.mockResolvedValueOnce(null);
+    mockGetResponsesCacheTtlSeconds.mockReturnValue(60);
+    const getResponse = vi.fn().mockResolvedValueOnce({ id: "resp_abc", object: "response" });
+    mockGetProviderByName.mockReturnValue({
+      name: "openai",
+      getResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    const result = await handleResponseRetrieve("resp_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_abc" });
+    expect(mockWriteCachedResponse).toHaveBeenCalledWith(
+      "key-1",
+      "openai",
+      "resp_abc",
+      { id: "resp_abc", object: "response" },
+      60,
+    );
+  });
+
+  it("does not read or write the cache when the flag is off", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
+    const getResponse = vi.fn().mockResolvedValueOnce({ id: "resp_abc" });
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      getResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+
+    const result = await handleResponseRetrieve("resp_abc", "key-1");
+
+    expect(result).toMatchObject({ id: "resp_abc" });
+    expect(mockReadCachedResponse).not.toHaveBeenCalled();
+    expect(mockWriteCachedResponse).not.toHaveBeenCalled();
   });
 
   it("deletes a response via the openai provider and logs a 200 entry", async () => {

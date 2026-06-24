@@ -12,6 +12,9 @@
  * are immutable post-creation and the cache stores the body verbatim.
  */
 
+import type { ResponseObject } from "./types";
+import { redis } from "../utils/redis";
+
 const DEFAULT_TTL_SECONDS = 300;
 
 let cachedEnabled: boolean | undefined;
@@ -40,4 +43,46 @@ export function getResponsesCacheTtlSeconds(): number {
 export function _resetResponsesCacheForTests(): void {
   cachedEnabled = undefined;
   cachedTtlSeconds = undefined;
+}
+
+export function buildResponsesCacheKey(
+  apiKeyId: string,
+  provider: string,
+  id: string,
+): string {
+  return `${apiKeyId}:${provider}:${id}`;
+}
+
+export async function readCachedResponse(
+  apiKeyId: string,
+  provider: string,
+  id: string,
+): Promise<ResponseObject | null> {
+  try {
+    const raw = await redis.get(buildResponsesCacheKey(apiKeyId, provider, id));
+    if (!raw) return null;
+    return JSON.parse(raw) as ResponseObject;
+  } catch (error) {
+    console.warn("Failed to read cached response:", error);
+    return null;
+  }
+}
+
+export async function writeCachedResponse(
+  apiKeyId: string,
+  provider: string,
+  id: string,
+  response: ResponseObject,
+  ttlSeconds: number,
+): Promise<void> {
+  try {
+    await redis.set(
+      buildResponsesCacheKey(apiKeyId, provider, id),
+      JSON.stringify(response),
+      "EX",
+      ttlSeconds,
+    );
+  } catch (error) {
+    console.warn("Failed to write cached response:", error);
+  }
 }
