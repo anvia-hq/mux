@@ -781,6 +781,122 @@ describe("responses services", () => {
         OpenAIResponseProviderNotConfiguredError,
       );
     });
+
+    it("cancels a local BackgroundResponseJob and updates the row", async () => {
+      mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        apiKeyId: "key-1",
+        provider: "openai",
+        model: "openai:gpt-5",
+        status: "in_progress",
+        response: { id: "resp_bg_abc", status: "in_progress" },
+      });
+      const cancelResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        object: "response",
+        status: "cancelled",
+      });
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", cancelResponse) : null,
+      );
+      mockPrismaBackgroundResponseJobUpdate.mockResolvedValueOnce({});
+
+      const result = await handleResponseCancel("resp_bg_abc", "key-1");
+
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai:gpt-5",
+        response: { id: "resp_bg_abc", status: "cancelled" },
+      });
+      expect(cancelResponse).toHaveBeenCalledWith("resp_bg_abc");
+      expect(mockPrismaBackgroundResponseJobUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "resp_bg_abc" },
+          data: expect.objectContaining({
+            status: "cancelled",
+            completedAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/:id/cancel",
+          provider: "openai",
+          model: "openai:gpt-5",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("treats upstream 404 on cancel as already cancelled for local row", async () => {
+      mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        apiKeyId: "key-1",
+        provider: "openai",
+        model: "openai:gpt-5",
+        status: "queued",
+        response: { id: "resp_bg_abc", status: "queued" },
+      });
+      const cancelResponse = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", cancelResponse) : null,
+      );
+      mockPrismaBackgroundResponseJobUpdate.mockResolvedValueOnce({});
+
+      const result = await handleResponseCancel("resp_bg_abc", "key-1");
+
+      expect(result.response).toMatchObject({ status: "cancelled" });
+      expect(mockPrismaBackgroundResponseJobUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: "cancelled",
+            errorMessage: "upstream 404 on cancel",
+          }),
+        }),
+      );
+    });
+
+    it("marks local row cancelled even when no provider is configured", async () => {
+      mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        apiKeyId: "key-1",
+        provider: "openai",
+        model: "openai:gpt-5",
+        status: "queued",
+        response: { id: "resp_bg_abc", status: "queued" },
+      });
+      mockGetProviderByName.mockReturnValue(null);
+      mockPrismaBackgroundResponseJobUpdate.mockResolvedValueOnce({});
+
+      const result = await handleResponseCancel("resp_bg_abc", "key-1");
+
+      expect(result.response).toMatchObject({ status: "cancelled" });
+      expect(mockPrismaBackgroundResponseJobUpdate).toHaveBeenCalled();
+    });
+
+    it("rethrows non-404 upstream errors from cancel on local row", async () => {
+      mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+        id: "resp_bg_abc",
+        apiKeyId: "key-1",
+        provider: "openai",
+        model: "openai:gpt-5",
+        status: "queued",
+        response: { id: "resp_bg_abc", status: "queued" },
+      });
+      const cancelResponse = vi
+        .fn()
+        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      mockGetProviderByName.mockImplementation((name: string) =>
+        name === "openai" ? makeProvider("openai", cancelResponse) : null,
+      );
+
+      await expect(handleResponseCancel("resp_bg_abc", "key-1")).rejects.toBeInstanceOf(
+        UpstreamResponsesApiError,
+      );
+      expect(mockPrismaBackgroundResponseJobUpdate).not.toHaveBeenCalled();
+    });
   });
 
   describe("handleResponseCompact", () => {

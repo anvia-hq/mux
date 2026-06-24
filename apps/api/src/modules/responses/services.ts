@@ -594,6 +594,14 @@ export async function handleResponseCancel(
   id: string,
   apiKeyId: string,
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const localRow = await prisma.backgroundResponseJob.findUnique({
+    where: { id },
+  });
+
+  if (localRow) {
+    return cancelLocalBackgroundJob(localRow, id, apiKeyId);
+  }
+
   const openai = getProviderByName("openai");
   const azure = getProviderByName("azure-cognitive-services");
   const candidates = [openai, azure].filter(
@@ -644,6 +652,71 @@ export async function handleResponseCancel(
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
   throw new ResponseNotFoundError(id);
+}
+
+type LocalBackgroundRow = {
+  id: string;
+  apiKeyId: string;
+  provider: string;
+  model: string;
+  status: string;
+  response: unknown;
+};
+
+async function cancelLocalBackgroundJob(
+  row: LocalBackgroundRow,
+  id: string,
+  apiKeyId: string,
+): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const startTime = Date.now();
+
+  const provider = getProviderByName(row.provider);
+  let upstreamResponse: ResponseObject | null = null;
+  let upstreamNotFound = false;
+
+  if (provider?.cancelResponse) {
+    try {
+      upstreamResponse = await provider.cancelResponse(id);
+    } catch (error) {
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        upstreamNotFound = true;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  const now = new Date();
+  const merged: ResponseObject = {
+    ...((upstreamResponse as object | null) ??
+      (row.response as object | null) ??
+      {}),
+    id: row.id,
+    object: "response",
+    status: "cancelled",
+  };
+
+  await prisma.backgroundResponseJob.update({
+    where: { id: row.id },
+    data: {
+      status: "cancelled",
+      response: merged as object,
+      completedAt: now,
+      ...(upstreamNotFound ? { errorMessage: "upstream 404 on cancel" } : {}),
+    },
+  });
+
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: row.provider,
+    model: row.model,
+    endpoint: "/v1/responses/:id/cancel",
+    latencyMs,
+    statusCode: 200,
+  });
+
+  return { provider: row.provider, model: row.model, response: merged };
 }
 
 export async function handleResponseCompact(
