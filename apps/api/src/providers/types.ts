@@ -139,6 +139,29 @@ export interface ChatCompletionChunk {
   };
 }
 
+export type ResponseCreateRequest = {
+  model: string;
+  input?: unknown;
+  instructions?: string;
+  stream?: boolean;
+  background?: boolean;
+  [key: string]: unknown;
+};
+
+export type ResponseUsage = {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  [key: string]: unknown;
+};
+
+export type ResponseObject = {
+  id?: string;
+  model?: string;
+  usage?: ResponseUsage;
+  [key: string]: unknown;
+};
+
 export interface ProviderCapabilities {
   tools: boolean;
   structuredOutput: boolean;
@@ -198,5 +221,8 @@ export interface ProviderAdapter {
   capabilities: ProviderCapabilities;
   chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
   chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk>;
+  createResponse?(request: ResponseCreateRequest): Promise<ResponseObject>;
+  createResponseStream?(request: ResponseCreateRequest): AsyncIterable<string>;
+  getResponse?(id: string): Promise<ResponseObject>;
   listModels(): Model[];
 }

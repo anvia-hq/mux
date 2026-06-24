@@ -134,4 +134,123 @@ describe("OpenAIAdapter", () => {
       metadata: { trace: "t1" },
     });
   });
+
+  it("creates responses through the OpenAI Responses API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp-1",
+        object: "response",
+        model: "gpt-4o",
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createResponse({
+      model: "gpt-4o",
+      input: "hi",
+      instructions: "Be brief",
+      text: { format: { type: "text" } },
+      reasoning: { effort: "low" },
+    });
+
+    expect(response.id).toBe("resp-1");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-4o",
+      input: "hi",
+      instructions: "Be brief",
+      text: { format: { type: "text" } },
+      reasoning: { effort: "low" },
+    });
+  });
+
+  it("streams raw responses from the OpenAI Responses API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}\n\n',
+      ]),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const chunks: string[] = [];
+    for await (const chunk of adapter.createResponseStream({
+      model: "gpt-4o",
+      input: "hi",
+      stream: true,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe(
+      'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n' +
+        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}\n\n',
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({ model: "gpt-4o", input: "hi", stream: true });
+  });
+
+  it("retrieves a response by id", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_abc",
+        object: "response",
+        status: "completed",
+        model: "gpt-4o-2024-08-06",
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.getResponse("resp_abc");
+
+    expect(response).toMatchObject({ id: "resp_abc", model: "gpt-4o-2024-08-06" });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp_abc",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Authorization: "Bearer sk-test" },
+      }),
+    );
+  });
+
+  it("propagates upstream errors from getResponse", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response("not found", { status: 404, headers: { "Content-Type": "text/plain" } }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await expect(adapter.getResponse("resp_missing")).rejects.toThrow(
+      "OpenAI Responses API error: 404",
+    );
+  });
+
+  it("encodes response ids in the retrieval URL", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp/x y", object: "response" }));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.getResponse("resp/x y");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/responses/resp%2Fx%20y",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
 });

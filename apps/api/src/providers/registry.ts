@@ -515,6 +515,10 @@ export function getProvider(model: string): ProviderAdapter | null {
   return resolveProviderModel(model)?.provider ?? null;
 }
 
+export function getProviderByName(name: string): ProviderAdapter | null {
+  return providers.get(name) ?? null;
+}
+
 export function listAllModels(): Model[] {
   const models: Model[] = [];
   for (const provider of providers.values()) {

@@ -4,6 +4,8 @@ import type {
   ChatCompletionChunk,
   ProviderAdapter,
   Model,
+  ResponseCreateRequest,
+  ResponseObject,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 
@@ -776,6 +778,7 @@ const MODELS: Model[] = [
 ];
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export class OpenAIAdapter implements ProviderAdapter {
@@ -850,6 +853,73 @@ export class OpenAIAdapter implements ProviderAdapter {
         }
       }
     }
+  }
+
+  async createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
+  }
+
+  async *createResponseStream(request: ResponseCreateRequest): AsyncIterable<string> {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({ ...request, stream: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body");
+
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield decoder.decode(value, { stream: true });
+    }
+
+    const final = decoder.decode();
+    if (final) yield final;
+  }
+
+  async getResponse(id: string): Promise<ResponseObject> {
+    const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI Responses API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ResponseObject;
   }
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {

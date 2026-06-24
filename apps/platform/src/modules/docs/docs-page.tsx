@@ -193,6 +193,109 @@ print(response.choices[0].message.content)`,
   },
 ];
 
+const responseSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const response = await client.responses.create({
+  model: "openai:gpt-4o",
+  input: "Write a release note for Responses API support.",
+});
+
+console.log(response.output_text);`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `response = client.responses.create(
+    model="openai:gpt-4o",
+    input="Write a release note for Responses API support.",
+)
+
+print(response.output_text)`,
+  },
+  {
+    value: "fetch",
+    label: "TypeScript (fetch)",
+    language: "typescript",
+    code: `const response = await fetch("__MUX_GATEWAY_BASE_URL__/responses", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    Authorization: "Bearer mux_live_xxxxxxxxxxxxxxxx",
+  },
+  body: JSON.stringify({
+    model: "openai:gpt-4o",
+    input: "Write a release note for Responses API support.",
+  }),
+});
+
+const body = await response.json();
+console.log(body.id);`,
+  },
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl __MUX_GATEWAY_BASE_URL__/responses \\
+  -H "Authorization: Bearer $MUX_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"openai:gpt-4o","input":"Write a release note for Responses API support."}'`,
+  },
+];
+
+const responseRetrieveSamples: CodeSample[] = [
+  {
+    value: "curl",
+    label: "cURL",
+    language: "bash",
+    code: `curl __MUX_GATEWAY_BASE_URL__/responses/resp_abc123 \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const response = await client.responses.retrieve("resp_abc123");
+console.log(response.status);`,
+  },
+];
+
+const responseStreamingSamples: CodeSample[] = [
+  {
+    value: "typescript-sdk",
+    label: "TypeScript SDK",
+    language: "typescript",
+    code: `const stream = await client.responses.create({
+  model: "openai:gpt-4o",
+  input: "Draft a short incident summary.",
+  stream: true,
+});
+
+for await (const event of stream) {
+  if (event.type === "response.output_text.delta") {
+    process.stdout.write(event.delta);
+  }
+}`,
+  },
+  {
+    value: "python",
+    label: "Python",
+    language: "python",
+    code: `stream = client.responses.create(
+    model="openai:gpt-4o",
+    input="Draft a short incident summary.",
+    stream=True,
+)
+
+for event in stream:
+    if event.type == "response.output_text.delta":
+        print(event.delta, end="")`,
+  },
+];
+
 const fallbackSamples: CodeSample[] = [
   {
     value: "typescript-sdk",
@@ -465,6 +568,36 @@ export function DocsPage() {
               Mistral handles the request.
             </p>
             <CodeTabs samples={completionSamples} />
+          </Section>
+
+          <Section id="responses" title="Responses API">
+            <p>
+              Use <code>POST /v1/responses</code> for OpenAI Responses-compatible requests. This
+              surface currently supports direct OpenAI models such as <code>openai:gpt-4o</code> and
+              both non-streaming and <code>stream: true</code> requests.
+            </p>
+            <CodeTabs samples={responseSamples} />
+            <div className="grid gap-2 rounded-md border p-4">
+              <div className="text-sm font-medium text-foreground">Current support</div>
+              <div className="grid gap-2">
+                {[
+                  "Direct OpenAI provider models only.",
+                  "Streaming Responses events are passed through unchanged from OpenAI.",
+                  "Non-OpenAI providers, mux fallback groups, background mode, and lifecycle routes are not supported yet.",
+                ].map((item) => (
+                  <div key={item} className="flex gap-2">
+                    <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <CodeTabs samples={responseStreamingSamples} />
+            <p>
+              Retrieve a previously created response with <code>GET /v1/responses/{`{id}`}</code>.
+              This is a pass-through to the OpenAI Responses API.
+            </p>
+            <CodeTabs samples={responseRetrieveSamples} />
           </Section>
 
           <Section id="fallback-groups" title="Fallback groups">

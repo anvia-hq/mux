@@ -9,6 +9,7 @@ import { keysRouter } from "./modules/keys/router";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
 import { providersRouter } from "./modules/providers/router";
+import { responsesRouter } from "./modules/responses/router";
 import { usersRouter } from "./modules/users/router";
 import { initProviders } from "./providers/registry";
 
@@ -36,6 +37,7 @@ const app = new Hono()
   .route("/users", usersRouter)
   .route("/v1/chat", chatRouter)
   .route("/v1/models", modelsRouter)
+  .route("/v1/responses", responsesRouter)
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
   .route("/logs", logsRouter)
