@@ -17,7 +17,7 @@ workerConnection.on("error", (error) => {
   console.error("Request log worker Redis error:", error.message);
 });
 
-function toRequestLogCreateInput(entry: RequestLogPayload) {
+export function toRequestLogCreateInput(entry: RequestLogPayload) {
   return {
     id: entry.logId,
     apiKeyId: entry.apiKeyId,
@@ -29,6 +29,7 @@ function toRequestLogCreateInput(entry: RequestLogPayload) {
     promptTokens: entry.promptTokens,
     completionTokens: entry.completionTokens,
     totalTokens: entry.totalTokens,
+    reasoningTokens: entry.reasoningTokens,
     estimatedCost: entry.estimatedCost,
     statusCode: entry.statusCode,
     errorMessage: entry.errorMessage ?? null,
@@ -54,6 +55,7 @@ async function finalizeStreamLog(entry: RequestLogPayload): Promise<void> {
       promptTokens: entry.promptTokens ?? null,
       completionTokens: entry.completionTokens ?? null,
       totalTokens: entry.totalTokens ?? null,
+      reasoningTokens: entry.reasoningTokens ?? null,
       estimatedCost: entry.estimatedCost ?? null,
       statusCode: entry.statusCode,
       errorMessage: entry.errorMessage ?? null,

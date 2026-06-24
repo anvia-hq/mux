@@ -12,4 +12,9 @@ describe("prisma", () => {
   it("registers BackgroundResponseJob on the generated Prisma client", () => {
     expect(Prisma.ModelName.BackgroundResponseJob).toBe("BackgroundResponseJob");
   });
+
+  it("RequestLog has a reasoningTokens column", () => {
+    expect(Prisma.ModelName.RequestLog).toBe("RequestLog");
+    expect(Prisma.RequestLogScalarFieldEnum.reasoningTokens).toBe("reasoningTokens");
+  });
 });

@@ -53,6 +53,7 @@ model RequestLog {
   promptTokens      Int?
   completionTokens  Int?
   totalTokens       Int?
+  reasoningTokens   Int?
   estimatedCost     Float?
 
   statusCode        Int

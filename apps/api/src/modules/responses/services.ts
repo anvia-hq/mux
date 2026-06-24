@@ -101,6 +101,7 @@ export async function handleResponseCreate(
     const latencyMs = Date.now() - startTime;
     const usage = response.usage;
     const cachedTokens = readCachedTokens(usage);
+    const reasoningTokens = readReasoningTokens(usage);
     const estimatedCost = estimateCost(
       target.publicModelId,
       usage?.input_tokens,
@@ -118,6 +119,7 @@ export async function handleResponseCreate(
         promptTokens: usage?.input_tokens,
         completionTokens: usage?.output_tokens,
         totalTokens: usage?.total_tokens,
+        reasoningTokens,
         statusCode: 429,
         errorMessage: "Billable usage could not be determined",
       });
@@ -137,6 +139,7 @@ export async function handleResponseCreate(
       promptTokens: usage?.input_tokens,
       completionTokens: usage?.output_tokens,
       totalTokens: usage?.total_tokens,
+      reasoningTokens,
       estimatedCost,
       statusCode: 200,
     });
@@ -576,6 +579,14 @@ function readCachedTokens(usage: unknown): number | undefined {
   return typeof cached === "number" && Number.isFinite(cached) ? cached : undefined;
 }
 
+export function readReasoningTokens(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const details = (usage as { output_tokens_details?: unknown }).output_tokens_details;
+  if (!details || typeof details !== "object") return undefined;
+  const reasoning = (details as { reasoning_tokens?: unknown }).reasoning_tokens;
+  return typeof reasoning === "number" && Number.isFinite(reasoning) ? reasoning : undefined;
+}
+
 function withPublicModelId(response: ResponseObject, publicModelId: string): ResponseObject {
   if (!Object.hasOwn(response, "model")) return response;
   return { ...response, model: publicModelId };
@@ -774,6 +785,7 @@ export async function handleResponseCompact(
       const latencyMs = Date.now() - startTime;
       const usage = response.usage;
       const cachedTokens = readCachedTokens(usage);
+      const reasoningTokens = readReasoningTokens(usage);
       const estimatedCost = estimateCost(
         resolved.requestedModelId,
         usage?.input_tokens,
@@ -791,6 +803,7 @@ export async function handleResponseCompact(
           promptTokens: usage?.input_tokens,
           completionTokens: usage?.output_tokens,
           totalTokens: usage?.total_tokens,
+          reasoningTokens,
           statusCode: 429,
           errorMessage: "Billable usage could not be determined",
         });
@@ -810,6 +823,7 @@ export async function handleResponseCompact(
         promptTokens: usage?.input_tokens,
         completionTokens: usage?.output_tokens,
         totalTokens: usage?.total_tokens,
+        reasoningTokens,
         estimatedCost,
         statusCode: 200,
       });

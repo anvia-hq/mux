@@ -12,6 +12,7 @@ export interface LogEntry {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  reasoningTokens?: number;
   estimatedCost?: number;
   statusCode: number;
   errorMessage?: string;

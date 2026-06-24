@@ -34,6 +34,7 @@ import {
   handleResponseInputTokens,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
+  readReasoningTokens,
   ResponseNotFoundError,
   submitBackgroundResponse,
   UnsupportedResponseFeatureError,
@@ -150,6 +151,7 @@ responsesRouter.post(
 
           const latencyMs = Date.now() - startTime;
           const estimatedCost = estimateCost(model, usage?.input_tokens, usage?.output_tokens);
+          const reasoningTokens = readReasoningTokens(usage);
 
           if (isLimitedKey && estimatedCost !== undefined) {
             try {
@@ -170,6 +172,7 @@ responsesRouter.post(
               promptTokens: usage?.input_tokens,
               completionTokens: usage?.output_tokens,
               totalTokens: usage?.total_tokens,
+              reasoningTokens,
               estimatedCost,
               statusCode: 200,
             });

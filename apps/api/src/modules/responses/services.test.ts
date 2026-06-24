@@ -209,6 +209,39 @@ describe("responses services", () => {
     );
   });
 
+  it("logs reasoning_tokens when upstream reports them via output_tokens_details", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-reasoning",
+      model: "gpt-5",
+      usage: {
+        input_tokens: 200,
+        output_tokens: 100,
+        total_tokens: 300,
+        output_tokens_details: { reasoning_tokens: 42 },
+      },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-5",
+      target: createResolvedModel("openai", "gpt-5", createResponse),
+    });
+    mockEstimateCost.mockReturnValueOnce(0.001);
+
+    await handleResponseCreate(createRequest({ model: "openai:gpt-5" }), "key-1");
+
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses",
+        promptTokens: 200,
+        completionTokens: 100,
+        totalTokens: 300,
+        reasoningTokens: 42,
+        estimatedCost: 0.001,
+        statusCode: 200,
+      }),
+    );
+  });
+
   it("forwards stream_options.include_obfuscation to the upstream body", async () => {
     const createResponse = vi.fn().mockResolvedValueOnce({
       id: "resp-stream-options",

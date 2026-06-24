@@ -79,6 +79,13 @@ vi.mock("./services", () => {
     handleResponseInputTokens: mockHandleResponseInputTokens,
     handleResponseRetrieve: mockHandleResponseRetrieve,
     submitBackgroundResponse: mockSubmitBackgroundResponse,
+    readReasoningTokens: (usage: unknown) => {
+      if (!usage || typeof usage !== "object") return undefined;
+      const details = (usage as { output_tokens_details?: unknown }).output_tokens_details;
+      if (!details || typeof details !== "object") return undefined;
+      const reasoning = (details as { reasoning_tokens?: unknown }).reasoning_tokens;
+      return typeof reasoning === "number" && Number.isFinite(reasoning) ? reasoning : undefined;
+    },
   };
 });
 
@@ -271,7 +278,7 @@ describe("responses router", () => {
   it("POST /v1/responses streams raw SSE and finalizes usage logs", async () => {
     async function* chunks() {
       yield 'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n';
-      yield 'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}\n\n';
+      yield 'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5,"output_tokens_details":{"reasoning_tokens":7}}}}\n\n';
     }
 
     mockHandleResponseCreateStream.mockResolvedValueOnce({
@@ -292,7 +299,7 @@ describe("responses router", () => {
     expect(res.headers.get("Content-Type")).toContain("text/event-stream");
     await expect(res.text()).resolves.toBe(
       'event: response.output_text.delta\ndata: {"type":"response.output_text.delta","delta":"hi"}\n\n' +
-        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}\n\n',
+        'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5,"output_tokens_details":{"reasoning_tokens":7}}}}\n\n',
     );
     expect(mockLogStreamStart).toHaveBeenCalledWith(
       expect.objectContaining({ endpoint: "/v1/responses", statusCode: 102 }),
@@ -303,6 +310,7 @@ describe("responses router", () => {
         promptTokens: 2,
         completionTokens: 3,
         totalTokens: 5,
+        reasoningTokens: 7,
         estimatedCost: 0.01,
         statusCode: 200,
       }),

@@ -12,6 +12,7 @@ export type RequestLogPayload = {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  reasoningTokens?: number;
   estimatedCost?: number;
   statusCode: number;
   errorMessage?: string;
