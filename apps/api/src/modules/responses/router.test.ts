@@ -4,6 +4,7 @@ const {
   mockAddApiKeySpendUsd,
   mockAssertApiKeyCanSpend,
   mockEstimateCost,
+  mockHandleResponseCancel,
   mockHandleResponseCreate,
   mockHandleResponseCreateStream,
   mockHandleResponseDelete,
@@ -15,6 +16,7 @@ const {
   mockAddApiKeySpendUsd: vi.fn(),
   mockAssertApiKeyCanSpend: vi.fn(),
   mockEstimateCost: vi.fn(),
+  mockHandleResponseCancel: vi.fn(),
   mockHandleResponseCreate: vi.fn(),
   mockHandleResponseCreateStream: vi.fn(),
   mockHandleResponseDelete: vi.fn(),
@@ -48,10 +50,19 @@ vi.mock("./services", () => {
     }
   }
 
+  class ResponseNotFoundError extends Error {
+    constructor(id: string) {
+      super(`Response not found: ${id}`);
+      this.name = "ResponseNotFoundError";
+    }
+  }
+
   return {
     ApiKeyUnbillableResponseUsageError,
     OpenAIResponseProviderNotConfiguredError,
+    ResponseNotFoundError,
     UnsupportedResponseFeatureError,
+    handleResponseCancel: mockHandleResponseCancel,
     handleResponseCreate: mockHandleResponseCreate,
     handleResponseCreateStream: mockHandleResponseCreateStream,
     handleResponseDelete: mockHandleResponseDelete,
@@ -118,6 +129,7 @@ import { ApiKeySpendLedgerUnavailableError, ApiKeySpendLimitExceededError } from
 import {
   ApiKeyUnbillableResponseUsageError,
   OpenAIResponseProviderNotConfiguredError,
+  ResponseNotFoundError,
   UnsupportedResponseFeatureError,
 } from "./services";
 import { responsesRouter } from "./router";
@@ -508,6 +520,98 @@ describe("responses router", () => {
 
     mockHandleResponseDelete.mockRejectedValueOnce(new Error("boom"));
     expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
+      "status",
+      500,
+    );
+  });
+
+  it("POST /v1/responses/:id/cancel returns 200 with the upstream body", async () => {
+    mockHandleResponseCancel.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai",
+      response: {
+        id: "resp_abc",
+        object: "response",
+        status: "cancelled",
+      },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc/cancel", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseCancel).toHaveBeenCalledWith("resp_abc", "key-1");
+    await expect(res.json()).resolves.toMatchObject({
+      id: "resp_abc",
+      status: "cancelled",
+    });
+  });
+
+  it("POST /v1/responses/:id/cancel accepts an empty body", async () => {
+    mockHandleResponseCancel.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai",
+      response: { id: "resp_abc", status: "cancelled" },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc/cancel", { method: "POST" });
+    expect(res.status).toBe(200);
+  });
+
+  it("POST /v1/responses/:id/cancel returns 404 when the service raises ResponseNotFoundError", async () => {
+    mockHandleResponseCancel.mockRejectedValueOnce(new ResponseNotFoundError("resp_x"));
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_x/cancel", { method: "POST" });
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Response not found"),
+    });
+  });
+
+  it("POST /v1/responses/:id/cancel passes through the upstream envelope on non-404 errors", async () => {
+    mockHandleResponseCancel.mockRejectedValueOnce(
+      new UpstreamResponsesApiError(
+        400,
+        JSON.stringify({
+          error: {
+            message: "Response is not cancellable",
+            type: "invalid_request_error",
+            param: null,
+            code: "invalid_value",
+          },
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses/resp_abc/cancel", { method: "POST" });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: "Response is not cancellable",
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_value",
+      },
+    });
+  });
+
+  it("POST /v1/responses/:id/cancel maps known service errors", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    mockHandleResponseCancel.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
+    expect(await app.request("/v1/responses/resp_abc/cancel", { method: "POST" })).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseCancel.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    expect(await app.request("/v1/responses/resp_abc/cancel", { method: "POST" })).toHaveProperty(
+      "status",
+      503,
+    );
+
+    mockHandleResponseCancel.mockRejectedValueOnce(new Error("boom"));
+    expect(await app.request("/v1/responses/resp_abc/cancel", { method: "POST" })).toHaveProperty(
       "status",
       500,
     );

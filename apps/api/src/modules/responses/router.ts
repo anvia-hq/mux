@@ -22,11 +22,13 @@ import {
 import { authValidationHook } from "../auth/utils";
 import {
   ApiKeyUnbillableResponseUsageError,
+  handleResponseCancel,
   handleResponseCreate,
   handleResponseCreateStream,
   handleResponseDelete,
   handleResponseRetrieve,
   OpenAIResponseProviderNotConfiguredError,
+  ResponseNotFoundError,
   UnsupportedResponseFeatureError,
 } from "./services";
 
@@ -249,6 +251,35 @@ responsesRouter.delete("/:id", async (c) => {
 
     if (error instanceof UnsupportedResponseFeatureError) {
       return c.json({ error: errorMessage }, 422);
+    }
+
+    if (error instanceof RequestLoggingUnavailableError) {
+      return c.json({ error: errorMessage }, 503);
+    }
+
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+responsesRouter.post("/:id/cancel", async (c) => {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+  const id = c.req.param("id");
+
+  try {
+    const result = await handleResponseCancel(id, apiKeyId);
+    return c.json(result.response);
+  } catch (error) {
+    const upstream = upstreamErrorResponse(c, error);
+    if (upstream) return upstream;
+
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+    if (error instanceof ResponseNotFoundError) {
+      return c.json({ error: errorMessage }, 404);
+    }
+
+    if (error instanceof OpenAIResponseProviderNotConfiguredError) {
+      return c.json({ error: errorMessage }, 503);
     }
 
     if (error instanceof RequestLoggingUnavailableError) {
