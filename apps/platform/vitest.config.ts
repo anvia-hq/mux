@@ -6,13 +6,13 @@ export default defineConfig({
     env: {
       VITE_API_URL: "/api",
     },
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
       all: true,
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
-        "src/**/*.test.{ts,tsx}",
+        "tests/**/*.test.{ts,tsx}",
         "src/routeTree.gen.ts",
         "src/main.tsx",
         "src/styles.css",

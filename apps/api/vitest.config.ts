@@ -149,12 +149,12 @@ export default defineConfig({
     env: {
       DATABASE_URL: "postgresql://localhost:5432/test",
     },
-    include: ["src/**/*.test.ts"],
+    include: ["tests/**/*.test.ts"],
     coverage: {
       all: true,
       include: ["src/**/*.ts"],
       exclude: [
-        "src/**/*.test.ts",
+        "tests/**/*.test.ts",
         ...trivialProviders.map((p) => `src/providers/${p}.ts`),
         "src/providers/anthropic.ts",
         "src/providers/google.ts",
