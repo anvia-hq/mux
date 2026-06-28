@@ -1,13 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockAddApiKeySpendUsd,
+  mockBackoffMs,
+  mockEnqueueBackgroundPoll,
   mockEstimateCost,
   mockGetModelPricing,
   mockGetProviderByName,
   mockIsResponsesCacheEnabled,
   mockLogRequest,
   mockPrismaBackgroundResponseJobCreate,
+  mockPrismaBackgroundResponseJobDelete,
   mockPrismaBackgroundResponseJobFindUnique,
   mockPrismaBackgroundResponseJobUpdate,
   mockReadCachedResponse,
@@ -17,12 +20,15 @@ const {
   mockGetResponsesCacheTtlSeconds,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
+  mockBackoffMs: vi.fn(),
+  mockEnqueueBackgroundPoll: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockGetModelPricing: vi.fn(),
   mockGetProviderByName: vi.fn(),
   mockIsResponsesCacheEnabled: vi.fn(),
   mockLogRequest: vi.fn(),
   mockPrismaBackgroundResponseJobCreate: vi.fn(),
+  mockPrismaBackgroundResponseJobDelete: vi.fn(),
   mockPrismaBackgroundResponseJobFindUnique: vi.fn(),
   mockPrismaBackgroundResponseJobUpdate: vi.fn(),
   mockReadCachedResponse: vi.fn(),
@@ -30,6 +36,11 @@ const {
   mockResolveResponseTarget: vi.fn(),
   mockWriteCachedResponse: vi.fn(),
   mockGetResponsesCacheTtlSeconds: vi.fn(),
+}));
+
+vi.mock("@repo/worker", () => ({
+  backoffMs: mockBackoffMs,
+  enqueueBackgroundPoll: mockEnqueueBackgroundPoll,
 }));
 
 vi.mock("../keys/services", () => {
@@ -69,6 +80,7 @@ vi.mock("../../utils/prisma", () => ({
   prisma: {
     backgroundResponseJob: {
       create: mockPrismaBackgroundResponseJobCreate,
+      delete: mockPrismaBackgroundResponseJobDelete,
       findUnique: mockPrismaBackgroundResponseJobFindUnique,
       update: mockPrismaBackgroundResponseJobUpdate,
     },
@@ -102,12 +114,14 @@ import { openAICompatibleCapabilities } from "../../providers/chat-compat";
 import type { ResponseCreateRequest } from "../../providers/types";
 
 describe("responses services", () => {
-  afterEach(() => {
+  beforeEach(() => {
     vi.clearAllMocks();
     mockIsResponsesCacheEnabled.mockReturnValue(false);
     mockReadCachedResponse.mockResolvedValue(null);
     mockWriteCachedResponse.mockResolvedValue(undefined);
     mockGetResponsesCacheTtlSeconds.mockReturnValue(300);
+    mockBackoffMs.mockReturnValue(2_000);
+    mockEnqueueBackgroundPoll.mockResolvedValue(undefined);
   });
 
   const createRequest = (overrides?: Partial<ResponseCreateRequest>): ResponseCreateRequest => ({
@@ -181,12 +195,7 @@ describe("responses services", () => {
       }),
     );
     expect(createResponse.mock.calls[0]?.[0]).not.toHaveProperty("unknown");
-    expect(mockEstimateCost).toHaveBeenCalledWith(
-      "openai:gpt-4o",
-      10,
-      20,
-      undefined,
-    );
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4o", 10, 20, undefined);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: "/v1/responses",
@@ -220,12 +229,7 @@ describe("responses services", () => {
 
     await handleResponseCreate(createRequest({ model: "openai:gpt-5" }), "key-1");
 
-    expect(mockEstimateCost).toHaveBeenCalledWith(
-      "openai:gpt-5",
-      100,
-      50,
-      80,
-    );
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-5", 100, 50, 80);
   });
 
   it("logs reasoning_tokens when upstream reports them via output_tokens_details", async () => {
@@ -367,6 +371,11 @@ describe("responses services", () => {
         requestedModelId: "openai:gpt-5",
         target: createResolvedModel("openai", "gpt-5", createResponse),
       });
+      mockGetModelPricing.mockReturnValueOnce({
+        id: "gpt-5",
+        inputPricePer1M: 1.25,
+        outputPricePer1M: 10,
+      });
       mockPrismaBackgroundResponseJobCreate.mockResolvedValueOnce({ id: "resp_bg_abc" });
 
       const result = await submitBackgroundResponse(
@@ -391,6 +400,8 @@ describe("responses services", () => {
             provider: "openai",
             model: "openai:gpt-5",
             status: "queued",
+            inputPricePer1M: 1.25,
+            outputPricePer1M: 10,
           }),
         }),
       );
@@ -407,7 +418,67 @@ describe("responses services", () => {
           statusCode: 202,
         }),
       );
+      expect(mockEnqueueBackgroundPoll).toHaveBeenCalledWith("resp_bg_abc", 1, 2_000);
       expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+    });
+
+    it("does not enqueue polling for terminal upstream responses", async () => {
+      const createResponse = vi.fn().mockResolvedValueOnce({
+        id: "resp_bg_done",
+        object: "response",
+        status: "completed",
+        model: "gpt-5",
+        usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 },
+      });
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", createResponse),
+      });
+      mockGetModelPricing.mockReturnValueOnce({
+        id: "gpt-5",
+        inputPricePer1M: 1.25,
+        outputPricePer1M: 10,
+      });
+      mockEstimateCost.mockReturnValueOnce(0.000325);
+      mockPrismaBackgroundResponseJobCreate.mockResolvedValueOnce({ id: "resp_bg_done" });
+
+      await submitBackgroundResponse(createRequest({ background: true }), "key-1");
+
+      expect(mockEnqueueBackgroundPoll).not.toHaveBeenCalled();
+      expect(mockPrismaBackgroundResponseJobCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: "completed",
+            completedAt: expect.any(Date),
+          }),
+        }),
+      );
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          estimatedCost: 0.000325,
+          promptTokens: 100,
+          completionTokens: 20,
+        }),
+      );
+    });
+
+    it("requires known pricing for spend-limited background submissions", async () => {
+      const createResponse = vi.fn();
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-5",
+        target: createResolvedModel("openai", "gpt-5", createResponse),
+      });
+      mockGetModelPricing.mockReturnValueOnce(null);
+
+      await expect(
+        submitBackgroundResponse(createRequest({ background: true }), "key-1", {
+          requireBillableUsage: true,
+        }),
+      ).rejects.toBeInstanceOf(ApiKeyUnbillableResponseUsageError);
+      expect(createResponse).not.toHaveBeenCalled();
+      expect(mockPrismaBackgroundResponseJobCreate).not.toHaveBeenCalled();
     });
 
     it("does not write a row when the upstream call fails", async () => {
@@ -424,9 +495,7 @@ describe("responses services", () => {
         submitBackgroundResponse(createRequest({ background: true }), "key-1"),
       ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
       expect(mockPrismaBackgroundResponseJobCreate).not.toHaveBeenCalled();
-      expect(mockLogRequest).toHaveBeenCalledWith(
-        expect.objectContaining({ statusCode: 500 }),
-      );
+      expect(mockLogRequest).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 500 }));
     });
 
     it("throws when the model does not resolve", async () => {
@@ -464,12 +533,14 @@ describe("responses services", () => {
         requestedModelId: "openai:gpt-5",
         target: createResolvedModel("openai", "gpt-5", createResponse),
       });
+      mockGetModelPricing.mockReturnValueOnce({
+        id: "gpt-5",
+        inputPricePer1M: 1.25,
+        outputPricePer1M: 10,
+      });
       mockPrismaBackgroundResponseJobCreate.mockResolvedValueOnce({ id: "resp_bg_xyz" });
 
-      const result = await submitBackgroundResponse(
-        createRequest({ background: true }),
-        "key-1",
-      );
+      const result = await submitBackgroundResponse(createRequest({ background: true }), "key-1");
 
       expect(result.id).toBe("resp_bg_xyz");
       expect(mockPrismaBackgroundResponseJobCreate).toHaveBeenCalledWith(
@@ -477,6 +548,7 @@ describe("responses services", () => {
           data: expect.objectContaining({ status: "queued" }),
         }),
       );
+      expect(mockEnqueueBackgroundPoll).toHaveBeenCalledWith("resp_bg_xyz", 1, 2_000);
     });
   });
 
@@ -501,9 +573,7 @@ describe("responses services", () => {
       id: "resp-1",
       model: "azure-cognitive-services:gpt-5",
     });
-    expect(createResponse).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "gpt-5" }),
-    );
+    expect(createResponse).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5" }));
   });
 
   it("routes through a fallback-group target that is Responses-capable", async () => {
@@ -518,10 +588,7 @@ describe("responses services", () => {
       target: createResolvedModel("openai", "gpt-4o", createResponse),
     });
 
-    const result = await handleResponseCreate(
-      createRequest({ model: "mux:fast" }),
-      "key-1",
-    );
+    const result = await handleResponseCreate(createRequest({ model: "mux:fast" }), "key-1");
 
     expect(result).toMatchObject({ id: "resp-1", model: "mux:fast" });
   });
@@ -724,6 +791,38 @@ describe("responses services", () => {
       status: "queued",
       _pending: true,
     });
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses/:id",
+        statusCode: 202,
+      }),
+    );
+  });
+
+  it("returns stored local background body as pending when the job is not terminal", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+      id: "resp_bg_pending",
+      apiKeyId: "key-1",
+      provider: "openai",
+      model: "openai:gpt-5",
+      status: "in_progress",
+      response: { id: "resp_bg_pending", status: "queued", model: "gpt-5" },
+    });
+
+    const result = await handleResponseRetrieve("resp_bg_pending", "key-1");
+
+    expect(result).toMatchObject({
+      id: "resp_bg_pending",
+      status: "in_progress",
+      model: "openai:gpt-5",
+      _pending: true,
+    });
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses/:id",
+        statusCode: 202,
+      }),
+    );
   });
 
   it("falls through to the OpenAI provider when no local row exists", async () => {
@@ -804,6 +903,7 @@ describe("responses services", () => {
   });
 
   it("deletes a response via the openai provider and logs a 200 entry", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
     const deleteResponse = vi.fn().mockResolvedValueOnce({
       id: "resp_abc",
       object: "response",
@@ -829,7 +929,48 @@ describe("responses services", () => {
     );
   });
 
+  it("deletes a local BackgroundResponseJob and tolerates upstream 404", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce({
+      id: "resp_bg_abc",
+      apiKeyId: "key-1",
+      provider: "openai",
+      model: "openai:gpt-5",
+      status: "cancelled",
+      response: { id: "resp_bg_abc", status: "cancelled" },
+    });
+    const deleteResponse = vi
+      .fn()
+      .mockRejectedValueOnce(new UpstreamResponsesApiError(404, "missing"));
+    mockGetProviderByName.mockReturnValueOnce({
+      name: "openai",
+      deleteResponse,
+      listModels: vi.fn().mockReturnValue([]),
+    });
+    mockPrismaBackgroundResponseJobDelete.mockResolvedValueOnce({});
+
+    const result = await handleResponseDelete("resp_bg_abc", "key-1");
+
+    expect(result).toMatchObject({
+      id: "resp_bg_abc",
+      object: "response",
+      deleted: true,
+    });
+    expect(deleteResponse).toHaveBeenCalledWith("resp_bg_abc");
+    expect(mockPrismaBackgroundResponseJobDelete).toHaveBeenCalledWith({
+      where: { id: "resp_bg_abc" },
+    });
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "/v1/responses/:id",
+        provider: "openai",
+        model: "openai:gpt-5",
+        statusCode: 200,
+      }),
+    );
+  });
+
   it("throws when the openai provider is not configured for delete", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
     mockGetProviderByName.mockReturnValueOnce(null);
 
     await expect(handleResponseDelete("resp_abc", "key-1")).rejects.toBeInstanceOf(
@@ -839,6 +980,7 @@ describe("responses services", () => {
   });
 
   it("rejects providers that do not implement deleteResponse", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
     mockGetProviderByName.mockReturnValueOnce({
       name: "openai",
       listModels: vi.fn().mockReturnValue([]),
@@ -850,6 +992,7 @@ describe("responses services", () => {
   });
 
   it("logs upstream errors before rethrowing on delete", async () => {
+    mockPrismaBackgroundResponseJobFindUnique.mockResolvedValueOnce(null);
     const deleteResponse = vi
       .fn()
       .mockRejectedValueOnce(new Error("OpenAI Responses API error: 404 - not found"));
@@ -1106,10 +1249,7 @@ describe("responses services", () => {
   });
 
   describe("handleResponseCompact", () => {
-    function makeProvider(
-      name: string,
-      compactResponse: ReturnType<typeof vi.fn> | undefined,
-    ) {
+    function makeProvider(name: string, compactResponse: ReturnType<typeof vi.fn> | undefined) {
       return {
         name,
         chatCompletion: vi.fn(),
@@ -1160,9 +1300,7 @@ describe("responses services", () => {
         provider: "openai",
         model: "openai:gpt-5",
       });
-      expect(compactResponse).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "gpt-5" }),
-      );
+      expect(compactResponse).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5" }));
       expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.42);
       expect(mockLogRequest).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1196,15 +1334,10 @@ describe("responses services", () => {
           : null,
       );
 
-      const result = await handleResponseCompact(
-        { model: "openai:gpt-5", input: "hi" },
-        "key-1",
-      );
+      const result = await handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1");
 
       expect(result.provider).toBe("azure-cognitive-services");
-      expect(azureCompact).toHaveBeenCalledWith(
-        expect.objectContaining({ model: "gpt-5" }),
-      );
+      expect(azureCompact).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5" }));
       expect(mockLogRequest).toHaveBeenCalledWith(
         expect.objectContaining({
           endpoint: "/v1/responses/compact",
@@ -1279,11 +1412,9 @@ describe("responses services", () => {
       });
 
       await expect(
-        handleResponseCompact(
-          { model: "openai:gpt-5", input: "hi" },
-          "key-1",
-          { requireBillableUsage: true },
-        ),
+        handleResponseCompact({ model: "openai:gpt-5", input: "hi" }, "key-1", {
+          requireBillableUsage: true,
+        }),
       ).rejects.toBeInstanceOf(ApiKeyUnbillableResponseUsageError);
     });
 
@@ -1291,9 +1422,9 @@ describe("responses services", () => {
       mockResolveResponseTarget.mockResolvedValueOnce(null);
       mockResolveChatModel.mockResolvedValueOnce(null);
 
-      await expect(
-        handleResponseCompact({ model: "openai:gpt-5" }, "key-1"),
-      ).rejects.toThrow("No provider found");
+      await expect(handleResponseCompact({ model: "openai:gpt-5" }, "key-1")).rejects.toThrow(
+        "No provider found",
+      );
     });
 
     it("rejects a non-Responses-capable model with UnsupportedResponseFeatureError", async () => {
@@ -1327,10 +1458,7 @@ describe("responses services", () => {
   });
 
   describe("handleResponseInputItems", () => {
-    function makeProvider(
-      name: string,
-      listResponseInputItems: ReturnType<typeof vi.fn>,
-    ) {
+    function makeProvider(name: string, listResponseInputItems: ReturnType<typeof vi.fn>) {
       return {
         name,
         chatCompletion: vi.fn(),
@@ -1420,9 +1548,9 @@ describe("responses services", () => {
         return null;
       });
 
-      await expect(
-        handleResponseInputItems("resp_x", "key-1"),
-      ).rejects.toBeInstanceOf(ResponseNotFoundError);
+      await expect(handleResponseInputItems("resp_x", "key-1")).rejects.toBeInstanceOf(
+        ResponseNotFoundError,
+      );
       expect(mockLogRequest).toHaveBeenCalledWith(
         expect.objectContaining({
           endpoint: "/v1/responses/:id/input_items",
@@ -1432,9 +1560,7 @@ describe("responses services", () => {
     });
 
     it("does not retry Azure on a non-404 upstream error", async () => {
-      const openaiList = vi
-        .fn()
-        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const openaiList = vi.fn().mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
       const azureList = vi.fn();
       mockGetProviderByName.mockImplementation((name: string) => {
         if (name === "openai") return makeProvider("openai", openaiList);
@@ -1443,18 +1569,18 @@ describe("responses services", () => {
         return null;
       });
 
-      await expect(
-        handleResponseInputItems("resp_x", "key-1"),
-      ).rejects.toBeInstanceOf(UpstreamResponsesApiError);
+      await expect(handleResponseInputItems("resp_x", "key-1")).rejects.toBeInstanceOf(
+        UpstreamResponsesApiError,
+      );
       expect(azureList).not.toHaveBeenCalled();
     });
 
     it("throws OpenAIResponseProviderNotConfiguredError when no adapter implements the method", async () => {
       mockGetProviderByName.mockReturnValue(null);
 
-      await expect(
-        handleResponseInputItems("resp_x", "key-1"),
-      ).rejects.toBeInstanceOf(OpenAIResponseProviderNotConfiguredError);
+      await expect(handleResponseInputItems("resp_x", "key-1")).rejects.toBeInstanceOf(
+        OpenAIResponseProviderNotConfiguredError,
+      );
     });
 
     it("skips providers that do not implement listResponseInputItems", async () => {
@@ -1487,10 +1613,7 @@ describe("responses services", () => {
   });
 
   describe("handleResponseInputTokens", () => {
-    function makeProvider(
-      name: string,
-      countResponseInputTokens: ReturnType<typeof vi.fn>,
-    ) {
+    function makeProvider(name: string, countResponseInputTokens: ReturnType<typeof vi.fn>) {
       return {
         name,
         chatCompletion: vi.fn(),
@@ -1550,10 +1673,7 @@ describe("responses services", () => {
         return null;
       });
 
-      const result = await handleResponseInputTokens(
-        { model: "gpt-4o", input: "hi" },
-        "key-1",
-      );
+      const result = await handleResponseInputTokens({ model: "gpt-4o", input: "hi" }, "key-1");
 
       expect(result).toMatchObject({
         provider: "azure-cognitive-services",
@@ -1589,9 +1709,7 @@ describe("responses services", () => {
     });
 
     it("does not retry Azure on a non-404 upstream error", async () => {
-      const openaiCount = vi
-        .fn()
-        .mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
+      const openaiCount = vi.fn().mockRejectedValueOnce(new UpstreamResponsesApiError(500, "boom"));
       const azureCount = vi.fn();
       mockGetProviderByName.mockImplementation((name: string) => {
         if (name === "openai") return makeProvider("openai", openaiCount);

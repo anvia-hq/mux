@@ -534,9 +534,7 @@ export type ResolvedResponseTarget = {
  *   - anything else, or a model/group with no Responses-capable
  *     targets: returns `null`.
  */
-export async function resolveResponseTarget(
-  model: string,
-): Promise<ResolvedResponseTarget | null> {
+export async function resolveResponseTarget(model: string): Promise<ResolvedResponseTarget | null> {
   const resolved = await resolveChatModel(model);
   if (!resolved) {
     return null;

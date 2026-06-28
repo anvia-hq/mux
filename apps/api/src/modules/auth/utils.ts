@@ -64,9 +64,7 @@ function issueParamPath(issue: ZodIssue | undefined): string | null {
 }
 
 export function authValidationHook(
-  result:
-    | { success: true }
-    | { success: false; error: { issues: Array<ZodIssue> } },
+  result: { success: true } | { success: false; error: { issues: Array<ZodIssue> } },
   c: Context,
 ) {
   if (result.success) return;

@@ -191,9 +191,7 @@ describe("auth utils", () => {
         {
           success: false,
           error: {
-            issues: [
-              { code: "custom", path: [], message: "bad" } as never,
-            ],
+            issues: [{ code: "custom", path: [], message: "bad" } as never],
           },
         },
         c,

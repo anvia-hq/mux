@@ -19,10 +19,7 @@ const inputMessageSchema = z.object({
   status: z.enum(["in_progress", "completed", "incomplete"]).optional(),
 });
 
-export const responseInputSchema = z.union([
-  z.string().min(1),
-  z.array(inputMessageSchema).min(1),
-]);
+export const responseInputSchema = z.union([z.string().min(1), z.array(inputMessageSchema).min(1)]);
 
 // --- Tool schemas (P1.2) ---
 
@@ -110,14 +107,7 @@ export const responseToolSchema = z.discriminatedUnion("type", [
 // --- tool_choice (P1.3) ---
 
 const hostedToolChoiceSchema = z.object({
-  type: z.enum([
-    "web_search",
-    "file_search",
-    "code_interpreter",
-    "mcp",
-    "custom",
-    "apply_patch",
-  ]),
+  type: z.enum(["web_search", "file_search", "code_interpreter", "mcp", "custom", "apply_patch"]),
   name: z.string().optional(),
 });
 
@@ -143,43 +133,42 @@ const textFormatSchema = z.union([
 
 export const responseCreateRequestSchema = z
   .object({
-  model: z
-    .string({ error: "model is required" })
-    .min(1, "model is required"),
-  input: responseInputSchema.optional(),
-  instructions: z.string().optional(),
-  stream: z.boolean().optional(),
-  background: z.boolean().optional(),
-  tools: z.array(responseToolSchema).optional(),
-  tool_choice: toolChoiceSchema.optional(),
-  text: z.object({ format: textFormatSchema }).optional(),
-  max_output_tokens: z.number().int().positive().optional(),
-  temperature: z.number().min(0).max(2).optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
-  store: z.boolean().optional(),
-  service_tier: z.enum(["auto", "default", "flex", "priority"]).optional(),
-  safety_identifier: z.string().min(1).max(64).optional(),
-  truncation: z.enum(["auto", "disabled"]).optional(),
-  prompt: z
-    .union([
-      z.string(),
-      z.object({
-        id: z.string(),
-        version: z.string().optional(),
-        variables: z.record(z.string(), z.string()).optional(),
-      }),
-    ])
-    .optional(),
-  reasoning: z
-    .object({
-      effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
-      summary: z.enum(["auto", "concise", "detailed"]).optional(),
-    })
-    .optional(),
-}).refine((data) => !(data.stream === true && data.background === true), {
-  message: "stream and background cannot both be true",
-  path: ["background"],
-});
+    model: z.string({ error: "model is required" }).min(1, "model is required"),
+    input: responseInputSchema.optional(),
+    instructions: z.string().optional(),
+    stream: z.boolean().optional(),
+    background: z.boolean().optional(),
+    tools: z.array(responseToolSchema).optional(),
+    tool_choice: toolChoiceSchema.optional(),
+    text: z.object({ format: textFormatSchema }).optional(),
+    max_output_tokens: z.number().int().positive().optional(),
+    temperature: z.number().min(0).max(2).optional(),
+    metadata: z.record(z.string(), z.string()).optional(),
+    store: z.boolean().optional(),
+    service_tier: z.enum(["auto", "default", "flex", "priority"]).optional(),
+    safety_identifier: z.string().min(1).max(64).optional(),
+    truncation: z.enum(["auto", "disabled"]).optional(),
+    prompt: z
+      .union([
+        z.string(),
+        z.object({
+          id: z.string(),
+          version: z.string().optional(),
+          variables: z.record(z.string(), z.string()).optional(),
+        }),
+      ])
+      .optional(),
+    reasoning: z
+      .object({
+        effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
+        summary: z.enum(["auto", "concise", "detailed"]).optional(),
+      })
+      .optional(),
+  })
+  .refine((data) => !(data.stream === true && data.background === true), {
+    message: "stream and background cannot both be true",
+    path: ["background"],
+  });
 
 export type ResponseCreateRequestInput = z.infer<typeof responseCreateRequestSchema>;
 
@@ -192,9 +181,7 @@ const responseCompactInputSchema = z.union([
 
 export const responseCompactRequestSchema = z
   .object({
-    model: z
-      .string({ error: "model is required" })
-      .min(1, "model is required"),
+    model: z.string({ error: "model is required" }).min(1, "model is required"),
     input: responseCompactInputSchema.optional(),
   })
   .strict();

@@ -21,7 +21,12 @@ export type ResponseStreamEvent =
   | { type: "response.created"; response: ResponseObject }
   | { type: "response.in_progress"; response: ResponseObject }
   | { type: "response.output_item.added"; output_index: number; item: ResponseOutputItem }
-  | { type: "response.output_text.delta"; output_index: number; content_index: number; delta: string }
+  | {
+      type: "response.output_text.delta";
+      output_index: number;
+      content_index: number;
+      delta: string;
+    }
   | { type: "response.completed"; response: ResponseObject }
   | { type: "response.error"; code?: string | null; message: string; param?: string | null };
 
@@ -164,7 +169,8 @@ export class SseBlockParser {
     if (candidates.length === 0) return null;
 
     candidates.sort((a, b) => a.index - b.index);
-    const winner = candidates[0]!;
+    const winner = candidates[0];
+    if (!winner) return null;
     return {
       delimiterLength: winner.index + winner.length,
       block: this.buffer.slice(0, winner.index),

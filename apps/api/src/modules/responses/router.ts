@@ -78,7 +78,13 @@ responsesRouter.post(
 
     if (body.background === true) {
       try {
-        const submitted = await submitBackgroundResponse(body, apiKeyId);
+        if (isLimitedKey) {
+          await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
+        }
+
+        const submitted = await submitBackgroundResponse(body, apiKeyId, {
+          requireBillableUsage: isLimitedKey,
+        });
         c.header("Location", `/v1/responses/${submitted.id}`);
         return c.json(submitted.response, 202);
       } catch (error) {
@@ -95,6 +101,14 @@ responsesRouter.post(
           return c.json({ error: errorMessage }, 422);
         }
 
+        if (error instanceof ApiKeySpendLimitExceededError) {
+          return c.json({ error: errorMessage }, 429);
+        }
+
+        if (error instanceof ApiKeyUnbillableResponseUsageError) {
+          return c.json({ error: errorMessage }, 429);
+        }
+
         if (
           error instanceof RequestLoggingUnavailableError ||
           error instanceof ApiKeySpendLedgerUnavailableError
@@ -106,139 +120,140 @@ responsesRouter.post(
       }
     }
 
-  try {
-    if (isLimitedKey) {
-      await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
-    }
+    try {
+      if (isLimitedKey) {
+        await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
+      }
 
-    if (body.stream === true) {
-      const result = await handleResponseCreateStream(body);
-      const { stream: streamIterable, provider, model, startTime } = result;
-      const logId = await logStreamStart({
-        apiKeyId,
-        provider,
-        model,
-        endpoint: "/v1/responses",
-        latencyMs: 0,
-        statusCode: 102,
-        errorMessage: "stream pending",
-      });
+      if (body.stream === true) {
+        const result = await handleResponseCreateStream(body);
+        const { stream: streamIterable, provider, model, startTime } = result;
+        const logId = await logStreamStart({
+          apiKeyId,
+          provider,
+          model,
+          endpoint: "/v1/responses",
+          latencyMs: 0,
+          statusCode: 102,
+          errorMessage: "stream pending",
+        });
 
-      c.header("Content-Type", "text/event-stream");
-      c.header("Cache-Control", "no-cache");
-      c.header("Connection", "keep-alive");
+        c.header("Content-Type", "text/event-stream");
+        c.header("Cache-Control", "no-cache");
+        c.header("Connection", "keep-alive");
 
-      return honoStream(c, async (streamWriter) => {
-        const blockParser = new SseBlockParser();
-        let usage: ResponseUsage | undefined;
+        return honoStream(c, async (streamWriter) => {
+          const blockParser = new SseBlockParser();
+          let usage: ResponseUsage | undefined;
 
-        try {
-          for await (const chunk of streamIterable) {
-            await streamWriter.write(chunk);
-            for (const block of blockParser.push(chunk)) {
+          try {
+            for await (const chunk of streamIterable) {
+              await streamWriter.write(chunk);
+              for (const block of blockParser.push(chunk)) {
+                const event = parseResponseStreamBlock(block);
+                if (event?.type === "response.completed") {
+                  usage = event.response.usage;
+                }
+              }
+            }
+            for (const block of blockParser.end()) {
               const event = parseResponseStreamBlock(block);
               if (event?.type === "response.completed") {
                 usage = event.response.usage;
               }
             }
-          }
-          for (const block of blockParser.end()) {
-            const event = parseResponseStreamBlock(block);
-            if (event?.type === "response.completed") {
-              usage = event.response.usage;
+
+            const latencyMs = Date.now() - startTime;
+            const estimatedCost = estimateCost(model, usage?.input_tokens, usage?.output_tokens);
+            const reasoningTokens = readReasoningTokens(usage);
+
+            if (isLimitedKey && estimatedCost !== undefined) {
+              try {
+                await addApiKeySpendUsd(apiKeyId, estimatedCost);
+              } catch (spendError) {
+                console.error("Failed to record streamed response spend:", spendError);
+              }
             }
-          }
 
-          const latencyMs = Date.now() - startTime;
-          const estimatedCost = estimateCost(model, usage?.input_tokens, usage?.output_tokens);
-          const reasoningTokens = readReasoningTokens(usage);
-
-          if (isLimitedKey && estimatedCost !== undefined) {
             try {
-              await addApiKeySpendUsd(apiKeyId, estimatedCost);
-            } catch (spendError) {
-              console.error("Failed to record streamed response spend:", spendError);
+              await logStreamFinal({
+                logId,
+                apiKeyId,
+                provider,
+                model,
+                endpoint: "/v1/responses",
+                latencyMs,
+                promptTokens: usage?.input_tokens,
+                completionTokens: usage?.output_tokens,
+                totalTokens: usage?.total_tokens,
+                reasoningTokens,
+                estimatedCost,
+                statusCode: 200,
+              });
+            } catch (logError) {
+              console.error("Failed to finalize response stream log:", logError);
             }
-          }
+          } catch (streamError) {
+            const latencyMs = Date.now() - startTime;
+            const errorMessage =
+              streamError instanceof Error ? streamError.message : "Unknown error";
 
-          try {
-            await logStreamFinal({
-              logId,
-              apiKeyId,
-              provider,
-              model,
-              endpoint: "/v1/responses",
-              latencyMs,
-              promptTokens: usage?.input_tokens,
-              completionTokens: usage?.output_tokens,
-              totalTokens: usage?.total_tokens,
-              reasoningTokens,
-              estimatedCost,
-              statusCode: 200,
-            });
-          } catch (logError) {
-            console.error("Failed to finalize response stream log:", logError);
-          }
-        } catch (streamError) {
-          const latencyMs = Date.now() - startTime;
-          const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
+            try {
+              await logStreamFinal({
+                logId,
+                apiKeyId,
+                provider,
+                model,
+                endpoint: "/v1/responses",
+                latencyMs,
+                statusCode: 500,
+                errorMessage,
+              });
+            } catch (logError) {
+              console.error("Failed to finalize failed response stream log:", logError);
+            }
 
-          try {
-            await logStreamFinal({
-              logId,
-              apiKeyId,
-              provider,
-              model,
-              endpoint: "/v1/responses",
-              latencyMs,
-              statusCode: 500,
-              errorMessage,
-            });
-          } catch (logError) {
-            console.error("Failed to finalize failed response stream log:", logError);
+            throw streamError;
           }
+        });
+      }
 
-          throw streamError;
-        }
+      const response = await handleResponseCreate(body, apiKeyId, {
+        requireBillableUsage: isLimitedKey,
       });
+
+      return c.json(response);
+    } catch (error) {
+      const upstream = upstreamErrorResponse(c, error);
+      if (upstream) return upstream;
+
+      const errorMessage = error instanceof Error ? error.message : "Internal server error";
+
+      if (errorMessage.startsWith("No provider found")) {
+        return c.json({ error: errorMessage }, 404);
+      }
+
+      if (error instanceof ApiKeySpendLimitExceededError) {
+        return c.json({ error: errorMessage }, 429);
+      }
+
+      if (error instanceof ApiKeyUnbillableResponseUsageError) {
+        return c.json({ error: errorMessage }, 429);
+      }
+
+      if (
+        error instanceof RequestLoggingUnavailableError ||
+        error instanceof ApiKeySpendLedgerUnavailableError
+      ) {
+        return c.json({ error: errorMessage }, 503);
+      }
+
+      if (error instanceof UnsupportedResponseFeatureError) {
+        return c.json({ error: errorMessage }, 422);
+      }
+
+      return c.json({ error: errorMessage }, 500);
     }
-
-    const response = await handleResponseCreate(body, apiKeyId, {
-      requireBillableUsage: isLimitedKey,
-    });
-
-    return c.json(response);
-  } catch (error) {
-    const upstream = upstreamErrorResponse(c, error);
-    if (upstream) return upstream;
-
-    const errorMessage = error instanceof Error ? error.message : "Internal server error";
-
-    if (errorMessage.startsWith("No provider found")) {
-      return c.json({ error: errorMessage }, 404);
-    }
-
-    if (error instanceof ApiKeySpendLimitExceededError) {
-      return c.json({ error: errorMessage }, 429);
-    }
-
-    if (error instanceof ApiKeyUnbillableResponseUsageError) {
-      return c.json({ error: errorMessage }, 429);
-    }
-
-    if (
-      error instanceof RequestLoggingUnavailableError ||
-      error instanceof ApiKeySpendLedgerUnavailableError
-    ) {
-      return c.json({ error: errorMessage }, 503);
-    }
-
-    if (error instanceof UnsupportedResponseFeatureError) {
-      return c.json({ error: errorMessage }, 422);
-    }
-
-    return c.json({ error: errorMessage }, 500);
-  }
   },
 );
 

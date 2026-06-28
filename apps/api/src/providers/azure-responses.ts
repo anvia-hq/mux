@@ -18,9 +18,7 @@ export const azureCapabilities: ProviderCapabilities = {
 
 export class AzureResponsesEndpointNotConfiguredError extends Error {
   constructor(provider: string) {
-    super(
-      `${provider} Responses endpoint is not configured; set AZURE_OPENAI_RESPONSES_ENDPOINT`,
-    );
+    super(`${provider} Responses endpoint is not configured; set AZURE_OPENAI_RESPONSES_ENDPOINT`);
     this.name = "AzureResponsesEndpointNotConfiguredError";
   }
 }

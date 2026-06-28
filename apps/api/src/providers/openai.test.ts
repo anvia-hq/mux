@@ -401,9 +401,7 @@ describe("OpenAIAdapter", () => {
       Response.json({
         id: "resp_001",
         object: "response.compaction",
-        output: [
-          { id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." },
-        ],
+        output: [{ id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." }],
         usage: { input_tokens: 139, output_tokens: 438, total_tokens: 577 },
       }),
     );
@@ -431,7 +429,9 @@ describe("OpenAIAdapter", () => {
   });
 
   it("serializes the compact body as JSON", async () => {
-    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_001", object: "response.compaction" }));
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ id: "resp_001", object: "response.compaction" }),
+    );
 
     const adapter = new OpenAIAdapter("sk-test");
     await adapter.compactResponse({ model: "gpt-5", input: "hello" });

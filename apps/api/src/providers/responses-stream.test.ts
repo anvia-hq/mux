@@ -10,7 +10,7 @@ import type { ResponseObject } from "./responses-types";
 describe("SseBlockParser", () => {
   it("parses a single LF-terminated block with event and data", () => {
     const parser = new SseBlockParser();
-    const blocks = parser.push("event: response.completed\ndata: {\"id\":\"r1\"}\n\n");
+    const blocks = parser.push('event: response.completed\ndata: {"id":"r1"}\n\n');
     expect(blocks).toEqual([{ event: "response.completed", data: '{"id":"r1"}' }]);
   });
 
@@ -22,9 +22,7 @@ describe("SseBlockParser", () => {
 
   it("parses multiple blocks from one chunk", () => {
     const parser = new SseBlockParser();
-    const blocks = parser.push(
-      "event: a\ndata: 1\n\nevent: b\ndata: 2\n\n",
-    );
+    const blocks = parser.push("event: a\ndata: 1\n\nevent: b\ndata: 2\n\n");
     expect(blocks).toEqual([
       { event: "a", data: "1" },
       { event: "b", data: "2" },
@@ -46,9 +44,7 @@ describe("SseBlockParser", () => {
   it("holds a partial block across multiple pushes", () => {
     const parser = new SseBlockParser();
     expect(parser.push("event: slo")).toEqual([]);
-    expect(parser.push("w\ndata: hello\n\n")).toEqual([
-      { event: "slow", data: "hello" },
-    ]);
+    expect(parser.push("w\ndata: hello\n\n")).toEqual([{ event: "slow", data: "hello" }]);
   });
 
   it("picks the earliest terminator when both LF and CRLF candidates exist", () => {
@@ -98,7 +94,9 @@ const completedResponse: ResponseObject = {
 describe("decodeStreamEvents", () => {
   it("decodes a response.created event from event/data lines", async () => {
     const events = decodeStreamEvents(
-      toAsyncIterable([`event: response.created\ndata: ${JSON.stringify({ response: completedResponse })}\n\n`]),
+      toAsyncIterable([
+        `event: response.created\ndata: ${JSON.stringify({ response: completedResponse })}\n\n`,
+      ]),
     );
     const list = [];
     for await (const e of events) list.push(e);
@@ -107,7 +105,9 @@ describe("decodeStreamEvents", () => {
 
   it("decodes a response.in_progress event", async () => {
     const events = decodeStreamEvents(
-      toAsyncIterable([`data: ${JSON.stringify({ type: "response.in_progress", response: completedResponse })}\n\n`]),
+      toAsyncIterable([
+        `data: ${JSON.stringify({ type: "response.in_progress", response: completedResponse })}\n\n`,
+      ]),
     );
     const list = [];
     for await (const e of events) list.push(e);
@@ -117,7 +117,9 @@ describe("decodeStreamEvents", () => {
   it("decodes a response.output_item.added event", async () => {
     const item = { type: "output_text", text: "hi" };
     const events = decodeStreamEvents(
-      toAsyncIterable([`data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item })}\n\n`]),
+      toAsyncIterable([
+        `data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item })}\n\n`,
+      ]),
     );
     const list = [];
     for await (const e of events) list.push(e);
@@ -153,7 +155,9 @@ describe("decodeStreamEvents", () => {
 
   it("decodes a response.error event with optional fields", async () => {
     const events = decodeStreamEvents(
-      toAsyncIterable([`data: ${JSON.stringify({ type: "response.error", code: "boom", message: "nope", param: "x" })}\n\n`]),
+      toAsyncIterable([
+        `data: ${JSON.stringify({ type: "response.error", code: "boom", message: "nope", param: "x" })}\n\n`,
+      ]),
     );
     const list = [];
     for await (const e of events) list.push(e);
@@ -167,7 +171,10 @@ describe("decodeStreamEvents", () => {
 
   it("silently drops [DONE] sentinels and unknown events", async () => {
     const events = decodeStreamEvents(
-      toAsyncIterable(["data: [DONE]\n\n", `data: ${JSON.stringify({ type: "response.weird" })}\n\n`]),
+      toAsyncIterable([
+        "data: [DONE]\n\n",
+        `data: ${JSON.stringify({ type: "response.weird" })}\n\n`,
+      ]),
     );
     const list = [];
     for await (const e of events) list.push(e);
@@ -195,13 +202,9 @@ describe("decodeStreamEvents", () => {
   });
 
   it("isTerminalEvent marks only completed and error as terminal", () => {
-    expect(
-      isTerminalEvent({ type: "response.completed", response: completedResponse }),
-    ).toBe(true);
+    expect(isTerminalEvent({ type: "response.completed", response: completedResponse })).toBe(true);
     expect(isTerminalEvent({ type: "response.error", message: "x" })).toBe(true);
-    expect(
-      isTerminalEvent({ type: "response.created", response: completedResponse }),
-    ).toBe(false);
+    expect(isTerminalEvent({ type: "response.created", response: completedResponse })).toBe(false);
     expect(
       isTerminalEvent({
         type: "response.output_text.delta",
@@ -225,7 +228,9 @@ describe("decodeStreamEvents", () => {
 
   it("findCompletedUsage returns undefined when no completed event arrives", async () => {
     const events = decodeStreamEvents(
-      toAsyncIterable([`data: ${JSON.stringify({ type: "response.created", response: completedResponse })}\n\n`]),
+      toAsyncIterable([
+        `data: ${JSON.stringify({ type: "response.created", response: completedResponse })}\n\n`,
+      ]),
     );
     const usage = await findCompletedUsage(events);
     expect(usage).toBeUndefined();

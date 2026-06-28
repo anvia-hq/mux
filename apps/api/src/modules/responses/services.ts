@@ -1,3 +1,4 @@
+import { backoffMs, enqueueBackgroundPoll } from "@repo/worker";
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
 import {
   getResponsesCacheTtlSeconds,
@@ -14,7 +15,11 @@ import {
   resolveResponseTarget,
   type ResolvedProviderModel,
 } from "../../providers/registry";
-import type { ResponseCompactRequest, ResponseCreateRequest, ResponseObject } from "../../providers/types";
+import type {
+  ResponseCompactRequest,
+  ResponseCreateRequest,
+  ResponseObject,
+} from "../../providers/types";
 import { prisma } from "../../utils/prisma";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
@@ -47,6 +52,8 @@ const RESPONSE_CREATE_FIELDS = [
   "truncation",
   "user",
 ] as const;
+
+const TERMINAL_RESPONSE_STATUSES = new Set(["completed", "cancelled", "failed"]);
 
 export class UnsupportedResponseFeatureError extends Error {
   constructor(message: string) {
@@ -213,6 +220,7 @@ export async function handleResponseCreateStream(
 export async function submitBackgroundResponse(
   request: ResponseCreateRequest,
   apiKeyId: string,
+  options: { requireBillableUsage?: boolean } = {},
 ): Promise<{ id: string; response: ResponseObject }> {
   const { requestedModelId, target } = await resolveOpenAIResponseTarget(request);
 
@@ -220,6 +228,11 @@ export async function submitBackgroundResponse(
     throw new UnsupportedResponseFeatureError(
       "Selected provider does not support the Responses API",
     );
+  }
+
+  const pricing = getModelPricing(target.publicModelId);
+  if (options.requireBillableUsage && !pricing) {
+    throw new ApiKeyUnbillableResponseUsageError();
   }
 
   const startTime = Date.now();
@@ -253,8 +266,35 @@ export async function submitBackgroundResponse(
     throw new Error("Upstream provider did not return a response id");
   }
 
-  const upstreamStatus =
-    typeof response.status === "string" ? response.status : "queued";
+  const upstreamStatus = typeof response.status === "string" ? response.status : "queued";
+  const terminal = isTerminalResponseStatus(upstreamStatus);
+  const usage = response.usage;
+  const cachedTokens = readCachedTokens(usage);
+  const reasoningTokens = readReasoningTokens(usage);
+  const estimatedCost =
+    terminal && upstreamStatus === "completed"
+      ? estimateCost(target.publicModelId, usage?.input_tokens, usage?.output_tokens, cachedTokens)
+      : undefined;
+
+  if (options.requireBillableUsage && terminal && upstreamStatus === "completed") {
+    if (estimatedCost === undefined) {
+      await logRequest({
+        apiKeyId,
+        provider: target.provider.name,
+        model: target.publicModelId,
+        endpoint: "/v1/responses",
+        latencyMs,
+        promptTokens: usage?.input_tokens,
+        completionTokens: usage?.output_tokens,
+        totalTokens: usage?.total_tokens,
+        reasoningTokens,
+        statusCode: 429,
+        errorMessage: "Billable usage could not be determined",
+      });
+      throw new ApiKeyUnbillableResponseUsageError();
+    }
+    await addApiKeySpendUsd(apiKeyId, estimatedCost);
+  }
 
   await prisma.backgroundResponseJob.create({
     data: {
@@ -265,8 +305,16 @@ export async function submitBackgroundResponse(
       request: request as object,
       status: upstreamStatus,
       response: response as object,
+      inputPricePer1M: pricing?.inputPricePer1M ?? null,
+      outputPricePer1M: pricing?.outputPricePer1M ?? null,
+      startedAt: new Date(startTime),
+      ...(terminal ? { completedAt: new Date() } : {}),
     },
   });
+
+  if (!terminal) {
+    await enqueueBackgroundPoll(upstreamId, 1, backoffMs(1));
+  }
 
   await logRequest({
     apiKeyId,
@@ -274,6 +322,11 @@ export async function submitBackgroundResponse(
     model: target.publicModelId,
     endpoint: "/v1/responses",
     latencyMs,
+    promptTokens: usage?.input_tokens,
+    completionTokens: usage?.output_tokens,
+    totalTokens: usage?.total_tokens,
+    reasoningTokens,
+    estimatedCost,
     statusCode: 202,
   });
 
@@ -307,26 +360,24 @@ export async function handleResponseRetrieve(
   });
 
   if (localRow) {
-    if (localRow.response !== null && localRow.response !== undefined) {
-      const startTime = Date.now();
-      const latencyMs = Date.now() - startTime;
-      await logRequest({
-        apiKeyId,
-        provider: localRow.provider,
-        model: localRow.model,
-        endpoint: "/v1/responses/:id",
-        latencyMs,
-        statusCode: 200,
-      });
-      return localRow.response as ResponseObject;
+    const startTime = Date.now();
+    const pending = !isTerminalResponseStatus(localRow.status);
+    const body = buildLocalBackgroundResponse(localRow);
+    const latencyMs = Date.now() - startTime;
+    await logRequest({
+      apiKeyId,
+      provider: localRow.provider,
+      model: localRow.model,
+      endpoint: "/v1/responses/:id",
+      latencyMs,
+      statusCode: pending ? 202 : 200,
+    });
+
+    if (pending) {
+      return { ...body, _pending: true } as ResponseObject;
     }
 
-    return {
-      id: localRow.id,
-      object: "response",
-      status: localRow.status,
-      _pending: true,
-    } as ResponseObject;
+    return body;
   }
 
   if (isResponsesCacheEnabled()) {
@@ -354,7 +405,13 @@ export async function handleResponseRetrieve(
     const latencyMs = Date.now() - startTime;
 
     if (isResponsesCacheEnabled()) {
-      await writeCachedResponse(apiKeyId, provider.name, id, response, getResponsesCacheTtlSeconds());
+      await writeCachedResponse(
+        apiKeyId,
+        provider.name,
+        id,
+        response,
+        getResponsesCacheTtlSeconds(),
+      );
     }
 
     await logRequest({
@@ -390,6 +447,14 @@ export async function handleResponseRetrieve(
 }
 
 export async function handleResponseDelete(id: string, apiKeyId: string): Promise<ResponseObject> {
+  const localRow = await prisma.backgroundResponseJob.findUnique({
+    where: { id },
+  });
+
+  if (localRow) {
+    return deleteLocalBackgroundJob(localRow, id, apiKeyId);
+  }
+
   const provider = getProviderByName("openai");
   if (!provider) {
     throw new OpenAIResponseProviderNotConfiguredError();
@@ -446,9 +511,8 @@ export async function handleResponseInputItems(
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
   const openai = getProviderByName("openai");
   const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter(
-    (provider): provider is NonNullable<typeof provider> =>
-      Boolean(provider?.listResponseInputItems),
+  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
+    Boolean(provider?.listResponseInputItems),
   );
 
   if (candidates.length === 0) {
@@ -460,7 +524,8 @@ export async function handleResponseInputItems(
 
   for (const provider of candidates) {
     try {
-      const response = await provider.listResponseInputItems!(id, query);
+      const response = await provider.listResponseInputItems?.(id, query);
+      if (!response) continue;
       const latencyMs = Date.now() - startTime;
 
       await logRequest({
@@ -502,9 +567,8 @@ export async function handleResponseInputTokens(
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
   const openai = getProviderByName("openai");
   const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter(
-    (provider): provider is NonNullable<typeof provider> =>
-      Boolean(provider?.countResponseInputTokens),
+  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
+    Boolean(provider?.countResponseInputTokens),
   );
 
   if (candidates.length === 0) {
@@ -516,7 +580,8 @@ export async function handleResponseInputTokens(
 
   for (const provider of candidates) {
     try {
-      const response = await provider.countResponseInputTokens!(body);
+      const response = await provider.countResponseInputTokens?.(body);
+      if (!response) continue;
       const latencyMs = Date.now() - startTime;
 
       await logRequest({
@@ -553,7 +618,9 @@ export async function handleResponseInputTokens(
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
-  throw new ResponseNotFoundError(`(model: ${typeof body.model === "string" ? body.model : "unknown"})`);
+  throw new ResponseNotFoundError(
+    `(model: ${typeof body.model === "string" ? body.model : "unknown"})`,
+  );
 }
 
 async function resolveOpenAIResponseTarget(
@@ -643,9 +710,8 @@ export async function handleResponseCancel(
 
   const openai = getProviderByName("openai");
   const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter(
-    (provider): provider is NonNullable<typeof provider> =>
-      Boolean(provider?.cancelResponse),
+  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
+    Boolean(provider?.cancelResponse),
   );
 
   if (candidates.length === 0) {
@@ -657,7 +723,8 @@ export async function handleResponseCancel(
 
   for (const provider of candidates) {
     try {
-      const response = await provider.cancelResponse!(id);
+      const response = await provider.cancelResponse?.(id);
+      if (!response) continue;
       const latencyMs = Date.now() - startTime;
 
       await logRequest({
@@ -698,9 +765,39 @@ type LocalBackgroundRow = {
   apiKeyId: string;
   provider: string;
   model: string;
+  request?: unknown;
   status: string;
   response: unknown;
 };
+
+function isTerminalResponseStatus(status: string): boolean {
+  return TERMINAL_RESPONSE_STATUSES.has(status);
+}
+
+function buildLocalBackgroundResponse(row: LocalBackgroundRow): ResponseObject {
+  const response =
+    row.response !== null && typeof row.response === "object" ? (row.response as object) : {};
+  return {
+    ...response,
+    id: row.id,
+    model: readRequestedModel(row) ?? row.model,
+    object: "response",
+    status: row.status,
+  } as ResponseObject;
+}
+
+function readRequestedModel(row: LocalBackgroundRow): string | undefined {
+  if (!row.request || typeof row.request !== "object") return undefined;
+  const model = (row.request as { model?: unknown }).model;
+  return typeof model === "string" ? model : undefined;
+}
+
+function isUpstreamNotFoundError(error: unknown): boolean {
+  if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+    return true;
+  }
+  return error instanceof Error && /Responses API error: 404\b/.test(error.message);
+}
 
 async function cancelLocalBackgroundJob(
   row: LocalBackgroundRow,
@@ -717,7 +814,7 @@ async function cancelLocalBackgroundJob(
     try {
       upstreamResponse = await provider.cancelResponse(id);
     } catch (error) {
-      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+      if (isUpstreamNotFoundError(error)) {
         upstreamNotFound = true;
       } else {
         throw error;
@@ -727,10 +824,9 @@ async function cancelLocalBackgroundJob(
 
   const now = new Date();
   const merged: ResponseObject = {
-    ...((upstreamResponse as object | null) ??
-      (row.response as object | null) ??
-      {}),
+    ...((upstreamResponse as object | null) ?? (row.response as object | null) ?? {}),
     id: row.id,
+    model: readRequestedModel(row) ?? row.model,
     object: "response",
     status: "cancelled",
   };
@@ -758,6 +854,45 @@ async function cancelLocalBackgroundJob(
   return { provider: row.provider, model: row.model, response: merged };
 }
 
+async function deleteLocalBackgroundJob(
+  row: LocalBackgroundRow,
+  id: string,
+  apiKeyId: string,
+): Promise<ResponseObject> {
+  const startTime = Date.now();
+
+  const provider = getProviderByName(row.provider);
+  if (provider?.deleteResponse) {
+    try {
+      await provider.deleteResponse(id);
+    } catch (error) {
+      if (!isUpstreamNotFoundError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  await prisma.backgroundResponseJob.delete({
+    where: { id: row.id },
+  });
+
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: row.provider,
+    model: row.model,
+    endpoint: "/v1/responses/:id",
+    latencyMs,
+    statusCode: 200,
+  });
+
+  return {
+    id: row.id,
+    object: "response",
+    deleted: true,
+  } as ResponseObject;
+}
+
 export async function handleResponseCompact(
   request: ResponseCompactRequest,
   apiKeyId: string,
@@ -779,9 +914,10 @@ export async function handleResponseCompact(
     { provider: primary.provider, providerName: primaryProvider },
   ];
 
-  const azure = primary.providerName !== "azure-cognitive-services"
-    ? getProviderByName("azure-cognitive-services")
-    : null;
+  const azure =
+    primary.providerName !== "azure-cognitive-services"
+      ? getProviderByName("azure-cognitive-services")
+      : null;
   if (azure?.compactResponse) {
     candidates.push({ provider: azure, providerName: "azure-cognitive-services" });
   }

@@ -120,8 +120,8 @@ model FallbackTarget {
 /// with background: true. The primary key is the upstream response id
 /// (e.g. resp_abc123) returned by the provider, so the row can be
 /// looked up directly by client polling on GET /v1/responses/:id.
-/// The actual generation is performed server-side by the provider; a
-/// future worker (Phase 7.3) will poll upstream and update status.
+/// The actual generation is performed server-side by the provider; the
+/// worker polls upstream and updates status until the response is terminal.
 model BackgroundResponseJob {
   id           String   @id
   apiKeyId     String
@@ -132,6 +132,8 @@ model BackgroundResponseJob {
   status       String
   response     Json?
   errorMessage String?
+  inputPricePer1M  Float?
+  outputPricePer1M Float?
   createdAt    DateTime @default(now())
   startedAt    DateTime?
   completedAt  DateTime?

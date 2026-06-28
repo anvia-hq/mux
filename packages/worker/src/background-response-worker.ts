@@ -7,11 +7,8 @@ import {
   enqueueBackgroundPoll,
   type BackgroundPollJob,
 } from "./background-response-queue";
-import {
-  enqueueRequestLog,
-  REQUEST_LOG_QUEUE_NAME,
-  type RequestLogJob,
-} from "./request-log-queue";
+import { enqueueRequestLog, REQUEST_LOG_QUEUE_NAME, type RequestLogJob } from "./request-log-queue";
+import { ProviderKeyUnavailableError, readProviderApiKey } from "./provider-keys";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"]);
 const MAX_BACKOFF_MS = 30_000;
@@ -32,6 +29,7 @@ type ProcessDeps = {
   now: () => Date;
   enqueue: (jobId: string, attempt: number, delayMs: number) => Promise<void>;
   enqueueLog: (job: RequestLogJob) => Promise<void>;
+  getProviderApiKey: (provider: string) => Promise<string>;
   prismaClient: typeof prisma;
 };
 
@@ -41,6 +39,7 @@ const defaultDeps: ProcessDeps = {
   now: () => new Date(),
   enqueue: enqueueBackgroundPoll,
   enqueueLog: enqueueRequestLog,
+  getProviderApiKey: readProviderApiKey,
   prismaClient: prisma,
 };
 
@@ -51,6 +50,8 @@ type BackgroundJobRecord = {
   model: string;
   status: string;
   response: unknown;
+  inputPricePer1M?: number | null;
+  outputPricePer1M?: number | null;
 };
 
 type UpstreamResponse = {
@@ -66,11 +67,26 @@ type UpstreamResponse = {
   [key: string]: unknown;
 };
 
+class BackgroundPollConfigurationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BackgroundPollConfigurationError";
+  }
+}
+
 export async function processBackgroundPollJob(
   job: BackgroundPollJob,
   deps: Partial<ProcessDeps> = {},
 ): Promise<void> {
-  const { fetch: fetchFn, redis, now, enqueue, enqueueLog, prismaClient } = {
+  const {
+    fetch: fetchFn,
+    redis,
+    now,
+    enqueue,
+    enqueueLog,
+    getProviderApiKey,
+    prismaClient,
+  } = {
     ...defaultDeps,
     ...deps,
   };
@@ -89,18 +105,18 @@ export async function processBackgroundPollJob(
 
   let upstreamResponse: UpstreamResponse;
   try {
-    upstreamResponse = await fetchUpstream(row, fetchFn);
+    upstreamResponse = await fetchUpstream(row, fetchFn, getProviderApiKey);
   } catch (error) {
     const apiError = error as UpstreamResponsesApiErrorLike;
+    if (
+      error instanceof ProviderKeyUnavailableError ||
+      error instanceof BackgroundPollConfigurationError
+    ) {
+      await failBackgroundJob(row.id, error.message, now, prismaClient);
+      return;
+    }
     if (typeof apiError.status === "number" && apiError.status === 404) {
-      await prismaClient.backgroundResponseJob.update({
-        where: { id: row.id },
-        data: {
-          status: "failed",
-          errorMessage: "upstream 404 while polling",
-          completedAt: now(),
-        },
-      });
+      await failBackgroundJob(row.id, "upstream 404 while polling", now, prismaClient);
       return;
     }
     throw error;
@@ -128,11 +144,12 @@ export async function processBackgroundPollJob(
 
     if (upstreamStatus === "completed") {
       const usage = upstreamResponse.usage;
+      let estimatedCost: number | undefined;
       if (usage?.input_tokens || usage?.output_tokens) {
-        const cost = computeCost(usage.input_tokens, usage.output_tokens, row.model);
-        if (cost !== undefined && Number.isFinite(cost) && cost > 0) {
+        estimatedCost = computeCost(usage.input_tokens, usage.output_tokens, row);
+        if (estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost > 0) {
           try {
-            await redis.incrbyfloat(`apikey_spend:${row.apiKeyId}`, cost);
+            await redis.incrbyfloat(`apikey_spend:${row.apiKeyId}`, estimatedCost);
           } catch (error) {
             console.error(
               `Failed to bill background response ${row.id}:`,
@@ -152,7 +169,8 @@ export async function processBackgroundPollJob(
         promptTokens: upstreamResponse.usage?.input_tokens,
         completionTokens: upstreamResponse.usage?.output_tokens,
         totalTokens: upstreamResponse.usage?.total_tokens,
-        estimatedCost: undefined,
+        reasoningTokens: readReasoningTokens(upstreamResponse.usage),
+        estimatedCost,
         statusCode: 200,
       } satisfies RequestLogJob);
     }
@@ -173,11 +191,13 @@ export async function processBackgroundPollJob(
 async function fetchUpstream(
   row: BackgroundJobRecord,
   fetchFn: typeof fetch,
+  getProviderApiKey: (provider: string) => Promise<string>,
 ): Promise<UpstreamResponse> {
   const url = buildUpstreamGetUrl(row);
+  const apiKey = await getProviderApiKey(row.provider);
   const response = await fetchFn(url, {
     method: "GET",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
   });
 
   const text = await response.text();
@@ -200,13 +220,12 @@ function buildUpstreamGetUrl(row: BackgroundJobRecord): string {
   if (row.provider === "azure-cognitive-services") {
     const endpoint = process.env.AZURE_OPENAI_RESPONSES_ENDPOINT;
     if (!endpoint) {
-      throw new Error(
+      throw new BackgroundPollConfigurationError(
         "AZURE_OPENAI_RESPONSES_ENDPOINT is required to poll Azure background jobs",
       );
     }
     const normalized = endpoint.replace(/\/$/, "");
-    const apiVersion =
-      process.env.AZURE_OPENAI_RESPONSES_API_VERSION ?? "2025-04-01-preview";
+    const apiVersion = process.env.AZURE_OPENAI_RESPONSES_API_VERSION ?? "2025-04-01-preview";
     return `${normalized}/openai/v1/responses/${encodeURIComponent(row.id)}?api-version=${encodeURIComponent(apiVersion)}`;
   }
   return `https://api.openai.com/v1/responses/${encodeURIComponent(row.id)}`;
@@ -215,47 +234,50 @@ function buildUpstreamGetUrl(row: BackgroundJobRecord): string {
 function computeCost(
   inputTokens: number | undefined,
   outputTokens: number | undefined,
-  modelId: string,
+  row: BackgroundJobRecord,
 ): number | undefined {
-  const pricing = lookupPricing(modelId);
-  if (!pricing) return undefined;
-  const inputCost = ((inputTokens ?? 0) * pricing.inputPricePer1M) / 1_000_000;
-  const outputCost = ((outputTokens ?? 0) * pricing.outputPricePer1M) / 1_000_000;
+  const { inputPricePer1M, outputPricePer1M } = row;
+  if (
+    typeof inputPricePer1M !== "number" ||
+    typeof outputPricePer1M !== "number" ||
+    !Number.isFinite(inputPricePer1M) ||
+    !Number.isFinite(outputPricePer1M)
+  ) {
+    return undefined;
+  }
+  const inputCost = ((inputTokens ?? 0) * inputPricePer1M) / 1_000_000;
+  const outputCost = ((outputTokens ?? 0) * outputPricePer1M) / 1_000_000;
   return inputCost + outputCost;
 }
 
-// Best-effort pricing for background billing. We only know the public model id
-// (e.g. "openai:gpt-5"). For now we hardcode the most common Responses-capable
-// models; everything else returns undefined and the spend write is skipped.
-const KNOWN_BACKGROUND_PRICING: Record<string, { inputPricePer1M: number; outputPricePer1M: number }> = {
-  "openai:gpt-5": { inputPricePer1M: 1.25, outputPricePer1M: 10 },
-  "openai:gpt-5-mini": { inputPricePer1M: 0.25, outputPricePer1M: 2 },
-  "openai:gpt-5-nano": { inputPricePer1M: 0.05, outputPricePer1M: 0.4 },
-  "openai:gpt-4.1": { inputPricePer1M: 2, outputPricePer1M: 8 },
-  "openai:gpt-4.1-mini": { inputPricePer1M: 0.4, outputPricePer1M: 1.6 },
-  "openai:gpt-4.1-nano": { inputPricePer1M: 0.1, outputPricePer1M: 0.4 },
-  "openai:gpt-4o": { inputPricePer1M: 2.5, outputPricePer1M: 10 },
-  "openai:gpt-4o-mini": { inputPricePer1M: 0.15, outputPricePer1M: 0.6 },
-  "openai:o3": { inputPricePer1M: 2, outputPricePer1M: 8 },
-  "openai:o3-mini": { inputPricePer1M: 1.1, outputPricePer1M: 4.4 },
-  "openai:o4-mini": { inputPricePer1M: 1.1, outputPricePer1M: 4.4 },
-  "azure-cognitive-services:gpt-5": { inputPricePer1M: 1.25, outputPricePer1M: 10 },
-  "azure-cognitive-services:gpt-4o": { inputPricePer1M: 2.5, outputPricePer1M: 10 },
-};
-
-function lookupPricing(modelId: string):
-  | { inputPricePer1M: number; outputPricePer1M: number }
-  | undefined {
-  return KNOWN_BACKGROUND_PRICING[modelId];
+function readReasoningTokens(usage: unknown): number | undefined {
+  if (!usage || typeof usage !== "object") return undefined;
+  const details = (usage as { output_tokens_details?: unknown }).output_tokens_details;
+  if (!details || typeof details !== "object") return undefined;
+  const reasoning = (details as { reasoning_tokens?: unknown }).reasoning_tokens;
+  return typeof reasoning === "number" && Number.isFinite(reasoning) ? reasoning : undefined;
 }
 
-export async function startBackgroundResponseWorker(): Promise<
-  Worker<BackgroundPollJob>
-> {
-  const workerConnection = new IORedis(
-    process.env.REDIS_URL ?? "redis://localhost:6379",
-    { maxRetriesPerRequest: null },
-  );
+async function failBackgroundJob(
+  id: string,
+  errorMessage: string,
+  now: () => Date,
+  prismaClient: typeof prisma,
+): Promise<void> {
+  await prismaClient.backgroundResponseJob.update({
+    where: { id },
+    data: {
+      status: "failed",
+      errorMessage,
+      completedAt: now(),
+    },
+  });
+}
+
+export async function startBackgroundResponseWorker(): Promise<Worker<BackgroundPollJob>> {
+  const workerConnection = new IORedis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+    maxRetriesPerRequest: null,
+  });
   workerConnection.on("error", (error) => {
     console.error("Background poll worker Redis error:", error.message);
   });
@@ -267,9 +289,7 @@ export async function startBackgroundResponseWorker(): Promise<
     },
     {
       connection: workerConnection,
-      concurrency: Number(
-        process.env.BACKGROUND_POLL_WORKER_CONCURRENCY ?? 5,
-      ),
+      concurrency: Number(process.env.BACKGROUND_POLL_WORKER_CONCURRENCY ?? 5),
     },
   );
 }

@@ -1,10 +1,5 @@
 import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
-import type {
-  Model,
-  ResponseCompactRequest,
-  ResponseCreateRequest,
-  ResponseObject,
-} from "./types";
+import type { Model, ResponseCompactRequest, ResponseCreateRequest, ResponseObject } from "./types";
 import { AzureResponsesClient, azureCapabilities } from "./azure-responses";
 
 const MODELS: Model[] = [

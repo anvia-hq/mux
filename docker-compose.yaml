@@ -77,6 +77,7 @@ services:
     environment:
       DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/mux_gateway?schema=public}"
       REDIS_URL: "${DOCKER_REDIS_URL:-redis://redis:6379}"
+      PROVIDER_KEYS_ENCRYPTION_KEY: "${PROVIDER_KEYS_ENCRYPTION_KEY:-dev-encryption-key-change-me}"
     depends_on:
       postgres:
         condition: service_healthy

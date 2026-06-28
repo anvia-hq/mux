@@ -81,9 +81,7 @@ describe("responses-cache round-trip", () => {
   });
 
   it("builds a per-API-key cache key", () => {
-    expect(buildResponsesCacheKey("key-1", "openai", "resp_abc")).toBe(
-      "key-1:openai:resp_abc",
-    );
+    expect(buildResponsesCacheKey("key-1", "openai", "resp_abc")).toBe("key-1:openai:resp_abc");
   });
 
   it("returns null on a cache miss", async () => {

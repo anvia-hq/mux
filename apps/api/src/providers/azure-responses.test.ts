@@ -4,13 +4,8 @@ const { mockFetch } = vi.hoisted(() => ({ mockFetch: vi.fn() }));
 
 vi.stubGlobal("fetch", mockFetch);
 
-import {
-  AZURE_OPENAI_RESPONSES_API_VERSION,
-} from "./models-dev-provider-adapter";
-import {
-  AzureResponsesClient,
-  AzureResponsesEndpointNotConfiguredError,
-} from "./azure-responses";
+import { AZURE_OPENAI_RESPONSES_API_VERSION } from "./models-dev-provider-adapter";
+import { AzureResponsesClient, AzureResponsesEndpointNotConfiguredError } from "./azure-responses";
 import type { ResponseCreateRequest, ResponseObject } from "./types";
 
 function makeClient(endpoint?: string) {
@@ -211,9 +206,7 @@ describe("AzureResponsesClient", () => {
       Response.json({
         id: "resp_001",
         object: "response.compaction",
-        output: [
-          { id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." },
-        ],
+        output: [{ id: "cmp_001", type: "compaction", encrypted_content: "gAAAAA..." }],
         usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
       }),
     );
@@ -287,9 +280,9 @@ describe("AzureResponsesClient", () => {
       new Response("nope", { status: 404, headers: { "Content-Type": "text/plain" } }),
     );
     const client = makeClient("https://example.openai.azure.com");
-    await expect(
-      client.countResponseInputTokens({ model: "gpt-4o", input: "hi" }),
-    ).rejects.toThrow("azure-cognitive-services Responses API error: 404 - nope");
+    await expect(client.countResponseInputTokens({ model: "gpt-4o", input: "hi" })).rejects.toThrow(
+      "azure-cognitive-services Responses API error: 404 - nope",
+    );
   });
 
   it("throws AzureResponsesEndpointNotConfiguredError on input_tokens when endpoint is missing", async () => {

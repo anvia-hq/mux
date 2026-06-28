@@ -18,9 +18,7 @@ describe("responseCreateRequestSchema", () => {
   it("accepts model + message array input", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "openai:gpt-4o",
-      input: [
-        { type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] },
-      ],
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
     });
     expect(result.success).toBe(true);
   });
@@ -64,9 +62,7 @@ describe("responseCreateRequestSchema", () => {
   it("rejects input message with invalid role", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
-      input: [
-        { type: "message", role: "tool", content: [{ type: "input_text", text: "hi" }] },
-      ],
+      input: [{ type: "message", role: "tool", content: [{ type: "input_text", text: "hi" }] }],
     });
     expect(result.success).toBe(false);
   });
@@ -74,9 +70,7 @@ describe("responseCreateRequestSchema", () => {
   it("rejects input message with wrong content shape", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
-      input: [
-        { type: "message", role: "user", content: [{ type: "input_image", url: "x" }] },
-      ],
+      input: [{ type: "message", role: "user", content: [{ type: "input_image", url: "x" }] }],
     });
     expect(result.success).toBe(false);
   });
@@ -129,12 +123,12 @@ describe("responseCreateRequestSchema — extended fields", () => {
   });
 
   it("rejects temperature out of [0, 2]", () => {
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", temperature: -0.1 }).success,
-    ).toBe(false);
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", temperature: 2.5 }).success,
-    ).toBe(false);
+    expect(responseCreateRequestSchema.safeParse({ model: "x", temperature: -0.1 }).success).toBe(
+      false,
+    );
+    expect(responseCreateRequestSchema.safeParse({ model: "x", temperature: 2.5 }).success).toBe(
+      false,
+    );
   });
 
   it("accepts metadata as string record", () => {
@@ -154,24 +148,24 @@ describe("responseCreateRequestSchema — extended fields", () => {
   });
 
   it("accepts truncation 'auto' / 'disabled'", () => {
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", truncation: "auto" }).success,
-    ).toBe(true);
+    expect(responseCreateRequestSchema.safeParse({ model: "x", truncation: "auto" }).success).toBe(
+      true,
+    );
     expect(
       responseCreateRequestSchema.safeParse({ model: "x", truncation: "disabled" }).success,
     ).toBe(true);
   });
 
   it("rejects truncation with unknown value", () => {
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", truncation: "maybe" }).success,
-    ).toBe(false);
+    expect(responseCreateRequestSchema.safeParse({ model: "x", truncation: "maybe" }).success).toBe(
+      false,
+    );
   });
 
   it("accepts prompt as string or structured object", () => {
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", prompt: "summarize" }).success,
-    ).toBe(true);
+    expect(responseCreateRequestSchema.safeParse({ model: "x", prompt: "summarize" }).success).toBe(
+      true,
+    );
     expect(
       responseCreateRequestSchema.safeParse({
         model: "x",
@@ -429,13 +423,10 @@ describe("responseCreateRequestSchema — text.format", () => {
 });
 
 describe("responseCreateRequestSchema — service_tier and safety_identifier", () => {
-  it.each(["auto", "default", "flex", "priority"] as const)(
-    "accepts service_tier=%s",
-    (tier) => {
-      const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: tier });
-      expect(result.success).toBe(true);
-    },
-  );
+  it.each(["auto", "default", "flex", "priority"] as const)("accepts service_tier=%s", (tier) => {
+    const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: tier });
+    expect(result.success).toBe(true);
+  });
 
   it("rejects unknown service_tier", () => {
     const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: "pro" });
@@ -522,7 +513,10 @@ describe("responseCompactRequestSchema", () => {
   it("accepts model with an array input of arbitrary objects", () => {
     const result = responseCompactRequestSchema.safeParse({
       model: "gpt-5",
-      input: [{ role: "user", content: "hi" }, { id: "msg_1", type: "message" }],
+      input: [
+        { role: "user", content: "hi" },
+        { id: "msg_1", type: "message" },
+      ],
     });
     expect(result.success).toBe(true);
   });

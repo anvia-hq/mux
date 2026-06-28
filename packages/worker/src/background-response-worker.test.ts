@@ -1,20 +1,20 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  backoffMs,
-  processBackgroundPollJob,
-} from "./background-response-worker";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { backoffMs, processBackgroundPollJob } from "./background-response-worker";
+import { ProviderKeyUnavailableError } from "./provider-keys";
 import type { BackgroundPollJob } from "./background-response-queue";
 import type { RequestLogJob } from "./request-log-queue";
 
 const {
   mockEnqueue,
   mockEnqueueLog,
+  mockGetProviderApiKey,
   mockIncrbyfloat,
   mockPrismaFindUnique,
   mockPrismaUpdate,
 } = vi.hoisted(() => ({
   mockEnqueue: vi.fn(),
   mockEnqueueLog: vi.fn(),
+  mockGetProviderApiKey: vi.fn(),
   mockIncrbyfloat: vi.fn(),
   mockPrismaFindUnique: vi.fn(),
   mockPrismaUpdate: vi.fn(),
@@ -41,6 +41,8 @@ function makeRow(
     model: string;
     status: string;
     response: unknown;
+    inputPricePer1M: number | null;
+    outputPricePer1M: number | null;
   }> = {},
 ) {
   return {
@@ -50,6 +52,8 @@ function makeRow(
     model: "openai:gpt-5",
     status: "queued",
     response: null,
+    inputPricePer1M: 1.25,
+    outputPricePer1M: 10,
     ...overrides,
   };
 }
@@ -65,6 +69,7 @@ function buildDeps(
   fetchImpl: typeof fetch,
   overrides: Partial<{
     now: () => Date;
+    getProviderApiKey: (provider: string) => Promise<string>;
   }> = {},
 ) {
   return {
@@ -73,6 +78,7 @@ function buildDeps(
     now: overrides.now ?? (() => new Date("2026-06-24T00:00:00Z")),
     enqueue: mockEnqueue,
     enqueueLog: mockEnqueueLog,
+    getProviderApiKey: overrides.getProviderApiKey ?? mockGetProviderApiKey,
     prismaClient: {
       backgroundResponseJob: {
         findUnique: mockPrismaFindUnique,
@@ -111,8 +117,9 @@ describe("backoffMs", () => {
 });
 
 describe("processBackgroundPollJob", () => {
-  afterEach(() => {
+  beforeEach(() => {
     vi.clearAllMocks();
+    mockGetProviderApiKey.mockResolvedValue("sk-test");
   });
 
   it("is a no-op when the row is missing", async () => {
@@ -148,7 +155,10 @@ describe("processBackgroundPollJob", () => {
 
     expect(fetchImpl).toHaveBeenCalledWith(
       expect.stringContaining("/v1/responses/resp_bg_abc"),
-      expect.objectContaining({ method: "GET" }),
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({ Authorization: "Bearer sk-test" }),
+      }),
     );
     expect(mockPrismaUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -166,7 +176,12 @@ describe("processBackgroundPollJob", () => {
         id: "resp_bg_abc",
         status: "completed",
         model: "gpt-5",
-        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+        usage: {
+          input_tokens: 100,
+          output_tokens: 200,
+          total_tokens: 300,
+          output_tokens_details: { reasoning_tokens: 12 },
+        },
       }),
     );
     mockPrismaUpdate.mockResolvedValueOnce({});
@@ -197,6 +212,8 @@ describe("processBackgroundPollJob", () => {
         promptTokens: 100,
         completionTokens: 200,
         totalTokens: 300,
+        estimatedCost: 0.002125,
+        reasoningTokens: 12,
         statusCode: 200,
       }) satisfies Partial<RequestLogJob>,
     );
@@ -207,10 +224,7 @@ describe("processBackgroundPollJob", () => {
     mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ status: "queued" }));
     const fetchImpl = vi.fn(async () => fakeFetchResponse("not found", 404));
     mockPrismaUpdate.mockResolvedValueOnce({});
-    await processBackgroundPollJob(
-      makeJob(),
-      buildDeps(fetchImpl as unknown as typeof fetch),
-    );
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
 
     expect(mockPrismaUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -228,10 +242,7 @@ describe("processBackgroundPollJob", () => {
     mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ status: "queued" }));
     const fetchImpl = vi.fn(async () => fakeFetchResponse("boom", 500));
     await expect(
-      processBackgroundPollJob(
-        makeJob(),
-        buildDeps(fetchImpl as unknown as typeof fetch),
-      ),
+      processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch)),
     ).rejects.toThrow(/Background poll upstream error: 500/);
     expect(mockPrismaUpdate).not.toHaveBeenCalled();
   });
@@ -242,10 +253,7 @@ describe("processBackgroundPollJob", () => {
       fakeFetchResponse({ id: "resp_bg_abc", status: "completed", model: "gpt-5" }),
     );
     mockPrismaUpdate.mockResolvedValueOnce({});
-    await processBackgroundPollJob(
-      makeJob(),
-      buildDeps(fetchImpl as unknown as typeof fetch),
-    );
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
 
     expect(mockIncrbyfloat).not.toHaveBeenCalled();
     expect(mockEnqueueLog).toHaveBeenCalledWith(
@@ -253,24 +261,82 @@ describe("processBackgroundPollJob", () => {
     );
   });
 
-  it("uses the Azure endpoint when provider is azure-cognitive-services", async () => {
+  it("does not bill when completed row has no pricing metadata", async () => {
     mockPrismaFindUnique.mockResolvedValueOnce(
-      makeRow({ provider: "azure-cognitive-services" }),
+      makeRow({ inputPricePer1M: null, outputPricePer1M: null }),
     );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({
+        id: "resp_bg_abc",
+        status: "completed",
+        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+      }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(mockIncrbyfloat).not.toHaveBeenCalled();
+    expect(mockEnqueueLog).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatedCost: undefined }),
+    );
+  });
+
+  it("marks the row failed when provider key lookup fails", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ status: "queued" }));
+    const fetchImpl = vi.fn(async () => fakeFetchResponse({}));
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(
+      makeJob(),
+      buildDeps(fetchImpl as unknown as typeof fetch, {
+        getProviderApiKey: async () => {
+          throw new ProviderKeyUnavailableError("openai");
+        },
+      }),
+    );
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(mockPrismaUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "failed",
+          errorMessage: expect.stringContaining("provider key unavailable"),
+        }),
+      }),
+    );
+  });
+
+  it("marks Azure rows failed when the Azure endpoint is not configured", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ provider: "azure-cognitive-services" }));
+    const fetchImpl = vi.fn(async () => fakeFetchResponse({}));
+    mockPrismaUpdate.mockResolvedValueOnce({});
+    delete process.env.AZURE_OPENAI_RESPONSES_ENDPOINT;
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(mockPrismaUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: "failed",
+          errorMessage: expect.stringContaining("AZURE_OPENAI_RESPONSES_ENDPOINT"),
+        }),
+      }),
+    );
+  });
+
+  it("uses the Azure endpoint when provider is azure-cognitive-services", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ provider: "azure-cognitive-services" }));
     const fetchImpl = vi.fn(async () =>
       fakeFetchResponse({ id: "resp_bg_abc", status: "completed" }),
     );
     mockPrismaUpdate.mockResolvedValueOnce({});
     process.env.AZURE_OPENAI_RESPONSES_ENDPOINT = "https://example.openai.azure.com";
     try {
-      await processBackgroundPollJob(
-        makeJob(),
-        buildDeps(fetchImpl as unknown as typeof fetch),
-      );
+      await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
       expect(fetchImpl).toHaveBeenCalledWith(
-        expect.stringContaining(
-          "https://example.openai.azure.com/openai/v1/responses/resp_bg_abc",
-        ),
+        expect.stringContaining("https://example.openai.azure.com/openai/v1/responses/resp_bg_abc"),
         expect.any(Object),
       );
     } finally {

@@ -223,6 +223,7 @@ describe("responses router", () => {
     expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(
       expect.objectContaining({ model: "openai:gpt-4o", background: true }),
       "key-1",
+      { requireBillableUsage: false },
     );
     expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockHandleResponseCreate).not.toHaveBeenCalled();
@@ -230,6 +231,49 @@ describe("responses router", () => {
       id: "resp_bg_abc",
       status: "queued",
     });
+  });
+
+  it("POST /v1/responses checks spend limit before limited background request", async () => {
+    mockSpendLimit.value = 10;
+    mockSubmitBackgroundResponse.mockResolvedValueOnce({
+      id: "resp_bg_abc",
+      response: { id: "resp_bg_abc", object: "response", status: "queued" },
+    });
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", background: true }),
+    });
+
+    expect(res.status).toBe(202);
+    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
+    expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(expect.anything(), "key-1", {
+      requireBillableUsage: true,
+    });
+  });
+
+  it("POST /v1/responses maps spend errors for background requests", async () => {
+    mockSpendLimit.value = 10;
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
+    const exhausted = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", background: true }),
+    });
+    expect(exhausted.status).toBe(429);
+
+    mockAssertApiKeyCanSpend.mockRejectedValueOnce(
+      new ApiKeySpendLedgerUnavailableError(new Error()),
+    );
+    const unavailable = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", background: true }),
+    });
+    expect(unavailable.status).toBe(503);
   });
 
   it("POST /v1/responses 404 when background submission targets an unknown model", async () => {
@@ -805,7 +849,9 @@ describe("responses router", () => {
   it("GET /v1/responses/:id/input_items maps known service errors", async () => {
     const app = new Hono().route("/v1/responses", responsesRouter);
 
-    mockHandleResponseInputItems.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
+    mockHandleResponseInputItems.mockRejectedValueOnce(
+      new OpenAIResponseProviderNotConfiguredError(),
+    );
     expect(
       await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
     ).toHaveProperty("status", 503);
@@ -815,7 +861,9 @@ describe("responses router", () => {
       await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
     ).toHaveProperty("status", 422);
 
-    mockHandleResponseInputItems.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    mockHandleResponseInputItems.mockRejectedValueOnce(
+      new RequestLoggingUnavailableError(new Error()),
+    );
     expect(
       await app.request("/v1/responses/resp_abc/input_items", { method: "GET" }),
     ).toHaveProperty("status", 503);
@@ -923,29 +971,23 @@ describe("responses router", () => {
       body: payload,
     };
 
-    mockHandleResponseInputTokens.mockRejectedValueOnce(new OpenAIResponseProviderNotConfiguredError());
-    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
-      "status",
-      503,
+    mockHandleResponseInputTokens.mockRejectedValueOnce(
+      new OpenAIResponseProviderNotConfiguredError(),
     );
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty("status", 503);
 
-    mockHandleResponseInputTokens.mockRejectedValueOnce(new UnsupportedResponseFeatureError("nope"));
-    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
-      "status",
-      422,
+    mockHandleResponseInputTokens.mockRejectedValueOnce(
+      new UnsupportedResponseFeatureError("nope"),
     );
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty("status", 422);
 
-    mockHandleResponseInputTokens.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
-    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
-      "status",
-      503,
+    mockHandleResponseInputTokens.mockRejectedValueOnce(
+      new RequestLoggingUnavailableError(new Error()),
     );
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty("status", 503);
 
     mockHandleResponseInputTokens.mockRejectedValueOnce(new Error("boom"));
-    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty(
-      "status",
-      500,
-    );
+    expect(await app.request("/v1/responses/input_tokens", opts)).toHaveProperty("status", 500);
   });
 
   it("POST /v1/responses/compact returns 200 with the upstream body", async () => {

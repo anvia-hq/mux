@@ -147,6 +147,10 @@ Important production settings:
 | `CLIENT_ORIGINS` | Browser origins allowed to call the API directly. |
 | `VITE_API_URL` | Dashboard API base path. Defaults to `/api` for the Caddy setup. |
 | `CADDY_DOMAIN` | Host and port served by Caddy. |
+| `MUX_RESPONSES_CACHE` | Set to `1` to enable Redis read-through caching for response retrieval. |
+| `MUX_RESPONSES_CACHE_TTL_SECONDS` | TTL for cached response retrieval bodies. Defaults to `300`. |
+| `AZURE_OPENAI_RESPONSES_ENDPOINT` | Azure Responses endpoint used by worker polling for Azure background jobs. |
+| `BACKGROUND_POLL_WORKER_CONCURRENCY` | Background response poll worker concurrency. Defaults to `5`. |
 
 ## Current Boundaries
 

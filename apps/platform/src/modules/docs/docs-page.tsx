@@ -692,10 +692,10 @@ export function DocsPage() {
           <Section id="responses" title="Responses API">
             <p>
               Use <code>POST /v1/responses</code> for OpenAI Responses-compatible requests. This
-              surface accepts any direct provider model whose adapter advertises
-              {" "}<code>responsesApi: true</code>{" "}(OpenAI and Azure Cognitive Services today),
-              and any fallback group that includes at least one Responses-capable target. Both
-              non-streaming and <code>stream: true</code> requests are supported.
+              surface accepts any direct provider model whose adapter advertises{" "}
+              <code>responsesApi: true</code> (OpenAI and Azure Cognitive Services today), and any
+              fallback group that includes at least one Responses-capable target. Both non-streaming
+              and <code>stream: true</code> requests are supported.
             </p>
             <CodeTabs samples={responseSamples} />
             <div className="grid gap-2 rounded-md border p-4">
@@ -705,7 +705,7 @@ export function DocsPage() {
                   "Direct provider models with responsesApi: true (OpenAI, Azure Cognitive Services).",
                   "Fallback groups whose first Responses-capable target is selected automatically.",
                   "Streaming Responses events are passed through unchanged from the upstream provider.",
-                  "Background mode is not implemented yet. GET and DELETE lifecycle routes are routed to OpenAI today.",
+                  "Background responses are tracked locally, polled by the worker, and can be retrieved, cancelled, or deleted by id.",
                 ].map((item) => (
                   <div key={item} className="flex gap-2">
                     <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
@@ -717,12 +717,12 @@ export function DocsPage() {
             <CodeTabs samples={responseStreamingSamples} />
             <p>
               Retrieve a previously created response with <code>GET /v1/responses/{`{id}`}</code>.
-              This is a pass-through to the upstream provider's Responses API; query params such
-              as <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
+              Locally tracked background responses are returned from Mux first; other ids are
+              retrieved from the upstream provider's Responses API. Query params such as{" "}
+              <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
               Upstream errors are returned in OpenAI's{" "}
               <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
-              status code. The route is currently routed to the OpenAI provider; cross-provider
-              retrieval (e.g. for an Azure-hosted response) is a follow-up.
+              status code.
             </p>
             <CodeTabs samples={responseRetrieveSamples} />
             <p>
@@ -732,45 +732,42 @@ export function DocsPage() {
             </p>
             <CodeTabs samples={responseDeleteSamples} />
             <p>
-              Cancel an in-progress response with{" "}
-              <code>POST /v1/responses/{`{id}`}/cancel</code>. The gateway tries the OpenAI
-              provider first and falls through to Azure Cognitive Services on a 404. The upstream
-              response body is returned verbatim, including its <code>status</code> field
-              (<code>cancelled</code> on success). Upstream errors are returned in OpenAI's{" "}
+              Cancel an in-progress response with <code>POST /v1/responses/{`{id}`}/cancel</code>.
+              For locally tracked background responses, the gateway updates the local job and calls
+              the owning provider when it exposes cancellation. Other ids fall through across OpenAI
+              and Azure Cognitive Services on 404. Upstream errors are returned in OpenAI's{" "}
               <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
-              status code. Today this is a pass-through; Phase 7 will add Mux-side background
-              execution and let the gateway cancel responses it owns.
+              status code.
             </p>
             <CodeTabs samples={responseCancelSamples} />
             <p>
-              Compact a long input window with{" "}
-              <code>POST /v1/responses/compact</code>. The endpoint takes <code>model</code>{" "}
-              (required) and <code>input</code> (optional, string or array of input items) and
-              returns a compacted window with a token-usage block. The gateway tries the resolved
-              provider (and falls through to Azure Cognitive Services on a 404) and bills the
-              call against the API key the same way <code>POST /v1/responses</code> does. Pass
-              the returned <code>output</code> array into your next <code>POST /v1/responses</code>{" "}
-              call verbatim; do not prune it.
+              Compact a long input window with <code>POST /v1/responses/compact</code>. The endpoint
+              takes <code>model</code> (required) and <code>input</code> (optional, string or array
+              of input items) and returns a compacted window with a token-usage block. The gateway
+              tries the resolved provider (and falls through to Azure Cognitive Services on a 404)
+              and bills the call against the API key the same way <code>POST /v1/responses</code>{" "}
+              does. Pass the returned <code>output</code> array into your next{" "}
+              <code>POST /v1/responses</code> call verbatim; do not prune it.
             </p>
             <CodeTabs samples={responseCompactSamples} />
             <p>
               List the input items that produced a response with{" "}
-              <code>GET /v1/responses/{`{id}`}/input_items</code>. The gateway forwards all
-              query params (<code>after</code>, <code>include[]</code>, <code>limit</code>,
-              <code>order</code>) verbatim to the upstream provider, tries OpenAI first, and
-              falls through to Azure Cognitive Services on a 404. Upstream errors are returned
-              in OpenAI's <code>{`{ error: { message, type, param, code } }`}</code> shape with
-              the original status code.
+              <code>GET /v1/responses/{`{id}`}/input_items</code>. The gateway forwards all query
+              params (<code>after</code>, <code>include[]</code>, <code>limit</code>,
+              <code>order</code>) verbatim to the upstream provider, tries OpenAI first, and falls
+              through to Azure Cognitive Services on a 404. Upstream errors are returned in OpenAI's{" "}
+              <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
+              status code.
             </p>
             <CodeTabs samples={responseInputItemsSamples} />
             <p>
               Estimate how many input tokens a prompt will consume with{" "}
               <code>POST /v1/responses/input_tokens</code>. The body shape matches{" "}
-              <code>POST /v1/responses</code> (model, input, optional instructions and tools)
-              and the response is <code>{`{ object: "response.input_tokens", input_tokens }`}</code>
-              . The gateway forwards the body verbatim, tries OpenAI first, and falls through
-              to Azure Cognitive Services on a 404. This is a free dry-run; the call does not
-              bill the API key and is not gated by spend limits.
+              <code>POST /v1/responses</code> (model, input, optional instructions and tools) and
+              the response is <code>{`{ object: "response.input_tokens", input_tokens }`}</code>.
+              The gateway forwards the body verbatim, tries OpenAI first, and falls through to Azure
+              Cognitive Services on a 404. This is a free dry-run; the call does not bill the API
+              key and is not gated by spend limits.
             </p>
             <CodeTabs samples={responseInputTokensSamples} />
           </Section>

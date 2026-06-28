@@ -24,26 +24,23 @@ backgroundPollConnection.on("error", (error) => {
   console.error("Background poll queue Redis error:", error.message);
 });
 
-export const backgroundPollQueue = new Queue<BackgroundPollJob>(
-  BACKGROUND_POLL_QUEUE_NAME,
-  {
-    connection: backgroundPollConnection,
-    defaultJobOptions: {
-      attempts: 20,
-      backoff: {
-        type: "exponential",
-        delay: 2000,
-      },
-      removeOnComplete: {
-        age: 24 * 60 * 60,
-        count: 1000,
-      },
-      removeOnFail: {
-        age: 7 * 24 * 60 * 60,
-      },
+export const backgroundPollQueue = new Queue<BackgroundPollJob>(BACKGROUND_POLL_QUEUE_NAME, {
+  connection: backgroundPollConnection,
+  defaultJobOptions: {
+    attempts: 20,
+    backoff: {
+      type: "exponential",
+      delay: 2000,
+    },
+    removeOnComplete: {
+      age: 24 * 60 * 60,
+      count: 1000,
+    },
+    removeOnFail: {
+      age: 7 * 24 * 60 * 60,
     },
   },
-);
+});
 
 export async function enqueueBackgroundPoll(
   jobId: string,

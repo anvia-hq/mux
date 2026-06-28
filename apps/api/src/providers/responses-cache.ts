@@ -45,11 +45,7 @@ export function _resetResponsesCacheForTests(): void {
   cachedTtlSeconds = undefined;
 }
 
-export function buildResponsesCacheKey(
-  apiKeyId: string,
-  provider: string,
-  id: string,
-): string {
+export function buildResponsesCacheKey(apiKeyId: string, provider: string, id: string): string {
   return `${apiKeyId}:${provider}:${id}`;
 }
 

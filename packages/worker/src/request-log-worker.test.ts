@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { toRequestLogCreateInput } from "./request-log-worker";
 
 describe("request-log-worker toRequestLogCreateInput", () => {

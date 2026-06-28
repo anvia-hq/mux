@@ -1001,17 +1001,14 @@ export class OpenAIAdapter implements ProviderAdapter {
   }
 
   async cancelResponse(id: string): Promise<ResponseObject> {
-    const response = await fetch(
-      `${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}/cancel`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
       },
-    );
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
     if (!response.ok) {
       const error = await response.text();
