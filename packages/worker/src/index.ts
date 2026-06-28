@@ -1,5 +1,3 @@
-import "./env";
-
 export {
   closeRequestLogQueue,
   enqueueRequestLog,

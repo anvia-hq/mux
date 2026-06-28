@@ -5,7 +5,8 @@
   "type": "module",
   "packageManager": "pnpm@10.30.3",
   "scripts": {
-    "dev": "pnpm --parallel --filter './apps/*' --filter @repo/worker dev",
+    "with-env": "dotenv -e .env -- pnpm",
+    "dev": "pnpm with-env --parallel --filter './apps/*' --filter @repo/worker dev",
     "build": "pnpm --filter './apps/*' build",
     "test": "pnpm --filter './apps/*' test",
     "test:coverage": "pnpm --filter './apps/*' test:coverage",
@@ -15,7 +16,7 @@
     "format": "biome format --write .",
     "lint": "biome lint .",
     "benchmark:overhead": "tsx scripts/benchmark-overhead.ts",
-    "createsuperuser": "tsx scripts/createsuperuser.ts",
+    "createsuperuser": "dotenv -e .env -- tsx scripts/createsuperuser.ts",
     "db:generate": "pnpm --filter @repo/api db:generate",
     "db:migrate": "pnpm --filter @repo/api db:migrate",
     "db:push": "pnpm --filter @repo/api db:push",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "dotenv-cli": "^11.0.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

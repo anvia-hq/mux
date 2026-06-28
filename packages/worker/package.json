@@ -13,8 +13,9 @@
     }
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "with-env": "dotenv -e ../../.env --",
+    "dev": "pnpm with-env tsx watch src/index.ts",
+    "start": "pnpm with-env tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -22,7 +23,6 @@
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "7.8.0",
     "bullmq": "^5.79.0",
-    "dotenv": "17.4.2",
     "ioredis": "^5.10.1",
     "pg": "^8.22.0"
   },

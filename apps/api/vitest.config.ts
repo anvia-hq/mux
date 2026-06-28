@@ -162,7 +162,6 @@ export default defineConfig({
         "src/providers/openai.ts",
         "src/providers/registry.ts",
         "src/providers/types.ts",
-        "src/env.ts",
         "src/index.ts",
         "src/modules/auth/types.ts",
         "src/modules/users/types.ts",
