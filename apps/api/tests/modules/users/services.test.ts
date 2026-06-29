@@ -10,7 +10,7 @@ const { mockPrisma } = vi.hoisted(() => ({
 
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 
-import { listRecentUsers } from "../../../src/modules/users/services";
+import { listUsers } from "../../../src/modules/users/services";
 
 describe("users services", () => {
   afterEach(() => {
@@ -30,8 +30,11 @@ describe("users services", () => {
         updatedAt: date,
       },
     ]);
-    const users = await listRecentUsers();
+    const users = await listUsers();
     expect(users).toHaveLength(1);
     expect(users[0]).not.toHaveProperty("passwordHash");
+    expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+      orderBy: { createdAt: "desc" },
+    });
   });
 });

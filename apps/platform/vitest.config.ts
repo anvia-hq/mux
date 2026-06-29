@@ -23,6 +23,7 @@ export default defineConfig({
         "src/routes/_authed.index.tsx",
         "src/routes/_authed.logs.tsx",
         "src/routes/_authed.models.tsx",
+        "src/routes/_authed.users.tsx",
         "src/routes/_authed.providers.index.tsx",
         "src/routes/_authed.providers.tsx",
         "src/routes/register.tsx",

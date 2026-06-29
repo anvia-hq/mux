@@ -28,6 +28,7 @@ import {
   Plug01Icon,
   Scroll01Icon,
   Settings01Icon,
+  User02Icon,
 } from "@hugeicons/core-free-icons";
 import { meQueryOptions, useLogoutMutation } from "../../auth/hooks/use-auth";
 import muxLogoUrl from "../../../assets/logo-mux.png";
@@ -50,6 +51,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/", label: "Overview", icon: DashboardSquare01Icon },
       { to: "/api-keys", label: "API keys", icon: Key01Icon, adminOnly: true },
+      { to: "/users", label: "Users", icon: User02Icon, adminOnly: true },
       { to: "/logs", label: "Logs", icon: Scroll01Icon },
     ],
   },
