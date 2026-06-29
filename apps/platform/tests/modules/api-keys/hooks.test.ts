@@ -52,6 +52,26 @@ describe("api-keys hooks", () => {
         body: { name: "new-key", spendLimitUsd: 10 },
       });
     });
+
+    it("posts selected model filters to /api-keys", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({ id: "k2", key: "mux_live_xxx" });
+      const { result } = renderHook(() => useCreateApiKeyMutation(), { wrapper });
+      await act(() =>
+        result.current.mutateAsync({
+          name: "filtered-key",
+          spendLimitUsd: null,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        }),
+      );
+      expect(apiFetch).toHaveBeenCalledWith("/api-keys", {
+        method: "POST",
+        body: {
+          name: "filtered-key",
+          spendLimitUsd: null,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        },
+      });
+    });
   });
 
   describe("useRevokeApiKeyMutation", () => {

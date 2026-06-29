@@ -1,7 +1,8 @@
 import { type Context, Hono, type Next } from "hono";
-import { apiKeyAuth } from "../../middleware/api-key";
+import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
 import { listPublicModels, toPublicModelId } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
+import { isModelAllowedForApiKey } from "../keys/services";
 
 /**
  * Formats a provider model into the OpenAI `GET /v1/models` response shape.
@@ -38,7 +39,10 @@ modelsRouter.use("*", apiKeyAuth);
 
 modelsRouter.get("/", async (c) => {
   try {
-    const models = await listPublicModels();
+    const modelAccess = readApiKeyModelAccess(c);
+    const models = (await listPublicModels()).filter((model) =>
+      isModelAllowedForApiKey(toPublicModelId(model.provider, model.id), modelAccess),
+    );
     return c.json({ object: "list", data: models.map(toOpenAIModel) });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";

@@ -10,6 +10,10 @@ test("creates, reveals, lists, and revokes an API key", async ({ page, request }
   await page.getByRole("button", { name: "New API key" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Create API key")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Allow all models" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Allow all models" }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Filter models" })).toBeVisible();
+  await page.keyboard.press("Escape");
   await dialog.getByLabel("Name").fill("billing-service");
   await dialog.getByLabel("USD balance").fill("5");
   await dialog.getByRole("button", { name: "Create key" }).click();

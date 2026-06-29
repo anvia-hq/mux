@@ -31,6 +31,8 @@ model ApiKey {
   creator       User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   isActive      Boolean  @default(true)
   spendLimitUsd Float?
+  allowAllModels Boolean  @default(true)
+  allowedModelIds String[] @default([])
   createdAt     DateTime @default(now())
   logs          RequestLog[]
   backgroundJobs BackgroundResponseJob[]

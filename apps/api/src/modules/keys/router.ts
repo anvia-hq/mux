@@ -3,7 +3,12 @@ import { Hono } from "hono";
 import { requireRole } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
 import { createKeySchema } from "./schema";
-import { createApiKey, listApiKeys, revokeApiKey } from "./services";
+import {
+  ApiKeyModelFilterValidationError,
+  createApiKey,
+  listApiKeys,
+  revokeApiKey,
+} from "./services";
 
 /**
  * Hono environment for the keys router. `userId` is set by the admin guard
@@ -68,13 +73,17 @@ keysRouter.get("/", async (c) => {
  * SHA-256 hash, so the raw value cannot be recovered later.
  */
 keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), async (c) => {
-  const { name, spendLimitUsd } = c.req.valid("json");
+  const { name, spendLimitUsd, allowedModelIds } = c.req.valid("json");
   const userId = c.get("userId");
 
   try {
-    const { id, key } = await createApiKey(name, userId, spendLimitUsd);
+    const { id, key } = await createApiKey(name, userId, spendLimitUsd, allowedModelIds);
     return c.json({ id, key }, 201);
   } catch (error) {
+    if (error instanceof ApiKeyModelFilterValidationError) {
+      return c.json({ error: error.message }, 400);
+    }
+
     const message = error instanceof Error ? error.message : "Internal server error";
     return c.json({ error: message }, 500);
   }

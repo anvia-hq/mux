@@ -9,7 +9,15 @@ const { mockPrisma } = vi.hoisted(() => ({
   },
 }));
 
+const { mockListPublicModels } = vi.hoisted(() => ({
+  mockListPublicModels: vi.fn(),
+}));
+
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
+vi.mock("../../../src/providers/registry", () => ({
+  listPublicModels: mockListPublicModels,
+  toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+}));
 vi.mock("hono/jwt", () => ({
   sign: vi.fn().mockResolvedValue("jwt"),
   verify: vi.fn().mockResolvedValue({ sub: "admin-1", role: "ADMIN" }),
@@ -42,7 +50,10 @@ vi.mock("../../../src/modules/keys/services", async (importOriginal) => {
 });
 
 describe("keys router", () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    mockListPublicModels.mockReset();
+  });
 
   beforeEach(() => {
     mockPrisma.user.findUnique.mockResolvedValue({
@@ -74,7 +85,37 @@ describe("keys router", () => {
     expect(res.status).toBe(201);
     expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ spendLimitUsd: 5 }),
+        data: expect.objectContaining({
+          spendLimitUsd: 5,
+          allowAllModels: true,
+          allowedModelIds: [],
+        }),
+      }),
+    );
+  });
+
+  it("POST / creates filtered key", async () => {
+    mockListPublicModels.mockResolvedValueOnce([
+      { id: "gpt-4o", provider: "openai" },
+      { id: "fast", provider: "mux" },
+    ]);
+    mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "k1", key: "h" });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "test",
+        allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+      }),
+    });
+    expect(res.status).toBe(201);
+    expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          allowAllModels: false,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        }),
       }),
     );
   });
@@ -97,6 +138,30 @@ describe("keys router", () => {
       body: JSON.stringify({ name: "test", spendLimitUsd: 0 }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("POST / returns 400 for empty model filters", async () => {
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test", allowedModelIds: [] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST / returns 400 for unknown model filters", async () => {
+    mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test", allowedModelIds: ["anthropic:claude"] }),
+    });
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: "unknown or unavailable model(s): anthropic:claude",
+    });
   });
 
   it("DELETE /:id revokes key", async () => {

@@ -1,29 +1,35 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { mockGetCurrentUser, mockListPublicModels, mockPrisma } = vi.hoisted(() => ({
-  mockGetCurrentUser: vi.fn().mockResolvedValue({
-    id: "admin-1",
-    email: "admin@test.com",
-    name: "Admin",
-    role: "ADMIN",
-  }),
-  mockListPublicModels: vi.fn().mockResolvedValue([]),
-  mockPrisma: {
-    disabledModel: { findMany: vi.fn().mockResolvedValue([]) },
-    user: {
-      findUnique: vi.fn().mockResolvedValue({
-        id: "admin-1",
-        email: "admin@test.com",
-        name: "Admin",
-        role: "ADMIN",
-        passwordHash: "hash",
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
+const { mockGetCurrentUser, mockListPublicModels, mockModelAccess, mockPrisma } = vi.hoisted(
+  () => ({
+    mockGetCurrentUser: vi.fn().mockResolvedValue({
+      id: "admin-1",
+      email: "admin@test.com",
+      name: "Admin",
+      role: "ADMIN",
+    }),
+    mockListPublicModels: vi.fn().mockResolvedValue([]),
+    mockModelAccess: {
+      allowAllModels: true,
+      allowedModelIds: [] as string[],
     },
-  },
-}));
+    mockPrisma: {
+      disabledModel: { findMany: vi.fn().mockResolvedValue([]) },
+      user: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: "admin-1",
+          email: "admin@test.com",
+          name: "Admin",
+          role: "ADMIN",
+          passwordHash: "hash",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }),
+      },
+    },
+  }),
+);
 
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
@@ -43,11 +49,24 @@ vi.mock("../../../src/modules/auth/services", () => ({
   getCurrentUser: mockGetCurrentUser,
   requireRole: vi.fn().mockResolvedValue({ id: "admin-1" }),
 }));
+vi.mock("../../../src/modules/keys/services", () => ({
+  isModelAllowedForApiKey: (
+    modelId: string,
+    access: { allowAllModels: boolean; allowedModelIds: string[] },
+  ) => access.allowAllModels || access.allowedModelIds.includes(modelId),
+}));
 
 vi.mock("../../../src/middleware/api-key", () => ({
-  apiKeyAuth: vi.fn().mockImplementation(async (_c: unknown, next: () => void) => {
-    await next();
-  }),
+  apiKeyAuth: vi
+    .fn()
+    .mockImplementation(
+      async (c: { set: (key: string, value: unknown) => void }, next: () => void) => {
+        c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
+        c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
+        await next();
+      },
+    ),
+  readApiKeyModelAccess: vi.fn(() => mockModelAccess),
 }));
 
 import { modelsRouter, modelsDashboardRouter } from "../../../src/modules/models/router";
@@ -62,6 +81,8 @@ describe("models router", () => {
       role: "ADMIN",
     });
     mockListPublicModels.mockResolvedValue([]);
+    mockModelAccess.allowAllModels = true;
+    mockModelAccess.allowedModelIds = [];
   });
 
   it("GET /v1/models returns model list", async () => {
@@ -89,6 +110,51 @@ describe("models router", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
       data: [{ id: "openai:gpt-4", owned_by: "openai" }],
+    });
+  });
+
+  it("GET /v1/models returns only allowed models for filtered keys", async () => {
+    mockModelAccess.allowAllModels = false;
+    mockModelAccess.allowedModelIds = ["openai:gpt-4o"];
+    mockListPublicModels.mockResolvedValueOnce([
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        inputPricePer1M: 10,
+        outputPricePer1M: 30,
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: true,
+        toolCall: true,
+        structuredOutput: false,
+        weights: "closed",
+      },
+      {
+        id: "claude",
+        name: "Claude",
+        provider: "anthropic",
+        inputPricePer1M: 10,
+        outputPricePer1M: 30,
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: true,
+        toolCall: true,
+        structuredOutput: false,
+        weights: "closed",
+      },
+    ]);
+    const app = new Hono().route("/v1/models", modelsRouter);
+    const res = await app.request("/v1/models", {
+      headers: { Authorization: "Bearer valid-key" },
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      data: [{ id: "openai:gpt-4o", owned_by: "openai" }],
     });
   });
 

@@ -8,6 +8,8 @@ export type ApiKey = {
   spendLimitUsd: number | null;
   spentUsd: number;
   remainingUsd: number | null;
+  allowAllModels: boolean;
+  allowedModelIds: string[] | null;
   createdAt: string;
   creator: { email: string };
 };
@@ -15,6 +17,7 @@ export type ApiKey = {
 export type CreateApiKeyInput = {
   name: string;
   spendLimitUsd?: number | null;
+  allowedModelIds?: string[] | null;
 };
 
 const queryKey = ["api-keys"] as const;

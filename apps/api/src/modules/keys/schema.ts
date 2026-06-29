@@ -18,6 +18,7 @@ export const createKeySchema = z.object({
     .positive("spendLimitUsd must be greater than 0")
     .nullable()
     .optional(),
+  allowedModelIds: z.array(z.string().trim().min(1)).min(1).nullable().optional(),
 });
 
 export type CreateKeyInput = z.infer<typeof createKeySchema>;

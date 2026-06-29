@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import { Hono } from "hono";
 import { stream as honoStream } from "hono/streaming";
 import { zValidator } from "@hono/zod-validator";
-import { apiKeyAuth } from "../../middleware/api-key";
+import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
 import {
   logStreamFinal,
   logStreamStart,
@@ -18,8 +18,10 @@ import { parseResponseStreamBlock, SseBlockParser } from "../../providers/respon
 import type { ResponseCreateRequest, ResponseObject, ResponseUsage } from "../../providers/types";
 import {
   addApiKeySpendUsd,
+  ApiKeyModelAccessDeniedError,
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
+  assertApiKeyModelAllowed,
   assertApiKeyCanSpend,
 } from "../keys/services";
 import { authValidationHook } from "../auth/utils";
@@ -66,6 +68,18 @@ function isPendingResponse(response: ResponseObject): boolean {
   return Boolean((response as ResponseObject & { _pending?: boolean })._pending);
 }
 
+function disallowedModelResponse(c: Context, modelId: string): Response | null {
+  try {
+    assertApiKeyModelAllowed(modelId, readApiKeyModelAccess(c));
+    return null;
+  } catch (error) {
+    if (error instanceof ApiKeyModelAccessDeniedError) {
+      return c.json({ error: error.message }, 403);
+    }
+    throw error;
+  }
+}
+
 responsesRouter.post(
   "/",
   zValidator("json", responseCreateRequestSchema, authValidationHook),
@@ -75,6 +89,8 @@ responsesRouter.post(
     const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
 
     const body = c.req.valid("json") as ResponseCreateRequest;
+    const accessError = disallowedModelResponse(c, body.model);
+    if (accessError) return accessError;
 
     if (body.background === true) {
       try {
@@ -103,6 +119,10 @@ responsesRouter.post(
 
         if (error instanceof ApiKeySpendLimitExceededError) {
           return c.json({ error: errorMessage }, 429);
+        }
+
+        if (error instanceof ApiKeyModelAccessDeniedError) {
+          return c.json({ error: errorMessage }, 403);
         }
 
         if (error instanceof ApiKeyUnbillableResponseUsageError) {
@@ -237,6 +257,10 @@ responsesRouter.post(
         return c.json({ error: errorMessage }, 429);
       }
 
+      if (error instanceof ApiKeyModelAccessDeniedError) {
+        return c.json({ error: errorMessage }, 403);
+      }
+
       if (error instanceof ApiKeyUnbillableResponseUsageError) {
         return c.json({ error: errorMessage }, 429);
       }
@@ -265,6 +289,8 @@ responsesRouter.post(
     const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
     const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
     const body = c.req.valid("json") as ResponseCreateRequest;
+    const accessError = disallowedModelResponse(c, body.model);
+    if (accessError) return accessError;
 
     try {
       if (isLimitedKey) {
@@ -287,6 +313,10 @@ responsesRouter.post(
 
       if (error instanceof ApiKeySpendLimitExceededError) {
         return c.json({ error: errorMessage }, 429);
+      }
+
+      if (error instanceof ApiKeyModelAccessDeniedError) {
+        return c.json({ error: errorMessage }, 403);
       }
 
       if (error instanceof ApiKeyUnbillableResponseUsageError) {
@@ -321,6 +351,11 @@ responsesRouter.post("/input_tokens", async (c) => {
     body = (await c.req.json()) as ResponseCreateRequest;
   } catch {
     return c.json({ error: "Request body must be valid JSON" }, 400);
+  }
+
+  if (typeof body.model === "string") {
+    const accessError = disallowedModelResponse(c, body.model);
+    if (accessError) return accessError;
   }
 
   try {

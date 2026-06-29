@@ -1,5 +1,16 @@
 import type { Context, Next } from "hono";
+import type { ApiKeyModelAccess } from "../modules/keys/services";
 import { validateApiKey } from "../modules/keys/services";
+
+export function readApiKeyModelAccess(c: Context): ApiKeyModelAccess {
+  const allowAllModels = c.get("apiKeyAllowAllModels" as never) as boolean | undefined;
+  const allowedModelIds = c.get("apiKeyAllowedModelIds" as never) as string[] | undefined;
+
+  return {
+    allowAllModels: allowAllModels ?? true,
+    allowedModelIds: allowedModelIds ?? [],
+  };
+}
 
 export async function apiKeyAuth(c: Context, next: Next) {
   const authHeader = c.req.header("Authorization");
@@ -19,6 +30,8 @@ export async function apiKeyAuth(c: Context, next: Next) {
   c.set("apiKeyId", apiKey.id);
   c.set("apiKeyName", apiKey.name);
   c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd);
+  c.set("apiKeyAllowAllModels", apiKey.allowAllModels);
+  c.set("apiKeyAllowedModelIds", apiKey.allowedModelIds);
 
   await next();
 }

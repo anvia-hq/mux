@@ -27,12 +27,21 @@ const { mockRedis } = vi.hoisted(() => ({
   },
 }));
 
+const { mockListPublicModels } = vi.hoisted(() => ({
+  mockListPublicModels: vi.fn(),
+}));
+
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../../src/utils/cache", () => ({ cacheGet: mockCacheGet, cacheSet: mockCacheSet }));
 vi.mock("../../../src/utils/redis", () => ({ redis: mockRedis }));
+vi.mock("../../../src/providers/registry", () => ({
+  listPublicModels: mockListPublicModels,
+  toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+}));
 
 import {
   addApiKeySpendUsd,
+  ApiKeyModelFilterValidationError,
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
   assertApiKeyCanSpend,
@@ -47,6 +56,7 @@ import {
 describe("keys services", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockListPublicModels.mockReset();
   });
 
   describe("generateApiKey", () => {
@@ -65,9 +75,48 @@ describe("keys services", () => {
       expect(result.key).toMatch(/^mux_live_/);
       expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ spendLimitUsd: 25 }),
+          data: expect.objectContaining({
+            spendLimitUsd: 25,
+            allowAllModels: true,
+            allowedModelIds: [],
+          }),
         }),
       );
+    });
+
+    it("stores selected model ids for filtered keys", async () => {
+      mockListPublicModels.mockResolvedValueOnce([
+        { id: "gpt-4o", provider: "openai" },
+        { id: "fast", provider: "mux" },
+      ]);
+      mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "key-1", key: "hashed-val" });
+
+      await createApiKey("my-key", "user-1", null, ["openai:gpt-4o", "mux:fast", "openai:gpt-4o"]);
+
+      expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            allowAllModels: false,
+            allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+          }),
+        }),
+      );
+    });
+
+    it("rejects empty model filters", async () => {
+      await expect(createApiKey("my-key", "user-1", null, [])).rejects.toBeInstanceOf(
+        ApiKeyModelFilterValidationError,
+      );
+      expect(mockPrisma.apiKey.create).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown model filters", async () => {
+      mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+
+      await expect(createApiKey("my-key", "user-1", null, ["anthropic:claude"])).rejects.toThrow(
+        "unknown or unavailable model",
+      );
+      expect(mockPrisma.apiKey.create).not.toHaveBeenCalled();
     });
   });
 
@@ -80,7 +129,14 @@ describe("keys services", () => {
         spendLimitUsd: null,
       });
       const result = await validateApiKey("mux_live_test");
-      expect(result).toEqual({ id: "k1", name: "test", isActive: true, spendLimitUsd: null });
+      expect(result).toEqual({
+        id: "k1",
+        name: "test",
+        isActive: true,
+        spendLimitUsd: null,
+        allowAllModels: true,
+        allowedModelIds: [],
+      });
     });
 
     it("falls through to DB on cache miss", async () => {
@@ -90,9 +146,18 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: 10,
+        allowAllModels: false,
+        allowedModelIds: ["openai:gpt-4o"],
       });
       const result = await validateApiKey("mux_live_test");
-      expect(result).toEqual({ id: "k1", name: "test", isActive: true, spendLimitUsd: 10 });
+      expect(result).toEqual({
+        id: "k1",
+        name: "test",
+        isActive: true,
+        spendLimitUsd: 10,
+        allowAllModels: false,
+        allowedModelIds: ["openai:gpt-4o"],
+      });
     });
 
     it("returns null when key not found in DB", async () => {
@@ -130,7 +195,14 @@ describe("keys services", () => {
       ]);
       const keys = await listApiKeys();
       expect(keys).toHaveLength(1);
-      expect(keys[0]).toEqual(expect.objectContaining({ spentUsd: 2.5, remainingUsd: 7.5 }));
+      expect(keys[0]).toEqual(
+        expect.objectContaining({
+          allowAllModels: true,
+          allowedModelIds: null,
+          spentUsd: 2.5,
+          remainingUsd: 7.5,
+        }),
+      );
     });
   });
 

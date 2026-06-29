@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "../../utils/prisma";
 import { cacheGet, cacheSet } from "../../utils/cache";
 import { redis } from "../../utils/redis";
+import { listPublicModels, toPublicModelId } from "../../providers/registry";
 
 const API_KEY_PREFIX = "mux_live_";
 
@@ -20,6 +21,25 @@ export class ApiKeySpendLedgerUnavailableError extends Error {
   }
 }
 
+export class ApiKeyModelFilterValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ApiKeyModelFilterValidationError";
+  }
+}
+
+export class ApiKeyModelAccessDeniedError extends Error {
+  constructor(modelId: string) {
+    super(`API key is not allowed to use model: ${modelId}`);
+    this.name = "ApiKeyModelAccessDeniedError";
+  }
+}
+
+export type ApiKeyModelAccess = {
+  allowAllModels: boolean;
+  allowedModelIds: string[];
+};
+
 function hashKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
@@ -34,8 +54,10 @@ export async function createApiKey(
   name: string,
   userId: string,
   spendLimitUsd?: number | null,
+  allowedModelIds?: string[] | null,
 ): Promise<{ id: string; key: string }> {
   const { raw, hashed } = generateApiKey();
+  const modelAccess = await buildModelAccess(allowedModelIds);
 
   const apiKey = await prisma.apiKey.create({
     data: {
@@ -43,10 +65,64 @@ export async function createApiKey(
       key: hashed,
       createdBy: userId,
       spendLimitUsd: spendLimitUsd ?? null,
+      allowAllModels: modelAccess.allowAllModels,
+      allowedModelIds: modelAccess.allowedModelIds,
     },
   });
 
   return { id: apiKey.id, key: raw };
+}
+
+async function buildModelAccess(allowedModelIds?: string[] | null): Promise<ApiKeyModelAccess> {
+  if (allowedModelIds === undefined || allowedModelIds === null) {
+    return { allowAllModels: true, allowedModelIds: [] };
+  }
+
+  const normalized = Array.from(
+    new Set(allowedModelIds.map((modelId) => modelId.trim()).filter(Boolean)),
+  );
+
+  if (normalized.length === 0) {
+    throw new ApiKeyModelFilterValidationError(
+      "allowedModelIds must include at least one model when filtering models",
+    );
+  }
+
+  const publicModels = await listPublicModels();
+  const availableModelIds = new Set(
+    publicModels.map((model) => toPublicModelId(model.provider, model.id)),
+  );
+  const unknownModelIds = normalized.filter((modelId) => !availableModelIds.has(modelId));
+
+  if (unknownModelIds.length > 0) {
+    throw new ApiKeyModelFilterValidationError(
+      `unknown or unavailable model(s): ${unknownModelIds.join(", ")}`,
+    );
+  }
+
+  return { allowAllModels: false, allowedModelIds: normalized };
+}
+
+export function normalizeApiKeyModelAccess(apiKey: {
+  allowAllModels?: boolean | null;
+  allowedModelIds?: string[] | null;
+}): ApiKeyModelAccess {
+  const allowAllModels = apiKey.allowAllModels !== false;
+
+  return {
+    allowAllModels,
+    allowedModelIds: allowAllModels ? [] : (apiKey.allowedModelIds ?? []),
+  };
+}
+
+export function isModelAllowedForApiKey(modelId: string, access: ApiKeyModelAccess): boolean {
+  return access.allowAllModels || access.allowedModelIds.includes(modelId);
+}
+
+export function assertApiKeyModelAllowed(modelId: string, access: ApiKeyModelAccess): void {
+  if (!isModelAllowedForApiKey(modelId, access)) {
+    throw new ApiKeyModelAccessDeniedError(modelId);
+  }
 }
 
 export async function validateApiKey(rawKey: string) {
@@ -61,18 +137,27 @@ export async function validateApiKey(rawKey: string) {
       name: string;
       isActive: boolean;
       spendLimitUsd: number | null;
+      allowAllModels?: boolean | null;
+      allowedModelIds?: string[] | null;
     }>(cacheKey);
   } catch {
     // Cache unavailable, fall through to DB
   }
   if (cached) {
-    return cached.isActive ? cached : null;
+    return cached.isActive ? { ...cached, ...normalizeApiKeyModelAccess(cached) } : null;
   }
 
   // Cache miss - query database
   const apiKey = await prisma.apiKey.findUnique({
     where: { key: hashed },
-    select: { id: true, name: true, isActive: true, spendLimitUsd: true },
+    select: {
+      id: true,
+      name: true,
+      isActive: true,
+      spendLimitUsd: true,
+      allowAllModels: true,
+      allowedModelIds: true,
+    },
   });
 
   if (!apiKey) {
@@ -86,7 +171,7 @@ export async function validateApiKey(rawKey: string) {
     // Cache unavailable, continue without caching
   }
 
-  return apiKey.isActive ? apiKey : null;
+  return apiKey.isActive ? { ...apiKey, ...normalizeApiKeyModelAccess(apiKey) } : null;
 }
 
 export async function revokeApiKey(id: string) {
@@ -112,6 +197,8 @@ export async function listApiKeys() {
       name: true,
       isActive: true,
       spendLimitUsd: true,
+      allowAllModels: true,
+      allowedModelIds: true,
       createdAt: true,
       creator: {
         select: { email: true },
@@ -143,7 +230,15 @@ export async function listApiKeys() {
     const remainingUsd =
       key.spendLimitUsd === null ? null : Math.max(key.spendLimitUsd - spentUsd, 0);
 
-    return { ...key, spentUsd, remainingUsd };
+    const modelAccess = normalizeApiKeyModelAccess(key);
+
+    return {
+      ...key,
+      allowAllModels: modelAccess.allowAllModels,
+      allowedModelIds: modelAccess.allowAllModels ? null : modelAccess.allowedModelIds,
+      spentUsd,
+      remainingUsd,
+    };
   });
 }
 

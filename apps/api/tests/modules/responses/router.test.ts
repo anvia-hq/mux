@@ -14,6 +14,7 @@ const {
   mockHandleResponseRetrieve,
   mockLogStreamFinal,
   mockLogStreamStart,
+  mockModelAccess,
   mockSpendLimit,
   mockSubmitBackgroundResponse,
 } = vi.hoisted(() => ({
@@ -30,6 +31,10 @@ const {
   mockHandleResponseRetrieve: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
+  mockModelAccess: {
+    allowAllModels: true,
+    allowedModelIds: [] as string[],
+  },
   mockSpendLimit: { value: null as number | null },
   mockSubmitBackgroundResponse: vi.fn(),
 }));
@@ -96,9 +101,12 @@ vi.mock("../../../src/middleware/api-key", () => ({
       async (c: { set: (key: string, value: unknown) => void }, next: () => void) => {
         c.set("apiKeyId", "key-1");
         c.set("apiKeySpendLimitUsd", mockSpendLimit.value);
+        c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
+        c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
         await next();
       },
     ),
+  readApiKeyModelAccess: vi.fn(() => mockModelAccess),
 }));
 
 vi.mock("../../../src/middleware/logger", () => {
@@ -119,6 +127,13 @@ vi.mock("../../../src/middleware/logger", () => {
 vi.mock("../../../src/providers/registry", () => ({ estimateCost: mockEstimateCost }));
 
 vi.mock("../../../src/modules/keys/services", () => {
+  class ApiKeyModelAccessDeniedError extends Error {
+    constructor(modelId: string) {
+      super(`API key is not allowed to use model: ${modelId}`);
+      this.name = "ApiKeyModelAccessDeniedError";
+    }
+  }
+
   class ApiKeySpendLimitExceededError extends Error {
     constructor() {
       super("API key spend limit exceeded");
@@ -134,9 +149,17 @@ vi.mock("../../../src/modules/keys/services", () => {
   }
 
   return {
+    ApiKeyModelAccessDeniedError,
     ApiKeySpendLedgerUnavailableError,
     ApiKeySpendLimitExceededError,
     addApiKeySpendUsd: mockAddApiKeySpendUsd,
+    assertApiKeyModelAllowed: vi.fn(
+      (modelId: string, access: { allowAllModels: boolean; allowedModelIds: string[] }) => {
+        if (!access.allowAllModels && !access.allowedModelIds.includes(modelId)) {
+          throw new ApiKeyModelAccessDeniedError(modelId);
+        }
+      },
+    ),
     assertApiKeyCanSpend: mockAssertApiKeyCanSpend,
   };
 });
@@ -159,6 +182,8 @@ import { responsesRouter } from "../../../src/modules/responses/router";
 describe("responses router", () => {
   beforeEach(() => {
     mockSpendLimit.value = null;
+    mockModelAccess.allowAllModels = true;
+    mockModelAccess.allowedModelIds = [];
     mockEstimateCost.mockReturnValue(0.01);
     mockLogStreamFinal.mockResolvedValue(undefined);
     mockLogStreamStart.mockResolvedValue("log-1");
@@ -202,6 +227,41 @@ describe("responses router", () => {
     expect(mockHandleResponseCreate).toHaveBeenCalledWith(expect.anything(), "key-1", {
       requireBillableUsage: false,
     });
+  });
+
+  it("returns 403 before handling disallowed response models", async () => {
+    mockModelAccess.allowAllModels = false;
+    mockModelAccess.allowedModelIds = ["openai:gpt-4o"];
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    const create = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "anthropic:claude", input: "hi" }),
+    });
+    expect(create.status).toBe(403);
+    await expect(create.json()).resolves.toEqual({
+      error: "API key is not allowed to use model: anthropic:claude",
+    });
+
+    const compact = await app.request("/v1/responses/compact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "anthropic:claude", input: "hi" }),
+    });
+    expect(compact.status).toBe(403);
+
+    const inputTokens = await app.request("/v1/responses/input_tokens", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "anthropic:claude", input: "hi" }),
+    });
+    expect(inputTokens.status).toBe(403);
+
+    expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
+    expect(mockHandleResponseCreate).not.toHaveBeenCalled();
+    expect(mockHandleResponseCompact).not.toHaveBeenCalled();
+    expect(mockHandleResponseInputTokens).not.toHaveBeenCalled();
   });
 
   it("POST /v1/responses 202 with Location header for background submissions", async () => {

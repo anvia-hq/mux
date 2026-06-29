@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { apiKeyAuth } from "../../middleware/api-key";
+import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
 import {
   logStreamFinal,
   logStreamStart,
@@ -12,8 +12,10 @@ import {
   validateChatCompletionRequestShape,
 } from "../../providers/chat-compat";
 import {
+  ApiKeyModelAccessDeniedError,
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
+  assertApiKeyModelAllowed,
   assertApiKeyCanSpend,
 } from "../keys/services";
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
@@ -46,6 +48,15 @@ chatRouter.post("/completions", async (c) => {
   const validationError = validateChatCompletionRequestShape(body);
   if (validationError) {
     return c.json({ error: validationError }, 400);
+  }
+
+  try {
+    assertApiKeyModelAllowed(body.model, readApiKeyModelAccess(c));
+  } catch (error) {
+    if (error instanceof ApiKeyModelAccessDeniedError) {
+      return c.json({ error: error.message }, 403);
+    }
+    throw error;
   }
 
   if (isLimitedKey && body.stream) {
@@ -155,6 +166,10 @@ chatRouter.post("/completions", async (c) => {
 
     if (error instanceof ApiKeySpendLimitExceededError) {
       return c.json({ error: errorMessage }, 429);
+    }
+
+    if (error instanceof ApiKeyModelAccessDeniedError) {
+      return c.json({ error: errorMessage }, 403);
     }
 
     if (error instanceof ApiKeyUnbillableUsageError) {

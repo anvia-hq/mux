@@ -6,6 +6,7 @@ const {
   mockHandleChatCompletion,
   mockLogStreamFinal,
   mockLogStreamStart,
+  mockModelAccess,
   mockSpendLimit,
 } = vi.hoisted(() => ({
   mockAssertApiKeyCanSpend: vi.fn(),
@@ -13,6 +14,10 @@ const {
   mockHandleChatCompletion: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
+  mockModelAccess: {
+    allowAllModels: true,
+    allowedModelIds: [] as string[],
+  },
   mockSpendLimit: { value: null as number | null },
 }));
 
@@ -35,9 +40,12 @@ vi.mock("../../../src/middleware/api-key", () => ({
       async (c: { set: (key: string, value: unknown) => void }, next: () => void) => {
         c.set("apiKeyId", "key-1");
         c.set("apiKeySpendLimitUsd", mockSpendLimit.value);
+        c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
+        c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
         await next();
       },
     ),
+  readApiKeyModelAccess: vi.fn(() => mockModelAccess),
 }));
 vi.mock("../../../src/middleware/logger", () => {
   class RequestLoggingUnavailableError extends Error {
@@ -78,6 +86,12 @@ vi.mock("../../../src/providers/chat-compat", () => {
   };
 });
 vi.mock("../../../src/modules/keys/services", () => {
+  class ApiKeyModelAccessDeniedError extends Error {
+    constructor(modelId: string) {
+      super(`API key is not allowed to use model: ${modelId}`);
+      this.name = "ApiKeyModelAccessDeniedError";
+    }
+  }
   class ApiKeySpendLimitExceededError extends Error {
     constructor() {
       super("API key spend limit exceeded");
@@ -92,8 +106,16 @@ vi.mock("../../../src/modules/keys/services", () => {
   }
 
   return {
+    ApiKeyModelAccessDeniedError,
     ApiKeySpendLedgerUnavailableError,
     ApiKeySpendLimitExceededError,
+    assertApiKeyModelAllowed: vi.fn(
+      (modelId: string, access: { allowAllModels: boolean; allowedModelIds: string[] }) => {
+        if (!access.allowAllModels && !access.allowedModelIds.includes(modelId)) {
+          throw new ApiKeyModelAccessDeniedError(modelId);
+        }
+      },
+    ),
     assertApiKeyCanSpend: mockAssertApiKeyCanSpend,
   };
 });
@@ -111,6 +133,8 @@ import { UnsupportedChatFeatureError } from "../../../src/providers/chat-compat"
 describe("chat router", () => {
   beforeEach(() => {
     mockSpendLimit.value = null;
+    mockModelAccess.allowAllModels = true;
+    mockModelAccess.allowedModelIds = [];
     mockLogStreamStart.mockResolvedValue("log-1");
     mockLogStreamFinal.mockResolvedValue(undefined);
     mockEstimateCost.mockReturnValue(0.01);
@@ -189,6 +213,26 @@ describe("chat router", () => {
     expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
       requireBillableUsage: false,
     });
+  });
+
+  it("POST /completions 403 when the API key cannot access the model", async () => {
+    mockModelAccess.allowAllModels = false;
+    mockModelAccess.allowedModelIds = ["openai:gpt-4o"];
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "anthropic:claude",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "API key is not allowed to use model: anthropic:claude",
+    });
+    expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
+    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
   });
 
   it("POST /completions checks spend limit before limited request", async () => {

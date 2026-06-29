@@ -24,9 +24,10 @@ export interface Model {
   }[];
 }
 
-export function useModelsQuery() {
+export function useModelsQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["dashboard", "models"] as const,
     queryFn: () => apiFetch<{ data: Model[] }>("/dashboard/models"),
+    enabled: options.enabled ?? true,
   });
 }
