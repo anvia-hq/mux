@@ -16,6 +16,7 @@ import {
   type ResolvedProviderModel,
 } from "../../providers/registry";
 import type {
+  ProviderAdapter,
   ResponseCompactRequest,
   ResponseCreateRequest,
   ResponseObject,
@@ -343,6 +344,22 @@ export class OpenAIResponseProviderNotConfiguredError extends Error {
   }
 }
 
+function responseUtilityProviderCandidates(
+  providerNames: string[],
+  method: keyof ProviderAdapter,
+): ProviderAdapter[] {
+  return responseUtilityConfiguredProviders(providerNames).filter((provider) =>
+    Boolean(provider[method]),
+  );
+}
+
+function responseUtilityConfiguredProviders(providerNames: string[]): ProviderAdapter[] {
+  const names = process.env.E2E_RESET_TOKEN ? [...providerNames, "e2e"] : providerNames;
+  return names
+    .map((name) => getProviderByName(name))
+    .filter((provider): provider is ProviderAdapter => Boolean(provider));
+}
+
 export class ResponseNotFoundError extends Error {
   constructor(id: string) {
     super(`Response not found: ${id}`);
@@ -387,63 +404,84 @@ export async function handleResponseRetrieve(
     }
   }
 
-  const provider = getProviderByName("openai");
-  if (!provider) {
+  const configuredProviders = responseUtilityConfiguredProviders(["openai"]);
+  if (configuredProviders.length === 0) {
     throw new OpenAIResponseProviderNotConfiguredError();
   }
-
-  if (!provider.getResponse) {
+  const candidates = configuredProviders.filter((provider) => Boolean(provider.getResponse));
+  if (candidates.length === 0) {
     throw new UnsupportedResponseFeatureError(
       "Selected provider does not support response retrieval",
     );
   }
 
   const startTime = Date.now();
+  let lastError: unknown = null;
 
-  try {
-    const response = await provider.getResponse(id, query);
-    const latencyMs = Date.now() - startTime;
+  for (const provider of candidates) {
+    try {
+      const response = await provider.getResponse?.(id, query);
+      if (!response) continue;
+      const latencyMs = Date.now() - startTime;
 
-    if (isResponsesCacheEnabled()) {
-      await writeCachedResponse(
+      if (isResponsesCacheEnabled()) {
+        await writeCachedResponse(
+          apiKeyId,
+          provider.name,
+          id,
+          response,
+          getResponsesCacheTtlSeconds(),
+        );
+      }
+
+      await logRequest({
         apiKeyId,
-        provider.name,
-        id,
-        response,
-        getResponsesCacheTtlSeconds(),
-      );
-    }
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id",
+        latencyMs,
+        statusCode: 200,
+      });
 
-    await logRequest({
-      apiKeyId,
-      provider: provider.name,
-      model: "openai",
-      endpoint: "/v1/responses/:id",
-      latencyMs,
-      statusCode: 200,
-    });
+      return response;
+    } catch (error) {
+      if (error instanceof RequestLoggingUnavailableError) {
+        throw error;
+      }
 
-    return response;
-  } catch (error) {
-    if (error instanceof RequestLoggingUnavailableError) {
+      lastError = error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+
+      const latencyMs = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id",
+        latencyMs,
+        statusCode: 500,
+        errorMessage,
+      });
+
       throw error;
     }
-
-    const latencyMs = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-
-    await logRequest({
-      apiKeyId,
-      provider: provider.name,
-      model: "openai",
-      endpoint: "/v1/responses/:id",
-      latencyMs,
-      statusCode: 500,
-      errorMessage,
-    });
-
-    throw error;
   }
+
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: "unknown",
+    endpoint: "/v1/responses/:id",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(id);
 }
 
 export async function handleResponseDelete(id: string, apiKeyId: string): Promise<ResponseObject> {
@@ -455,53 +493,74 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
     return deleteLocalBackgroundJob(localRow, id, apiKeyId);
   }
 
-  const provider = getProviderByName("openai");
-  if (!provider) {
+  const configuredProviders = responseUtilityConfiguredProviders(["openai"]);
+  if (configuredProviders.length === 0) {
     throw new OpenAIResponseProviderNotConfiguredError();
   }
-
-  if (!provider.deleteResponse) {
+  const candidates = configuredProviders.filter((provider) => Boolean(provider.deleteResponse));
+  if (candidates.length === 0) {
     throw new UnsupportedResponseFeatureError(
       "Selected provider does not support response deletion",
     );
   }
 
   const startTime = Date.now();
+  let lastError: unknown = null;
 
-  try {
-    const response = await provider.deleteResponse(id);
-    const latencyMs = Date.now() - startTime;
+  for (const provider of candidates) {
+    try {
+      const response = await provider.deleteResponse?.(id);
+      if (!response) continue;
+      const latencyMs = Date.now() - startTime;
 
-    await logRequest({
-      apiKeyId,
-      provider: provider.name,
-      model: "openai",
-      endpoint: "/v1/responses/:id",
-      latencyMs,
-      statusCode: 200,
-    });
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id",
+        latencyMs,
+        statusCode: 200,
+      });
 
-    return response;
-  } catch (error) {
-    if (error instanceof RequestLoggingUnavailableError) {
+      return response;
+    } catch (error) {
+      if (error instanceof RequestLoggingUnavailableError) {
+        throw error;
+      }
+
+      lastError = error;
+      if (error instanceof UpstreamResponsesApiError && error.status === 404) {
+        continue;
+      }
+
+      const latencyMs = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+
+      await logRequest({
+        apiKeyId,
+        provider: provider.name,
+        model: provider.name,
+        endpoint: "/v1/responses/:id",
+        latencyMs,
+        statusCode: 500,
+        errorMessage,
+      });
+
       throw error;
     }
-
-    const latencyMs = Date.now() - startTime;
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
-
-    await logRequest({
-      apiKeyId,
-      provider: provider.name,
-      model: "openai",
-      endpoint: "/v1/responses/:id",
-      latencyMs,
-      statusCode: 500,
-      errorMessage,
-    });
-
-    throw error;
   }
+
+  const latencyMs = Date.now() - startTime;
+  await logRequest({
+    apiKeyId,
+    provider: "unknown",
+    model: "unknown",
+    endpoint: "/v1/responses/:id",
+    latencyMs,
+    statusCode: 404,
+    errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
+  });
+  throw new ResponseNotFoundError(id);
 }
 
 export async function handleResponseInputItems(
@@ -509,10 +568,9 @@ export async function handleResponseInputItems(
   apiKeyId: string,
   query?: Record<string, string | string[]>,
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
-  const openai = getProviderByName("openai");
-  const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
-    Boolean(provider?.listResponseInputItems),
+  const candidates = responseUtilityProviderCandidates(
+    ["openai", "azure-cognitive-services"],
+    "listResponseInputItems",
   );
 
   if (candidates.length === 0) {
@@ -565,10 +623,9 @@ export async function handleResponseInputTokens(
   body: ResponseCreateRequest,
   apiKeyId: string,
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
-  const openai = getProviderByName("openai");
-  const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
-    Boolean(provider?.countResponseInputTokens),
+  const candidates = responseUtilityProviderCandidates(
+    ["openai", "azure-cognitive-services"],
+    "countResponseInputTokens",
   );
 
   if (candidates.length === 0) {
@@ -708,10 +765,9 @@ export async function handleResponseCancel(
     return cancelLocalBackgroundJob(localRow, id, apiKeyId);
   }
 
-  const openai = getProviderByName("openai");
-  const azure = getProviderByName("azure-cognitive-services");
-  const candidates = [openai, azure].filter((provider): provider is NonNullable<typeof provider> =>
-    Boolean(provider?.cancelResponse),
+  const candidates = responseUtilityProviderCandidates(
+    ["openai", "azure-cognitive-services"],
+    "cancelResponse",
   );
 
   if (candidates.length === 0) {

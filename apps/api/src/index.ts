@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authRouter } from "./modules/auth/router";
 import { chatRouter } from "./modules/chat/router";
+import { e2eRouter } from "./modules/e2e/router";
 import { fallbackGroupsRouter } from "./modules/fallback-groups/router";
 import { keysRouter } from "./modules/keys/router";
 import { logsRouter } from "./modules/logs/router";
@@ -42,6 +43,10 @@ const app = new Hono()
   .route("/logs", logsRouter)
   .route("/fallback-groups", fallbackGroupsRouter)
   .route("/providers", providersRouter);
+
+if (process.env.E2E_RESET_TOKEN) {
+  app.route("/__e2e", e2eRouter);
+}
 
 const port = Number(process.env.API_PORT ?? 8000);
 

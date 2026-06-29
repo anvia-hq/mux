@@ -140,6 +140,7 @@ import { GithubCopilotAdapter } from "./github-copilot";
 import { ClarifaiAdapter } from "./clarifai";
 import { TheGridAiAdapter } from "./the-grid-ai";
 import { SyntheticAdapter } from "./synthetic";
+import { E2eAdapter } from "./e2e";
 import { IflowcnAdapter } from "./iflowcn";
 import { XiaomiTokenPlanSgpAdapter } from "./xiaomi-token-plan-sgp";
 import { ClaudinioAdapter } from "./claudinio";
@@ -150,7 +151,7 @@ import { applyRuntimeCapabilities } from "./chat-compat";
 const providers: Map<string, ProviderAdapter> = new Map();
 export const FALLBACK_GROUP_PROVIDER = "mux";
 
-const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter> = {
+const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter | null> = {
   requesty: (apiKey) => new RequestyAdapter(apiKey),
   "qiniu-ai": (apiKey) => new QiniuAiAdapter(apiKey),
   "alibaba-cn": (apiKey) => new AlibabaCnAdapter(apiKey),
@@ -292,6 +293,7 @@ const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter> = {
   clarifai: (apiKey) => new ClarifaiAdapter(apiKey),
   "the-grid-ai": (apiKey) => new TheGridAiAdapter(apiKey),
   synthetic: (apiKey) => new SyntheticAdapter(apiKey),
+  e2e: (apiKey) => (process.env.E2E_RESET_TOKEN ? new E2eAdapter(apiKey) : null),
   iflowcn: (apiKey) => new IflowcnAdapter(apiKey),
   "xiaomi-token-plan-sgp": (apiKey) => new XiaomiTokenPlanSgpAdapter(apiKey),
   claudinio: (apiKey) => new ClaudinioAdapter(apiKey),
@@ -338,7 +340,13 @@ export async function reloadProvider(name: string): Promise<void> {
   const adapter = buildAdapter(name, apiKey);
   if (adapter) {
     providers.set(name, adapter);
+  } else {
+    providers.delete(name);
   }
+}
+
+export function clearProviderCacheForE2e(): void {
+  providers.clear();
 }
 
 export type ResolvedProviderModel = {

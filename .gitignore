@@ -8,3 +8,5 @@ build
 !.env.example
 coverage
 benchmark-results
+playwright-report
+test-results

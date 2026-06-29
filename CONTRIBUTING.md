@@ -73,6 +73,19 @@ pnpm check
 `pnpm check` runs Biome for formatting and lint. `pnpm check:fix` applies safe
 fixes. `pnpm format` formats the codebase. CI is expected to run the same set.
 
+End-to-end tests use Playwright against the real API, platform, Postgres, and
+Redis services. Install the browser once, then run the suite:
+
+```sh
+pnpm e2e:install
+pnpm e2e
+```
+
+`pnpm e2e` starts the dev Postgres/Redis containers from
+`docker-compose.dev.yaml`, resets the dedicated `monorepo_template_e2e`
+database, applies the Prisma schema, and starts the API and platform on
+E2E-only ports. Do not point `E2E_DATABASE_URL` at a database you want to keep.
+
 ## Database changes
 
 - Edit `apps/api/prisma/schema.prisma`.
