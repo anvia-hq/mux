@@ -1,4 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { AuthPageShell } from "../modules/auth/components/auth-page-shell";
 import { LoginForm } from "../modules/auth/components/login-form";
 import { onboardingStatusQueryOptions } from "../modules/auth/hooks/use-auth";
 
@@ -14,5 +15,13 @@ export const Route = createFileRoute("/login")({
       throw error;
     }
   },
-  component: LoginForm,
+  component: LoginRoute,
 });
+
+function LoginRoute() {
+  return (
+    <AuthPageShell>
+      <LoginForm />
+    </AuthPageShell>
+  );
+}

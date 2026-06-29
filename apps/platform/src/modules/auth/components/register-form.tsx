@@ -39,6 +39,7 @@ export function RegisterForm() {
             <Input
               id="name"
               autoComplete="name"
+              placeholder="Jane Doe"
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
@@ -49,6 +50,7 @@ export function RegisterForm() {
               id="email"
               type="email"
               autoComplete="email"
+              placeholder="jane@example.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
             />
@@ -59,6 +61,7 @@ export function RegisterForm() {
               id="password"
               type="password"
               autoComplete="new-password"
+              placeholder="Create a password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
