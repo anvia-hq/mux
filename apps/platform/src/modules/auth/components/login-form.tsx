@@ -2,7 +2,6 @@ import { Button } from "@repo/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
-import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 import { useLoginMutation } from "../hooks/use-auth";
 
@@ -58,9 +57,6 @@ export function LoginForm() {
           {error ? <p className="text-sm text-destructive">{error}</p> : null}
           <Button type="submit" disabled={loginMutation.isPending}>
             {loginMutation.isPending ? "Logging in..." : "Login"}
-          </Button>
-          <Button asChild type="button" variant="link">
-            <Link to="/register">Create a user account</Link>
           </Button>
         </form>
       </CardContent>

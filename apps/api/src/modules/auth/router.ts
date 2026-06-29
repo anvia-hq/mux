@@ -1,11 +1,10 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { loginSchema, onboardSchema, registerSchema } from "./schema";
+import { loginSchema, onboardSchema } from "./schema";
 import {
   authenticateUser,
   clearAuthCookie,
   createAdminUser,
-  createUserAccount,
   getCurrentUser,
   getUserCount,
   setAuthCookie,
@@ -73,23 +72,6 @@ export const authRouter = new Hono()
 
     return c.json({ user: sanitizeUser(user) });
   })
-  .post("/register", zValidator("json", registerSchema, authValidationHook), async (c) => {
-    const input = c.req.valid("json");
-    try {
-      const user = await createUserAccount({
-        email: input.email,
-        password: input.password,
-        name: input.name,
-      });
-
-      await setAuthCookie(c, user);
-
-      return c.json({ user: sanitizeUser(user) }, 201);
-    } catch (error) {
-      if (isUniqueConstraintError(error)) {
-        return c.json({ error: "email is already registered" }, 409);
-      }
-
-      throw error;
-    }
+  .post("/register", (c) => {
+    return c.json({ error: "registration is disabled" }, 403);
   });

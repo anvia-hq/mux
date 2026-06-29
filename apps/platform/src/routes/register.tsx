@@ -1,15 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { AuthPageShell } from "../modules/auth/components/auth-page-shell";
-import { RegisterForm } from "../modules/auth/components/register-form";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { onboardingStatusQueryOptions } from "../modules/auth/hooks/use-auth";
 
 export const Route = createFileRoute("/register")({
+  beforeLoad: async ({ context }) => {
+    const status = await context.queryClient.ensureQueryData(onboardingStatusQueryOptions);
+    throw redirect({ to: status.needsOnboarding ? "/onboard" : "/login" });
+  },
   component: RegisterRoute,
 });
 
 function RegisterRoute() {
-  return (
-    <AuthPageShell>
-      <RegisterForm />
-    </AuthPageShell>
-  );
+  return null;
 }

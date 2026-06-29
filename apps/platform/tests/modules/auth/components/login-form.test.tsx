@@ -57,7 +57,7 @@ describe("LoginForm", () => {
   it("renders login form", () => {
     render(React.createElement(LoginForm));
     expect(screen.getByText("Platform login")).toBeDefined();
-    expect(screen.getByText("Create a user account")).toBeDefined();
+    expect(screen.queryByText("Create a user account")).toBeNull();
   });
 
   it("submits email and password", () => {

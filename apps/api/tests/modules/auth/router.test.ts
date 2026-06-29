@@ -102,23 +102,16 @@ describe("auth router", () => {
     expect(res.status).toBe(401);
   });
 
-  it("POST /register success", async () => {
-    mockPrisma.user.create.mockResolvedValueOnce({
-      id: "2",
-      email: "new@test.com",
-      name: "New",
-      role: "USER",
-      passwordHash: "h",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
+  it("POST /register is disabled", async () => {
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: "new@test.com", password: "password123" }),
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "registration is disabled" });
+    expect(mockPrisma.user.create).not.toHaveBeenCalled();
   });
 
   it("GET /me returns user", async () => {
