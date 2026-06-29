@@ -65,3 +65,40 @@ test("shows seeded logs, filters them, and surfaces overview stats", async ({ pa
   await expect(page.getByText(/2 req .*400 tok .*\$0\.0040/)).toBeVisible();
   await expect(page.getByText(/1 req .*200 tok .*\$0\.0040/)).toBeVisible();
 });
+
+test("paginates logs and updates the chart range", async ({ page, request }) => {
+  const baseTime = new Date("2026-06-29T12:00:00.000Z").getTime();
+
+  await seedE2e(request, {
+    users: [{ ...adminUser, role: "ADMIN" }],
+    apiKeys: [{ name: "bulk-key", createdByEmail: adminUser.email, isActive: true }],
+    requestLogs: Array.from({ length: 30 }, (_, index) => ({
+      apiKeyName: "bulk-key",
+      provider: index % 2 === 0 ? "synthetic" : "openai",
+      model: index % 2 === 0 ? `synthetic:${syntheticDeepSeekModelId}` : "openai:gpt-4o",
+      totalTokens: index + 1,
+      estimatedCost: 0.001,
+      latencyMs: 100 + index,
+      statusCode: 200,
+      createdAt: new Date(baseTime - index * 60_000).toISOString(),
+    })),
+  });
+  await loginViaUi(page, adminUser);
+
+  await page.goto("/logs");
+  await expect(page.getByText(/Showing 1.+25 of 30/)).toBeVisible();
+  await expect(page.getByText("bulk-key")).toHaveCount(25);
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByText(/Showing 26.+30 of 30/)).toBeVisible();
+  await expect(page.getByText("bulk-key")).toHaveCount(5);
+  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Previous" }).click();
+  await expect(page.getByText(/Showing 1.+25 of 30/)).toBeVisible();
+
+  await page.getByLabel("7 days").click();
+  await expect(page.getByLabel("7 days")).toHaveAttribute("data-state", "on");
+  await page.getByLabel("90 days").click();
+  await expect(page.getByLabel("90 days")).toHaveAttribute("data-state", "on");
+});

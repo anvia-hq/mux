@@ -33,3 +33,27 @@ test("creates, reveals, lists, and revokes an API key", async ({ page, request }
   await expect(row.getByText("Revoked")).toBeVisible();
   await expect(row.getByRole("button", { name: "Revoke" })).toBeDisabled();
 });
+
+test("validates API key creation inputs before creating a key", async ({ page, request }) => {
+  await createAndLoginAdmin(page, request);
+
+  await page.goto("/api-keys");
+  await page.getByRole("button", { name: "New API key" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText("Create API key")).toBeVisible();
+
+  await dialog.getByLabel("Name").fill("   ");
+  await dialog.getByRole("button", { name: "Create key" }).click();
+  await expect(dialog.getByText("Create API key")).toBeVisible();
+  await expect(dialog.getByText("Save this key")).toHaveCount(0);
+
+  await dialog.getByLabel("Name").fill("bad-spend");
+  await dialog.getByLabel("USD balance").fill("-1");
+  await dialog.getByRole("button", { name: "Create key" }).click();
+  await expect(dialog.getByText("Create API key")).toBeVisible();
+  await expect(dialog.getByText("Save this key")).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("No API keys yet. Create one above.")).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "bad-spend" })).toHaveCount(0);
+});

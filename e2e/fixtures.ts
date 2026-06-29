@@ -105,7 +105,7 @@ export const test = base.extend<Fixtures>({
   resetState: [
     async ({ context, request }, use) => {
       await resetE2eState(request, context);
-      await use();
+      await use(undefined);
     },
     { auto: true },
   ],
@@ -165,6 +165,29 @@ export async function postResponse(
     headers: bearerHeaders(rawKey),
     data: body,
   });
+}
+
+type ApiMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+export async function apiRequest(
+  request: APIRequestContext,
+  method: ApiMethod,
+  path: string,
+  options: { data?: unknown; headers?: Record<string, string> } = {},
+): Promise<APIResponse> {
+  return request.fetch(`${e2eApiUrl}${path}`, {
+    method,
+    headers: options.headers,
+    data: options.data,
+  });
+}
+
+export async function expectJsonStatus(
+  response: APIResponse,
+  status: number,
+): Promise<Record<string, unknown>> {
+  expect(response.status()).toBe(status);
+  return (await response.json()) as Record<string, unknown>;
 }
 
 export async function readE2eRequestLogs(request: APIRequestContext): Promise<E2eRequestLog[]> {
