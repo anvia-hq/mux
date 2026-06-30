@@ -12,6 +12,7 @@ export const providerNames = [
   "stackit",
   "vercel",
   "submodel",
+  "sumopod",
   "huggingface",
   "minimax-coding-plan",
   "novita-ai",

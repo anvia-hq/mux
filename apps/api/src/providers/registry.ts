@@ -6,6 +6,7 @@ import { RegoloAiAdapter } from "./regolo-ai";
 import { StackitAdapter } from "./stackit";
 import { VercelAdapter } from "./vercel";
 import { SubmodelAdapter } from "./submodel";
+import { SumopodAdapter } from "./sumopod";
 import { HuggingfaceAdapter } from "./huggingface";
 import { MinimaxCodingPlanAdapter } from "./minimax-coding-plan";
 import { NovitaAiAdapter } from "./novita-ai";
@@ -159,6 +160,7 @@ const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter | nul
   stackit: (apiKey) => new StackitAdapter(apiKey),
   vercel: (apiKey) => new VercelAdapter(apiKey),
   submodel: (apiKey) => new SubmodelAdapter(apiKey),
+  sumopod: (apiKey) => new SumopodAdapter(apiKey),
   huggingface: (apiKey) => new HuggingfaceAdapter(apiKey),
   "minimax-coding-plan": (apiKey) => new MinimaxCodingPlanAdapter(apiKey),
   "novita-ai": (apiKey) => new NovitaAiAdapter(apiKey),
