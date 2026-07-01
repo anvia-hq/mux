@@ -10,6 +10,7 @@ import { keysRouter } from "./modules/keys/router";
 import { freezeLegacyApiKeyModelAccess } from "./modules/keys/services";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
+import { playgroundRouter } from "./modules/playground/router";
 import { providersRouter } from "./modules/providers/router";
 import { responsesRouter } from "./modules/responses/router";
 import { usersRouter } from "./modules/users/router";
@@ -46,7 +47,8 @@ const app = new Hono()
   .route("/invitations", invitationsRouter)
   .route("/logs", logsRouter)
   .route("/fallback-groups", fallbackGroupsRouter)
-  .route("/providers", providersRouter);
+  .route("/providers", providersRouter)
+  .route("/playground", playgroundRouter);
 
 if (process.env.E2E_RESET_TOKEN) {
   app.route("/__e2e", e2eRouter);

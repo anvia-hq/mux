@@ -19,7 +19,7 @@ import {
   assertApiKeyCanSpend,
 } from "../keys/services";
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
-import type { ChatCompletionRequest } from "../../providers/types";
+import type { ChatCompletionChunk, ChatCompletionRequest } from "../../providers/types";
 
 /**
  * Router exposing the OpenAI-compatible chat completions endpoint.
@@ -93,11 +93,30 @@ chatRouter.post("/completions", async (c) => {
         let totalTokens: number | undefined;
         let promptTokens: number | undefined;
         let completionTokens: number | undefined;
+        let streamLogFinalized = false;
+
+        async function finalizeSuccessfulStreamLog() {
+          if (streamLogFinalized) return;
+          streamLogFinalized = true;
+
+          const latencyMs = Date.now() - startTime;
+          await logStreamFinal({
+            logId,
+            apiKeyId,
+            provider,
+            model,
+            endpoint: "/v1/chat/completions",
+            latencyMs,
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            estimatedCost: estimateCost(model, promptTokens, completionTokens),
+            statusCode: 200,
+          });
+        }
 
         try {
           for await (const chunk of streamIterable) {
-            await streamWriter.write(`data: ${JSON.stringify(chunk)}\n\n`);
-
             // Some providers emit a final chunk that includes a `usage` object.
             // Track it for logging purposes.
             const maybeUsage = chunk.usage;
@@ -109,25 +128,22 @@ chatRouter.post("/completions", async (c) => {
               if (typeof maybeUsage.completion_tokens === "number")
                 completionTokens = maybeUsage.completion_tokens;
             }
+
+            if (isTerminalChatCompletionChunk(chunk)) {
+              try {
+                await finalizeSuccessfulStreamLog();
+              } catch (logError) {
+                console.error("Failed to finalize request log:", logError);
+              }
+            }
+
+            await streamWriter.write(`data: ${JSON.stringify(chunk)}\n\n`);
           }
 
           await streamWriter.write("data: [DONE]\n\n");
 
-          const latencyMs = Date.now() - startTime;
           try {
-            await logStreamFinal({
-              logId,
-              apiKeyId,
-              provider,
-              model,
-              endpoint: "/v1/chat/completions",
-              latencyMs,
-              promptTokens,
-              completionTokens,
-              totalTokens,
-              estimatedCost: estimateCost(model, promptTokens, completionTokens),
-              statusCode: 200,
-            });
+            await finalizeSuccessfulStreamLog();
           } catch (logError) {
             console.error("Failed to finalize request log:", logError);
           }
@@ -136,16 +152,19 @@ chatRouter.post("/completions", async (c) => {
           const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
           try {
-            await logStreamFinal({
-              logId,
-              apiKeyId,
-              provider,
-              model,
-              endpoint: "/v1/chat/completions",
-              latencyMs,
-              statusCode: 500,
-              errorMessage,
-            });
+            if (!streamLogFinalized) {
+              await logStreamFinal({
+                logId,
+                apiKeyId,
+                provider,
+                model,
+                endpoint: "/v1/chat/completions",
+                latencyMs,
+                statusCode: 500,
+                errorMessage,
+              });
+              streamLogFinalized = true;
+            }
           } catch (logError) {
             console.error("Failed to finalize failed request log:", logError);
           }
@@ -190,3 +209,7 @@ chatRouter.post("/completions", async (c) => {
     return c.json({ error: errorMessage }, 500);
   }
 });
+
+function isTerminalChatCompletionChunk(chunk: ChatCompletionChunk): boolean {
+  return chunk.choices.some((choice) => choice.finish_reason !== null);
+}

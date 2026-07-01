@@ -224,6 +224,23 @@ export async function validateApiKey(rawKey: string) {
   return apiKey.isActive ? { ...apiKey, ...normalizeApiKeyModelAccess(apiKey) } : null;
 }
 
+export async function getActiveApiKeyForAuth(id: string) {
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      isActive: true,
+      spendLimitUsd: true,
+      allowAllModels: true,
+      includeFutureModels: true,
+      allowedModelIds: true,
+    },
+  });
+
+  return apiKey?.isActive ? { ...apiKey, ...normalizeApiKeyModelAccess(apiKey) } : null;
+}
+
 export async function revokeApiKey(id: string) {
   const apiKey = await prisma.apiKey.update({
     where: { id },

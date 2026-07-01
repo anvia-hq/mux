@@ -1,6 +1,15 @@
 import type { Context, Next } from "hono";
+import { sign, verify } from "hono/jwt";
 import type { ApiKeyModelAccess } from "../modules/keys/services";
-import { validateApiKey } from "../modules/keys/services";
+import { getActiveApiKeyForAuth, validateApiKey } from "../modules/keys/services";
+
+const playgroundTokenPrefix = "mux_playground_";
+const playgroundTokenType = "playground_api_key";
+const playgroundTokenTtlSeconds = 5 * 60;
+
+function playgroundTokenSecret() {
+  return process.env.PLAYGROUND_TOKEN_SECRET ?? process.env.AUTH_SECRET ?? "dev-change-me";
+}
 
 export function readApiKeyModelAccess(c: Context): ApiKeyModelAccess {
   const allowAllModels = c.get("apiKeyAllowAllModels" as never) as boolean | undefined;
@@ -15,6 +24,44 @@ export function readApiKeyModelAccess(c: Context): ApiKeyModelAccess {
   };
 }
 
+export async function createPlaygroundApiKeyToken(apiKeyId: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const token = await sign(
+    {
+      sub: apiKeyId,
+      typ: playgroundTokenType,
+      iat: now,
+      exp: now + playgroundTokenTtlSeconds,
+    },
+    playgroundTokenSecret(),
+    "HS256",
+  );
+
+  return `${playgroundTokenPrefix}${token}`;
+}
+
+async function validatePlaygroundApiKeyToken(rawToken: string) {
+  if (!rawToken.startsWith(playgroundTokenPrefix)) {
+    return null;
+  }
+
+  try {
+    const payload = await verify(
+      rawToken.slice(playgroundTokenPrefix.length),
+      playgroundTokenSecret(),
+      "HS256",
+    );
+
+    if (payload.typ !== playgroundTokenType || typeof payload.sub !== "string") {
+      return null;
+    }
+
+    return getActiveApiKeyForAuth(payload.sub);
+  } catch {
+    return null;
+  }
+}
+
 export async function apiKeyAuth(c: Context, next: Next) {
   const authHeader = c.req.header("Authorization");
 
@@ -23,7 +70,9 @@ export async function apiKeyAuth(c: Context, next: Next) {
   }
 
   const key = authHeader.slice(7);
-  const apiKey = await validateApiKey(key);
+  const apiKey = key.startsWith(playgroundTokenPrefix)
+    ? await validatePlaygroundApiKeyToken(key)
+    : await validateApiKey(key);
 
   if (!apiKey) {
     return c.json({ error: "invalid or revoked API key" }, 401);

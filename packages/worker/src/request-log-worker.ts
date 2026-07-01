@@ -36,6 +36,23 @@ export function toRequestLogCreateInput(entry: RequestLogPayload) {
   };
 }
 
+export function toRequestLogFinalizeInput(entry: RequestLogPayload) {
+  return {
+    provider: entry.provider,
+    model: entry.model,
+    endpoint: entry.endpoint,
+    latencyMs: entry.latencyMs,
+    providerLatencyMs: entry.providerLatencyMs ?? null,
+    promptTokens: entry.promptTokens ?? null,
+    completionTokens: entry.completionTokens ?? null,
+    totalTokens: entry.totalTokens ?? null,
+    reasoningTokens: entry.reasoningTokens ?? null,
+    estimatedCost: entry.estimatedCost ?? null,
+    statusCode: entry.statusCode,
+    errorMessage: entry.errorMessage ?? null,
+  };
+}
+
 async function createLogIfMissing(entry: RequestLogPayload): Promise<void> {
   await prisma.requestLog.createMany({
     data: [toRequestLogCreateInput(entry)],
@@ -43,27 +60,19 @@ async function createLogIfMissing(entry: RequestLogPayload): Promise<void> {
   });
 }
 
-async function finalizeStreamLog(entry: RequestLogPayload): Promise<void> {
-  const update = await prisma.requestLog.updateMany({
+async function updateFinalizedLog(entry: RequestLogPayload) {
+  return prisma.requestLog.updateMany({
     where: { id: entry.logId },
-    data: {
-      provider: entry.provider,
-      model: entry.model,
-      endpoint: entry.endpoint,
-      latencyMs: entry.latencyMs,
-      providerLatencyMs: entry.providerLatencyMs ?? null,
-      promptTokens: entry.promptTokens ?? null,
-      completionTokens: entry.completionTokens ?? null,
-      totalTokens: entry.totalTokens ?? null,
-      reasoningTokens: entry.reasoningTokens ?? null,
-      estimatedCost: entry.estimatedCost ?? null,
-      statusCode: entry.statusCode,
-      errorMessage: entry.errorMessage ?? null,
-    },
+    data: toRequestLogFinalizeInput(entry),
   });
+}
+
+async function finalizeStreamLog(entry: RequestLogPayload): Promise<void> {
+  const update = await updateFinalizedLog(entry);
 
   if (update.count === 0) {
     await createLogIfMissing(entry);
+    await updateFinalizedLog(entry);
   }
 }
 

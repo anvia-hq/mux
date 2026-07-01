@@ -1,13 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { mockValidateApiKey } = vi.hoisted(() => ({
+const { mockGetActiveApiKeyForAuth, mockValidateApiKey } = vi.hoisted(() => ({
+  mockGetActiveApiKeyForAuth: vi.fn(),
   mockValidateApiKey: vi.fn(),
 }));
 
-vi.mock("../../src/modules/keys/services", () => ({ validateApiKey: mockValidateApiKey }));
+vi.mock("../../src/modules/keys/services", () => ({
+  getActiveApiKeyForAuth: mockGetActiveApiKeyForAuth,
+  validateApiKey: mockValidateApiKey,
+}));
 
-import { apiKeyAuth, readApiKeyModelAccess } from "../../src/middleware/api-key";
+import {
+  apiKeyAuth,
+  createPlaygroundApiKeyToken,
+  readApiKeyModelAccess,
+} from "../../src/middleware/api-key";
 
 describe("api-key middleware", () => {
   afterEach(() => {
@@ -42,6 +50,30 @@ describe("api-key middleware", () => {
       headers: { Authorization: "Bearer valid-key" },
     });
     expect(res.status).toBe(200);
+  });
+
+  it("passes through with a valid playground token", async () => {
+    mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
+      id: "key-1",
+      name: "playground-key",
+      spendLimitUsd: null,
+      allowAllModels: true,
+      includeFutureModels: true,
+      allowedModelIds: [],
+    });
+    const token = await createPlaygroundApiKeyToken("key-1");
+    const app = new Hono();
+    app.use("*", apiKeyAuth);
+    app.get("/test", (c) => c.json({ apiKeyId: c.get("apiKeyId" as never) }));
+
+    const res = await app.request("/test", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ apiKeyId: "key-1" });
+    expect(mockGetActiveApiKeyForAuth).toHaveBeenCalledWith("key-1");
+    expect(mockValidateApiKey).not.toHaveBeenCalled();
   });
 
   it("sets model access context for valid API keys", async () => {

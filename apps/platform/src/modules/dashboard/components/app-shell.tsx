@@ -25,11 +25,13 @@ import {
   Flowchart02Icon,
   Key01Icon,
   Logout01Icon,
+  PlayIcon,
   Plug01Icon,
   Scroll01Icon,
   Settings01Icon,
   User02Icon,
 } from "@hugeicons/core-free-icons";
+import { cn } from "@repo/ui/lib/utils";
 import { meQueryOptions, useLogoutMutation } from "../../auth/hooks/use-auth";
 import muxLogoUrl from "../../../assets/logo-mux.png";
 
@@ -61,6 +63,7 @@ const navGroups: NavGroup[] = [
       { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
       { to: "/models", label: "Models", icon: BoxesIcon },
       { to: "/fallback-groups", label: "Fallbacks", icon: Flowchart02Icon, adminOnly: true },
+      { to: "/playground", label: "Playground", icon: PlayIcon, adminOnly: true },
     ],
   },
   {
@@ -77,6 +80,7 @@ export function AppShell() {
   const logout = useLogoutMutation();
   const location = useLocation();
   const user = userQuery.data;
+  const isPlayground = location.pathname === "/playground";
 
   if (!user) {
     return null;
@@ -89,7 +93,7 @@ export function AppShell() {
   const visibleItems = visibleGroups.flatMap((group) => group.items);
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <Link
@@ -149,8 +153,8 @@ export function AppShell() {
           </Card>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>
-        <header className="flex h-14 items-center justify-between border-b px-4 shadow-[0_2px_0_color-mix(in_oklab,var(--sidebar-border)_68%,black)]">
+      <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b px-4 shadow-[0_2px_0_color-mix(in_oklab,var(--sidebar-border)_68%,black)]">
           <div className="flex items-center gap-2">
             <SidebarTrigger />
             <h1 className="text-sm font-medium text-muted-foreground">
@@ -158,7 +162,9 @@ export function AppShell() {
             </h1>
           </div>
         </header>
-        <main className="p-6">
+        <main
+          className={cn("min-h-0 flex-1 p-6", isPlayground ? "overflow-hidden" : "overflow-y-auto")}
+        >
           <Outlet />
         </main>
       </SidebarInset>

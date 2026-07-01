@@ -17,6 +17,7 @@ import { Route as AuthedIndexRouteImport } from './routes/_authed.index'
 import { Route as AuthedUsersRouteImport } from './routes/_authed.users'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
+import { Route as AuthedPlaygroundRouteImport } from './routes/_authed.playground'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
 import { Route as AuthedFallbackGroupsRouteImport } from './routes/_authed.fallback-groups'
@@ -62,6 +63,11 @@ const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
 const AuthedProvidersRoute = AuthedProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedPlaygroundRoute = AuthedPlaygroundRouteImport.update({
+  id: '/playground',
+  path: '/playground',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedModelsRoute = AuthedModelsRouteImport.update({
@@ -111,6 +117,7 @@ export interface FileRoutesByFullPath {
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
+  '/playground': typeof AuthedPlaygroundRoute
   '/providers': typeof AuthedProvidersRouteWithChildren
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
+  '/playground': typeof AuthedPlaygroundRoute
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
   '/': typeof AuthedIndexRoute
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/_authed/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/_authed/logs': typeof AuthedLogsRoute
   '/_authed/models': typeof AuthedModelsRoute
+  '/_authed/playground': typeof AuthedPlaygroundRoute
   '/_authed/providers': typeof AuthedProvidersRouteWithChildren
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/users': typeof AuthedUsersRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/fallback-groups'
     | '/logs'
     | '/models'
+    | '/playground'
     | '/providers'
     | '/settings'
     | '/users'
@@ -177,6 +187,7 @@ export interface FileRouteTypes {
     | '/fallback-groups'
     | '/logs'
     | '/models'
+    | '/playground'
     | '/settings'
     | '/users'
     | '/'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/_authed/fallback-groups'
     | '/_authed/logs'
     | '/_authed/models'
+    | '/_authed/playground'
     | '/_authed/providers'
     | '/_authed/settings'
     | '/_authed/users'
@@ -264,6 +276,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/providers'
       preLoaderRoute: typeof AuthedProvidersRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/playground': {
+      id: '/_authed/playground'
+      path: '/playground'
+      fullPath: '/playground'
+      preLoaderRoute: typeof AuthedPlaygroundRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/models': {
@@ -338,6 +357,7 @@ interface AuthedRouteChildren {
   AuthedFallbackGroupsRoute: typeof AuthedFallbackGroupsRoute
   AuthedLogsRoute: typeof AuthedLogsRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
+  AuthedPlaygroundRoute: typeof AuthedPlaygroundRoute
   AuthedProvidersRoute: typeof AuthedProvidersRouteWithChildren
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedUsersRoute: typeof AuthedUsersRoute
@@ -350,6 +370,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedFallbackGroupsRoute: AuthedFallbackGroupsRoute,
   AuthedLogsRoute: AuthedLogsRoute,
   AuthedModelsRoute: AuthedModelsRoute,
+  AuthedPlaygroundRoute: AuthedPlaygroundRoute,
   AuthedProvidersRoute: AuthedProvidersRouteWithChildren,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedUsersRoute: AuthedUsersRoute,

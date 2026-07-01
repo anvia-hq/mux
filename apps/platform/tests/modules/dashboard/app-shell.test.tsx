@@ -40,6 +40,7 @@ vi.mock("@hugeicons/core-free-icons", () => ({
   Flowchart02Icon: {},
   Key01Icon: {},
   Logout01Icon: {},
+  PlayIcon: {},
   Plug01Icon: {},
   Scroll01Icon: {},
   Settings01Icon: {},
@@ -102,5 +103,16 @@ describe("AppShell", () => {
     render(React.createElement(AppShell));
 
     expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Playground" })).toBeNull();
+  });
+
+  it("shows Playground navigation for admins", () => {
+    mockUser.data.role = "ADMIN";
+
+    render(React.createElement(AppShell));
+
+    expect(screen.getByRole("link", { name: "Playground" }).getAttribute("href")).toBe(
+      "/playground",
+    );
   });
 });

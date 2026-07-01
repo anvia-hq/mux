@@ -13,6 +13,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@anvia/core": "^0.12.0",
+    "@anvia/react": "^0.7.7",
+    "@assistant-ui/react": "^0.14.24",
+    "@assistant-ui/react-markdown": "^0.14.5",
     "@hugeicons/core-free-icons": "^4.2.1",
     "@hugeicons/react": "^1.1.7",
     "@repo/ui": "workspace:*",
@@ -22,6 +26,7 @@
     "react-dom": "^19.2.7",
     "react-syntax-highlighter": "^16.1.1",
     "recharts": "3.8.1",
+    "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7"
   },
   "devDependencies": {

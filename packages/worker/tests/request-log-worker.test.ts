@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toRequestLogCreateInput } from "../src/request-log-worker";
+import { toRequestLogCreateInput, toRequestLogFinalizeInput } from "../src/request-log-worker";
 
 describe("request-log-worker toRequestLogCreateInput", () => {
   const baseEntry = {
@@ -31,5 +31,24 @@ describe("request-log-worker toRequestLogCreateInput", () => {
   it("writes null errorMessage when none is provided", () => {
     const input = toRequestLogCreateInput(baseEntry);
     expect(input.errorMessage).toBeNull();
+  });
+
+  it("builds finalized stream updates with nullable token fields", () => {
+    const input = toRequestLogFinalizeInput({
+      ...baseEntry,
+      latencyMs: 250,
+      promptTokens: 10,
+      totalTokens: 18,
+      statusCode: 200,
+    });
+
+    expect(input).toMatchObject({
+      latencyMs: 250,
+      promptTokens: 10,
+      completionTokens: null,
+      totalTokens: 18,
+      statusCode: 200,
+      errorMessage: null,
+    });
   });
 });
