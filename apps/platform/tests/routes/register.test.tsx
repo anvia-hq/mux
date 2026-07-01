@@ -7,7 +7,7 @@ type RegisterRouteConfig = {
         ensureQueryData: (options: unknown) => Promise<{ needsOnboarding: boolean }>;
       };
     };
-  }) => Promise<never>;
+  }) => Promise<void>;
   component: unknown;
 };
 
@@ -37,6 +37,12 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../src/modules/auth/hooks/use-auth", () => ({
   onboardingStatusQueryOptions: mockStatusQueryOptions,
 }));
+vi.mock("../../src/modules/auth/components/auth-page-shell", () => ({
+  AuthPageShell: ({ children }: { children: unknown }) => children,
+}));
+vi.mock("../../src/modules/auth/components/register-form", () => ({
+  RegisterForm: () => null,
+}));
 
 import "../../src/routes/register";
 
@@ -62,8 +68,8 @@ describe("register route", () => {
     expect(mockRedirect).toHaveBeenCalledWith({ to: "/onboard" });
   });
 
-  it("redirects to login when users already exist", async () => {
-    await expect(runBeforeLoad(false)).resolves.toEqual({ to: "/login" });
-    expect(mockRedirect).toHaveBeenCalledWith({ to: "/login" });
+  it("renders registration when users already exist", async () => {
+    await expect(runBeforeLoad(false)).resolves.toBeUndefined();
+    expect(mockRedirect).not.toHaveBeenCalledWith({ to: "/login" });
   });
 });

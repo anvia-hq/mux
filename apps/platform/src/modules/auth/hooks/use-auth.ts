@@ -29,14 +29,12 @@ export function useLoginMutation() {
 }
 
 export function useRegisterMutation() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: register,
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: authQueryKey });
-      await navigate({ to: "/" });
     },
   });
 }

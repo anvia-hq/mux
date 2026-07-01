@@ -19,3 +19,11 @@ export type SanitizedUser = Pick<
 export type AuthResponse = {
   user: SanitizedUser;
 };
+
+export type RegisterResponse = AuthResponse & {
+  apiKey: {
+    id: string;
+    key: string;
+    spendLimitUsd: number | null;
+  };
+};

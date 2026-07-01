@@ -9,6 +9,7 @@ export type ApiKey = {
   spentUsd: number;
   remainingUsd: number | null;
   allowAllModels: boolean;
+  includeFutureModels: boolean;
   allowedModelIds: string[] | null;
   createdAt: string;
   creator: { email: string };
@@ -18,6 +19,23 @@ export type CreateApiKeyInput = {
   name: string;
   spendLimitUsd?: number | null;
   allowedModelIds?: string[] | null;
+  includeFutureModels?: boolean;
+};
+
+export type UpdateApiKeyModelAccessInput =
+  | {
+      mode: "snapshot";
+    }
+  | {
+      mode: "selected";
+      allowedModelIds: string[];
+    }
+  | {
+      mode: "future";
+    };
+
+export type UpdateApiKeyModelAccessVariables = UpdateApiKeyModelAccessInput & {
+  id: string;
 };
 
 const queryKey = ["api-keys"] as const;
@@ -42,6 +60,18 @@ export function useRevokeApiKeyMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiFetch<{ ok: true }>(`/api-keys/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey }),
+  });
+}
+
+export function useUpdateApiKeyModelAccessMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: UpdateApiKeyModelAccessVariables) =>
+      apiFetch<{ ok: true }>(`/api-keys/${id}/model-access`, {
+        method: "PATCH",
+        body: input,
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 }

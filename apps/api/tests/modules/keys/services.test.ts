@@ -7,6 +7,7 @@ const { mockPrisma } = vi.hoisted(() => ({
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     requestLog: {
       groupBy: vi.fn(),
@@ -15,7 +16,8 @@ const { mockPrisma } = vi.hoisted(() => ({
   },
 }));
 
-const { mockCacheGet, mockCacheSet } = vi.hoisted(() => ({
+const { mockCacheDelete, mockCacheGet, mockCacheSet } = vi.hoisted(() => ({
+  mockCacheDelete: vi.fn().mockResolvedValue(undefined),
   mockCacheGet: vi.fn().mockResolvedValue(null),
   mockCacheSet: vi.fn().mockResolvedValue(undefined),
 }));
@@ -32,7 +34,11 @@ const { mockListPublicModels } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
-vi.mock("../../../src/utils/cache", () => ({ cacheGet: mockCacheGet, cacheSet: mockCacheSet }));
+vi.mock("../../../src/utils/cache", () => ({
+  cacheDelete: mockCacheDelete,
+  cacheGet: mockCacheGet,
+  cacheSet: mockCacheSet,
+}));
 vi.mock("../../../src/utils/redis", () => ({ redis: mockRedis }));
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
@@ -46,10 +52,12 @@ import {
   ApiKeySpendLimitExceededError,
   assertApiKeyCanSpend,
   createApiKey,
+  freezeLegacyApiKeyModelAccess,
   generateApiKey,
   getApiKeySpentUsd,
   listApiKeys,
   revokeApiKey,
+  updateApiKeyModelAccess,
   validateApiKey,
 } from "../../../src/modules/keys/services";
 
@@ -69,6 +77,10 @@ describe("keys services", () => {
 
   describe("createApiKey", () => {
     it("stores hashed key and returns raw key with id", async () => {
+      mockListPublicModels.mockResolvedValueOnce([
+        { id: "gpt-4o", provider: "openai" },
+        { id: "fast", provider: "mux" },
+      ]);
       mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "key-1", key: "hashed-val" });
       const result = await createApiKey("my-key", "user-1", 25);
       expect(result.id).toBe("key-1");
@@ -77,7 +89,24 @@ describe("keys services", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             spendLimitUsd: 25,
+            allowAllModels: false,
+            includeFutureModels: false,
+            allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+          }),
+        }),
+      );
+    });
+
+    it("stores explicit future model access", async () => {
+      mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "key-1", key: "hashed-val" });
+
+      await createApiKey("my-key", "user-1", null, null, true);
+
+      expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
             allowAllModels: true,
+            includeFutureModels: true,
             allowedModelIds: [],
           }),
         }),
@@ -97,6 +126,7 @@ describe("keys services", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             allowAllModels: false,
+            includeFutureModels: false,
             allowedModelIds: ["openai:gpt-4o", "mux:fast"],
           }),
         }),
@@ -127,6 +157,8 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: null,
+        includeFutureModels: true,
+        allowAllModels: true,
       });
       const result = await validateApiKey("mux_live_test");
       expect(result).toEqual({
@@ -135,6 +167,7 @@ describe("keys services", () => {
         isActive: true,
         spendLimitUsd: null,
         allowAllModels: true,
+        includeFutureModels: true,
         allowedModelIds: [],
       });
     });
@@ -147,6 +180,7 @@ describe("keys services", () => {
         isActive: true,
         spendLimitUsd: 10,
         allowAllModels: false,
+        includeFutureModels: false,
         allowedModelIds: ["openai:gpt-4o"],
       });
       const result = await validateApiKey("mux_live_test");
@@ -156,6 +190,7 @@ describe("keys services", () => {
         isActive: true,
         spendLimitUsd: 10,
         allowAllModels: false,
+        includeFutureModels: false,
         allowedModelIds: ["openai:gpt-4o"],
       });
     });
@@ -186,6 +221,9 @@ describe("keys services", () => {
           name: "test",
           isActive: true,
           spendLimitUsd: 10,
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o"],
           createdAt: new Date(),
           creator: { email: "a@b.com" },
         },
@@ -197,12 +235,62 @@ describe("keys services", () => {
       expect(keys).toHaveLength(1);
       expect(keys[0]).toEqual(
         expect.objectContaining({
-          allowAllModels: true,
-          allowedModelIds: null,
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o"],
           spentUsd: 2.5,
           remainingUsd: 7.5,
         }),
       );
+    });
+  });
+
+  describe("model access updates", () => {
+    it("updates model access and invalidates cache", async () => {
+      mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+      mockPrisma.apiKey.update.mockResolvedValueOnce({ key: "hashed-key" });
+
+      await updateApiKeyModelAccess("k1", {
+        mode: "selected",
+        allowedModelIds: ["openai:gpt-4o"],
+      });
+
+      expect(mockPrisma.apiKey.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "k1" },
+          data: {
+            allowAllModels: false,
+            includeFutureModels: false,
+            allowedModelIds: ["openai:gpt-4o"],
+          },
+        }),
+      );
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-key");
+    });
+
+    it("freezes legacy all-model keys to a current snapshot", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([
+        { id: "k1", key: "hashed-1" },
+        { id: "k2", key: "hashed-2" },
+      ]);
+      mockListPublicModels.mockResolvedValueOnce([
+        { id: "gpt-4o", provider: "openai" },
+        { id: "fast", provider: "mux" },
+      ]);
+      mockPrisma.apiKey.updateMany.mockResolvedValueOnce({ count: 2 });
+
+      await expect(freezeLegacyApiKeyModelAccess()).resolves.toBe(2);
+
+      expect(mockPrisma.apiKey.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["k1", "k2"] } },
+        data: {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        },
+      });
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-1");
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-2");
     });
   });
 

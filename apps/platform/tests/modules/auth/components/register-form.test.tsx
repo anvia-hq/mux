@@ -31,8 +31,15 @@ vi.mock("@repo/ui/components/label", () => ({
     React.createElement("label", props, children),
 }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: Record<string, unknown> & { children?: React.ReactNode }) =>
-    React.createElement("a", null, children),
+  Link: ({ children, to }: Record<string, unknown> & { children?: React.ReactNode }) =>
+    React.createElement("a", { href: String(to ?? "") }, children),
+}));
+vi.mock("@hugeicons/react", () => ({
+  HugeiconsIcon: () => React.createElement("span", { "data-testid": "icon" }),
+}));
+vi.mock("@hugeicons/core-free-icons", () => ({
+  Copy01Icon: {},
+  Key01Icon: {},
 }));
 
 vi.mock("../../../../src/modules/auth/hooks/use-auth", () => ({
@@ -52,6 +59,7 @@ describe("RegisterForm", () => {
   beforeEach(() => {
     mockRegisterMutation.mutate.mockReset();
     mockRegisterMutation.isPending = false;
+    window.history.replaceState(null, "", "/register");
   });
 
   it("renders register form", () => {
@@ -65,12 +73,39 @@ describe("RegisterForm", () => {
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Admin" } });
     fireEvent.change(screen.getByLabelText("Email"), { target: { value: "admin@test.com" } });
     fireEvent.change(screen.getByLabelText("Password"), { target: { value: "password123" } });
+    fireEvent.change(screen.getByLabelText("Invitation code"), { target: { value: "MUX-TEST" } });
     submitFormByButton("Register");
 
     expect(mockRegisterMutation.mutate).toHaveBeenCalledWith(
-      { name: "Admin", email: "admin@test.com", password: "password123" },
-      expect.objectContaining({ onError: expect.any(Function) }),
+      {
+        name: "Admin",
+        email: "admin@test.com",
+        password: "password123",
+        invitationCode: "MUX-TEST",
+      },
+      expect.objectContaining({ onError: expect.any(Function), onSuccess: expect.any(Function) }),
     );
+  });
+
+  it("prefills code from query params and reveals the API key after success", () => {
+    window.history.replaceState(null, "", "/register?code=MUX-PREFILL");
+    mockRegisterMutation.mutate.mockImplementationOnce((_input, options) => {
+      options.onSuccess({
+        user: { id: "u1" },
+        apiKey: { id: "k1", key: "mux_live_test", spendLimitUsd: 5 },
+      });
+    });
+
+    render(React.createElement(RegisterForm));
+
+    expect((screen.getByLabelText("Invitation code") as HTMLInputElement).value).toBe(
+      "MUX-PREFILL",
+    );
+    submitFormByButton("Register");
+
+    expect(screen.getByText("Save this API key")).toBeDefined();
+    expect(screen.getByText("mux_live_test")).toBeDefined();
+    expect(screen.getByText("Balance: $5.00")).toBeDefined();
   });
 
   it("shows error branches and pending label", () => {

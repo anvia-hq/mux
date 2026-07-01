@@ -6,6 +6,9 @@ const { mockPrisma } = vi.hoisted(() => ({
     user: { count: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
   },
 }));
+const { mockRedeemInvitation } = vi.hoisted(() => ({
+  mockRedeemInvitation: vi.fn(),
+}));
 
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../../src/modules/auth/password", () => ({
@@ -21,8 +24,22 @@ vi.mock("hono/cookie", () => ({
   setCookie: vi.fn(),
   deleteCookie: vi.fn(),
 }));
+vi.mock("../../../src/modules/invitations/services", () => {
+  class InvalidInvitationCodeError extends Error {
+    constructor() {
+      super("invalid invitation code");
+      this.name = "InvalidInvitationCodeError";
+    }
+  }
+
+  return {
+    InvalidInvitationCodeError,
+    redeemInvitation: mockRedeemInvitation,
+  };
+});
 
 import { authRouter } from "../../../src/modules/auth/router";
+import { InvalidInvitationCodeError } from "../../../src/modules/invitations/services";
 
 describe("auth router", () => {
   afterEach(() => vi.clearAllMocks());
@@ -102,16 +119,56 @@ describe("auth router", () => {
     expect(res.status).toBe(401);
   });
 
-  it("POST /register is disabled", async () => {
+  it("POST /register redeems an invitation", async () => {
+    mockRedeemInvitation.mockResolvedValueOnce({
+      user: {
+        id: "user-1",
+        email: "new@test.com",
+        name: null,
+        role: "USER",
+        passwordHash: "h",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      apiKey: { id: "key-1", key: "mux_live_test", spendLimitUsd: 5 },
+    });
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: "new@test.com", password: "password123" }),
+      body: JSON.stringify({
+        email: "new@test.com",
+        password: "password123",
+        invitationCode: "MUX-TEST",
+      }),
+    });
+    expect(res.status).toBe(201);
+    await expect(res.json()).resolves.toMatchObject({
+      user: { email: "new@test.com" },
+      apiKey: { id: "key-1", key: "mux_live_test", spendLimitUsd: 5 },
+    });
+    expect(mockRedeemInvitation).toHaveBeenCalledWith({
+      email: "new@test.com",
+      password: "password123",
+      name: null,
+      invitationCode: "MUX-TEST",
+    });
+  });
+
+  it("POST /register rejects invalid invitation codes", async () => {
+    mockRedeemInvitation.mockRejectedValueOnce(new InvalidInvitationCodeError());
+    const app = new Hono().route("/auth", authRouter);
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "new@test.com",
+        password: "password123",
+        invitationCode: "bad",
+      }),
     });
     expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({ error: "registration is disabled" });
-    expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    await expect(res.json()).resolves.toEqual({ error: "invalid invitation code" });
   });
 
   it("GET /me returns user", async () => {

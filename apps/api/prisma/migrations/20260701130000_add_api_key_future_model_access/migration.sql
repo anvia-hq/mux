@@ -1,0 +1,1 @@
+ALTER TABLE "ApiKey" ADD COLUMN "includeFutureModels" BOOLEAN NOT NULL DEFAULT false;

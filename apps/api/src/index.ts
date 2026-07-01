@@ -5,7 +5,9 @@ import { authRouter } from "./modules/auth/router";
 import { chatRouter } from "./modules/chat/router";
 import { e2eRouter } from "./modules/e2e/router";
 import { fallbackGroupsRouter } from "./modules/fallback-groups/router";
+import { invitationsRouter } from "./modules/invitations/router";
 import { keysRouter } from "./modules/keys/router";
+import { freezeLegacyApiKeyModelAccess } from "./modules/keys/services";
 import { logsRouter } from "./modules/logs/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
 import { providersRouter } from "./modules/providers/router";
@@ -16,6 +18,7 @@ import { initProviders } from "./providers/registry";
 // Initialize LLM provider adapters on startup. Reads keys from the DB
 // (set via the dashboard), falling back to env vars for first boot.
 await initProviders();
+await freezeLegacyApiKeyModelAccess();
 
 const clientOrigins = (process.env.CLIENT_ORIGINS ?? "http://localhost:3000")
   .split(",")
@@ -40,6 +43,7 @@ const app = new Hono()
   .route("/v1/responses", responsesRouter)
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
+  .route("/invitations", invitationsRouter)
   .route("/logs", logsRouter)
   .route("/fallback-groups", fallbackGroupsRouter)
   .route("/providers", providersRouter);

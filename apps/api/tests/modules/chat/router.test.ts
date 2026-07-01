@@ -16,6 +16,7 @@ const {
   mockLogStreamStart: vi.fn(),
   mockModelAccess: {
     allowAllModels: true,
+    includeFutureModels: true,
     allowedModelIds: [] as string[],
   },
   mockSpendLimit: { value: null as number | null },
@@ -41,6 +42,7 @@ vi.mock("../../../src/middleware/api-key", () => ({
         c.set("apiKeyId", "key-1");
         c.set("apiKeySpendLimitUsd", mockSpendLimit.value);
         c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
+        c.set("apiKeyIncludeFutureModels", mockModelAccess.includeFutureModels);
         c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
         await next();
       },
@@ -134,6 +136,7 @@ describe("chat router", () => {
   beforeEach(() => {
     mockSpendLimit.value = null;
     mockModelAccess.allowAllModels = true;
+    mockModelAccess.includeFutureModels = true;
     mockModelAccess.allowedModelIds = [];
     mockLogStreamStart.mockResolvedValue("log-1");
     mockLogStreamFinal.mockResolvedValue(undefined);
@@ -217,6 +220,7 @@ describe("chat router", () => {
 
   it("POST /completions 403 when the API key cannot access the model", async () => {
     mockModelAccess.allowAllModels = false;
+    mockModelAccess.includeFutureModels = false;
     mockModelAccess.allowedModelIds = ["openai:gpt-4o"];
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {

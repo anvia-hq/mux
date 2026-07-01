@@ -17,6 +17,7 @@ import {
   useApiKeysQuery,
   useCreateApiKeyMutation,
   useRevokeApiKeyMutation,
+  useUpdateApiKeyModelAccessMutation,
   isForbiddenError,
 } from "../../../src/modules/api-keys/hooks";
 import { renderHook, act, waitFor } from "@testing-library/react";
@@ -80,6 +81,24 @@ describe("api-keys hooks", () => {
       const { result } = renderHook(() => useRevokeApiKeyMutation(), { wrapper });
       await act(() => result.current.mutateAsync("k1"));
       expect(apiFetch).toHaveBeenCalledWith("/api-keys/k1", { method: "DELETE" });
+    });
+  });
+
+  describe("useUpdateApiKeyModelAccessMutation", () => {
+    it("patches /api-keys/:id/model-access", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true });
+      const { result } = renderHook(() => useUpdateApiKeyModelAccessMutation(), { wrapper });
+      await act(() =>
+        result.current.mutateAsync({
+          id: "k1",
+          mode: "selected",
+          allowedModelIds: ["openai:gpt-4o"],
+        }),
+      );
+      expect(apiFetch).toHaveBeenCalledWith("/api-keys/k1/model-access", {
+        method: "PATCH",
+        body: { mode: "selected", allowedModelIds: ["openai:gpt-4o"] },
+      });
     });
   });
 

@@ -19,6 +19,22 @@ export const createKeySchema = z.object({
     .nullable()
     .optional(),
   allowedModelIds: z.array(z.string().trim().min(1)).min(1).nullable().optional(),
+  includeFutureModels: z.boolean().optional(),
 });
 
 export type CreateKeyInput = z.infer<typeof createKeySchema>;
+
+export const updateKeyModelAccessSchema = z.discriminatedUnion("mode", [
+  z.object({
+    mode: z.literal("snapshot"),
+  }),
+  z.object({
+    mode: z.literal("selected"),
+    allowedModelIds: z.array(z.string().trim().min(1)).min(1),
+  }),
+  z.object({
+    mode: z.literal("future"),
+  }),
+]);
+
+export type UpdateKeyModelAccessInput = z.infer<typeof updateKeyModelAccessSchema>;

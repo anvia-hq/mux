@@ -44,11 +44,14 @@ describe("auth services", () => {
   });
 
   it("register calls POST /auth/register", async () => {
-    vi.mocked(apiFetch).mockResolvedValueOnce({ user: { id: "2" } });
-    await register({ email: "new@b.com", password: "p" });
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      user: { id: "2" },
+      apiKey: { id: "k1", key: "mux_live_test", spendLimitUsd: null },
+    });
+    await register({ email: "new@b.com", password: "p", invitationCode: "MUX-TEST" });
     expect(apiFetch).toHaveBeenCalledWith("/auth/register", {
       method: "POST",
-      body: { email: "new@b.com", password: "p" },
+      body: { email: "new@b.com", password: "p", invitationCode: "MUX-TEST" },
     });
   });
 

@@ -28,6 +28,7 @@ vi.mock("hono/cookie", () => ({
   deleteCookie: vi.fn(),
 }));
 vi.mock("../../../src/utils/cache", () => ({
+  cacheDelete: vi.fn().mockResolvedValue(undefined),
   cacheGet: vi.fn().mockResolvedValue(null),
   cacheSet: vi.fn().mockResolvedValue(undefined),
 }));
@@ -75,6 +76,10 @@ describe("keys router", () => {
   });
 
   it("POST / creates key", async () => {
+    mockListPublicModels.mockResolvedValueOnce([
+      { id: "gpt-4o", provider: "openai" },
+      { id: "fast", provider: "mux" },
+    ]);
     mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "k1", key: "h" });
     const app = new Hono().route("/api-keys", keysRouter);
     const res = await app.request("/api-keys", {
@@ -87,7 +92,28 @@ describe("keys router", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           spendLimitUsd: 5,
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        }),
+      }),
+    );
+  });
+
+  it("POST / creates future-access key only when requested", async () => {
+    mockPrisma.apiKey.create.mockResolvedValueOnce({ id: "k1", key: "h" });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test", includeFutureModels: true }),
+    });
+    expect(res.status).toBe(201);
+    expect(mockPrisma.apiKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
           allowAllModels: true,
+          includeFutureModels: true,
           allowedModelIds: [],
         }),
       }),
@@ -114,6 +140,7 @@ describe("keys router", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           allowAllModels: false,
+          includeFutureModels: false,
           allowedModelIds: ["openai:gpt-4o", "mux:fast"],
         }),
       }),
@@ -162,6 +189,41 @@ describe("keys router", () => {
     await expect(res.json()).resolves.toEqual({
       error: "unknown or unavailable model(s): anthropic:claude",
     });
+  });
+
+  it("PATCH /:id/model-access updates selected model access", async () => {
+    mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+    mockPrisma.apiKey.update.mockResolvedValueOnce({ key: "hashed-key" });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/k1/model-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "selected", allowedModelIds: ["openai:gpt-4o"] }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.apiKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "k1" },
+        data: {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o"],
+        },
+      }),
+    );
+  });
+
+  it("PATCH /:id/model-access returns 404 when the key does not exist", async () => {
+    mockPrisma.apiKey.update.mockRejectedValueOnce({ code: "P2025" });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/missing/model-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "future" }),
+    });
+
+    expect(res.status).toBe(404);
   });
 
   it("DELETE /:id revokes key", async () => {

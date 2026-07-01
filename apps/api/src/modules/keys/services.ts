@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "../../utils/prisma";
-import { cacheGet, cacheSet } from "../../utils/cache";
+import { cacheDelete, cacheGet, cacheSet } from "../../utils/cache";
 import { redis } from "../../utils/redis";
 import { listPublicModels, toPublicModelId } from "../../providers/registry";
+import type { UpdateKeyModelAccessInput } from "./schema";
 
 const API_KEY_PREFIX = "mux_live_";
 
@@ -37,6 +38,7 @@ export class ApiKeyModelAccessDeniedError extends Error {
 
 export type ApiKeyModelAccess = {
   allowAllModels: boolean;
+  includeFutureModels: boolean;
   allowedModelIds: string[];
 };
 
@@ -55,9 +57,10 @@ export async function createApiKey(
   userId: string,
   spendLimitUsd?: number | null,
   allowedModelIds?: string[] | null,
+  includeFutureModels = false,
 ): Promise<{ id: string; key: string }> {
   const { raw, hashed } = generateApiKey();
-  const modelAccess = await buildModelAccess(allowedModelIds);
+  const modelAccess = await buildCreateModelAccess(allowedModelIds, includeFutureModels);
 
   const apiKey = await prisma.apiKey.create({
     data: {
@@ -66,6 +69,7 @@ export async function createApiKey(
       createdBy: userId,
       spendLimitUsd: spendLimitUsd ?? null,
       allowAllModels: modelAccess.allowAllModels,
+      includeFutureModels: modelAccess.includeFutureModels,
       allowedModelIds: modelAccess.allowedModelIds,
     },
   });
@@ -73,11 +77,50 @@ export async function createApiKey(
   return { id: apiKey.id, key: raw };
 }
 
-async function buildModelAccess(allowedModelIds?: string[] | null): Promise<ApiKeyModelAccess> {
-  if (allowedModelIds === undefined || allowedModelIds === null) {
-    return { allowAllModels: true, allowedModelIds: [] };
+async function buildCreateModelAccess(
+  allowedModelIds?: string[] | null,
+  includeFutureModels = false,
+): Promise<ApiKeyModelAccess> {
+  if (includeFutureModels) {
+    if (allowedModelIds !== undefined && allowedModelIds !== null) {
+      throw new ApiKeyModelFilterValidationError(
+        "includeFutureModels cannot be combined with allowedModelIds",
+      );
+    }
+
+    return buildApiKeyModelAccess({ mode: "future" });
   }
 
+  if (allowedModelIds === undefined || allowedModelIds === null) {
+    return buildApiKeyModelAccess({ mode: "snapshot" });
+  }
+
+  return buildApiKeyModelAccess({ mode: "selected", allowedModelIds });
+}
+
+export async function buildApiKeyModelAccess(
+  input: UpdateKeyModelAccessInput,
+): Promise<ApiKeyModelAccess> {
+  if (input.mode === "future") {
+    return { allowAllModels: true, includeFutureModels: true, allowedModelIds: [] };
+  }
+
+  if (input.mode === "snapshot") {
+    return {
+      allowAllModels: false,
+      includeFutureModels: false,
+      allowedModelIds: await listCurrentPublicModelIds(),
+    };
+  }
+
+  return {
+    allowAllModels: false,
+    includeFutureModels: false,
+    allowedModelIds: await validateSelectedModelIds(input.allowedModelIds),
+  };
+}
+
+async function validateSelectedModelIds(allowedModelIds: string[]): Promise<string[]> {
   const normalized = Array.from(
     new Set(allowedModelIds.map((modelId) => modelId.trim()).filter(Boolean)),
   );
@@ -88,10 +131,7 @@ async function buildModelAccess(allowedModelIds?: string[] | null): Promise<ApiK
     );
   }
 
-  const publicModels = await listPublicModels();
-  const availableModelIds = new Set(
-    publicModels.map((model) => toPublicModelId(model.provider, model.id)),
-  );
+  const availableModelIds = new Set(await listCurrentPublicModelIds());
   const unknownModelIds = normalized.filter((modelId) => !availableModelIds.has(modelId));
 
   if (unknownModelIds.length > 0) {
@@ -100,17 +140,25 @@ async function buildModelAccess(allowedModelIds?: string[] | null): Promise<ApiK
     );
   }
 
-  return { allowAllModels: false, allowedModelIds: normalized };
+  return normalized;
+}
+
+async function listCurrentPublicModelIds(): Promise<string[]> {
+  const publicModels = await listPublicModels();
+  return publicModels.map((model) => toPublicModelId(model.provider, model.id));
 }
 
 export function normalizeApiKeyModelAccess(apiKey: {
   allowAllModels?: boolean | null;
+  includeFutureModels?: boolean | null;
   allowedModelIds?: string[] | null;
 }): ApiKeyModelAccess {
-  const allowAllModels = apiKey.allowAllModels !== false;
+  const includeFutureModels = apiKey.includeFutureModels === true;
+  const allowAllModels = apiKey.allowAllModels === true && includeFutureModels;
 
   return {
     allowAllModels,
+    includeFutureModels,
     allowedModelIds: allowAllModels ? [] : (apiKey.allowedModelIds ?? []),
   };
 }
@@ -138,6 +186,7 @@ export async function validateApiKey(rawKey: string) {
       isActive: boolean;
       spendLimitUsd: number | null;
       allowAllModels?: boolean | null;
+      includeFutureModels?: boolean | null;
       allowedModelIds?: string[] | null;
     }>(cacheKey);
   } catch {
@@ -156,6 +205,7 @@ export async function validateApiKey(rawKey: string) {
       isActive: true,
       spendLimitUsd: true,
       allowAllModels: true,
+      includeFutureModels: true,
       allowedModelIds: true,
     },
   });
@@ -198,6 +248,7 @@ export async function listApiKeys() {
       isActive: true,
       spendLimitUsd: true,
       allowAllModels: true,
+      includeFutureModels: true,
       allowedModelIds: true,
       createdAt: true,
       creator: {
@@ -235,11 +286,55 @@ export async function listApiKeys() {
     return {
       ...key,
       allowAllModels: modelAccess.allowAllModels,
+      includeFutureModels: modelAccess.includeFutureModels,
       allowedModelIds: modelAccess.allowAllModels ? null : modelAccess.allowedModelIds,
       spentUsd,
       remainingUsd,
     };
   });
+}
+
+export async function updateApiKeyModelAccess(id: string, input: UpdateKeyModelAccessInput) {
+  const modelAccess = await buildApiKeyModelAccess(input);
+  const apiKey = await prisma.apiKey.update({
+    where: { id },
+    data: {
+      allowAllModels: modelAccess.allowAllModels,
+      includeFutureModels: modelAccess.includeFutureModels,
+      allowedModelIds: modelAccess.allowedModelIds,
+    },
+    select: { key: true },
+  });
+
+  await deleteApiKeyCache(apiKey.key);
+}
+
+export async function freezeLegacyApiKeyModelAccess(): Promise<number> {
+  const legacyKeys = await prisma.apiKey.findMany({
+    where: {
+      allowAllModels: true,
+      includeFutureModels: false,
+    },
+    select: { id: true, key: true },
+  });
+
+  if (legacyKeys.length === 0) {
+    return 0;
+  }
+
+  const allowedModelIds = await listCurrentPublicModelIds();
+  await prisma.apiKey.updateMany({
+    where: { id: { in: legacyKeys.map((key) => key.id) } },
+    data: {
+      allowAllModels: false,
+      includeFutureModels: false,
+      allowedModelIds,
+    },
+  });
+
+  await Promise.all(legacyKeys.map((key) => deleteApiKeyCache(key.key)));
+
+  return legacyKeys.length;
 }
 
 export async function getApiKeySpentUsd(apiKeyId: string): Promise<number> {
@@ -275,6 +370,14 @@ export async function addApiKeySpendUsd(apiKeyId: string, spendUsd: number): Pro
     return Number(value);
   } catch (error) {
     throw new ApiKeySpendLedgerUnavailableError(error);
+  }
+}
+
+async function deleteApiKeyCache(hashedKey: string) {
+  try {
+    await cacheDelete(`apikey:${hashedKey}`);
+  } catch {
+    // Cache unavailable, DB update still succeeded.
   }
 }
 

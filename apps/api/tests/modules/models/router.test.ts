@@ -12,6 +12,7 @@ const { mockGetCurrentUser, mockListPublicModels, mockModelAccess, mockPrisma } 
     mockListPublicModels: vi.fn().mockResolvedValue([]),
     mockModelAccess: {
       allowAllModels: true,
+      includeFutureModels: true,
       allowedModelIds: [] as string[],
     },
     mockPrisma: {
@@ -62,6 +63,7 @@ vi.mock("../../../src/middleware/api-key", () => ({
     .mockImplementation(
       async (c: { set: (key: string, value: unknown) => void }, next: () => void) => {
         c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
+        c.set("apiKeyIncludeFutureModels", mockModelAccess.includeFutureModels);
         c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
         await next();
       },
@@ -82,6 +84,7 @@ describe("models router", () => {
     });
     mockListPublicModels.mockResolvedValue([]);
     mockModelAccess.allowAllModels = true;
+    mockModelAccess.includeFutureModels = true;
     mockModelAccess.allowedModelIds = [];
   });
 
@@ -115,6 +118,7 @@ describe("models router", () => {
 
   it("GET /v1/models returns only allowed models for filtered keys", async () => {
     mockModelAccess.allowAllModels = false;
+    mockModelAccess.includeFutureModels = false;
     mockModelAccess.allowedModelIds = ["openai:gpt-4o"];
     mockListPublicModels.mockResolvedValueOnce([
       {

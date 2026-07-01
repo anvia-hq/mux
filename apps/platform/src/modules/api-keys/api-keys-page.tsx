@@ -30,7 +30,7 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowDown01Icon, Copy01Icon, Key01Icon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon, Copy01Icon, Edit02Icon, Key01Icon } from "@hugeicons/core-free-icons";
 import { useMemo, useState } from "react";
 import { useModelsQuery, type Model } from "../models/hooks";
 import {
@@ -38,50 +38,89 @@ import {
   useApiKeysQuery,
   useCreateApiKeyMutation,
   useRevokeApiKeyMutation,
+  useUpdateApiKeyModelAccessMutation,
   type ApiKey,
+  type UpdateApiKeyModelAccessInput,
 } from "./hooks";
 
-type ModelAccessMode = "all" | "filtered";
+type ModelAccessMode = "snapshot" | "filtered" | "future";
 
 const modelAccessLabels: Record<ModelAccessMode, string> = {
-  all: "Allow all models",
-  filtered: "Filter models",
+  snapshot: "Current enabled models",
+  filtered: "Selected models",
+  future: "Current and future models",
 };
 
 export function ApiKeysPage() {
   const query = useApiKeysQuery();
   const create = useCreateApiKeyMutation();
   const revoke = useRevokeApiKeyMutation();
+  const updateModelAccess = useUpdateApiKeyModelAccessMutation();
   const [revealed, setRevealed] = useState<{ id: string; key: string } | null>(null);
   const [name, setName] = useState("");
   const [spendLimitUsd, setSpendLimitUsd] = useState("");
-  const [modelAccessMode, setModelAccessMode] = useState<ModelAccessMode>("all");
+  const [modelAccessMode, setModelAccessMode] = useState<ModelAccessMode>("snapshot");
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [modelSearch, setModelSearch] = useState("");
-  const modelsQuery = useModelsQuery({ enabled: modelAccessMode === "filtered" });
+  const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
+  const [editModelAccessMode, setEditModelAccessMode] = useState<ModelAccessMode>("filtered");
+  const [editSelectedModelIds, setEditSelectedModelIds] = useState<string[]>([]);
+  const [editModelSearch, setEditModelSearch] = useState("");
+  const modelsQuery = useModelsQuery({
+    enabled:
+      modelAccessMode === "filtered" || (Boolean(editingKey) && editModelAccessMode === "filtered"),
+  });
   const models = modelsQuery.data?.data ?? [];
   const filteredModels = useMemo(
     () => models.filter((model) => matchesModelSearch(model, modelSearch)),
     [models, modelSearch],
   );
+  const filteredEditModels = useMemo(
+    () => models.filter((model) => matchesModelSearch(model, editModelSearch)),
+    [models, editModelSearch],
+  );
 
   function resetCreateForm() {
     setName("");
     setSpendLimitUsd("");
-    setModelAccessMode("all");
+    setModelAccessMode("snapshot");
     setSelectedModelIds([]);
     setModelSearch("");
     create.reset();
   }
 
-  function toggleModel(modelId: string, checked: boolean) {
-    setSelectedModelIds((current) => {
+  function toggleCreateModel(modelId: string, checked: boolean) {
+    setSelectedModelIds(toggleModelId(modelId, checked));
+  }
+
+  function toggleEditModel(modelId: string, checked: boolean) {
+    setEditSelectedModelIds(toggleModelId(modelId, checked));
+  }
+
+  function openEditModelAccess(key: ApiKey) {
+    setEditingKey(key);
+    setEditModelAccessMode(key.includeFutureModels ? "future" : "filtered");
+    setEditSelectedModelIds(key.allowedModelIds ?? []);
+    setEditModelSearch("");
+    updateModelAccess.reset();
+  }
+
+  function closeEditModelAccess() {
+    setEditingKey(null);
+    setEditModelAccessMode("filtered");
+    setEditSelectedModelIds([]);
+    setEditModelSearch("");
+    updateModelAccess.reset();
+  }
+
+  function toggleModelId(modelId: string, checked: boolean) {
+    return (current: string[]) => {
       if (checked) {
         return current.includes(modelId) ? current : [...current, modelId];
       }
 
       return current.filter((id) => id !== modelId);
-    });
+    };
   }
 
   if (isForbiddenError(query.error)) {
@@ -163,6 +202,7 @@ export function ApiKeysPage() {
                       name: name.trim(),
                       spendLimitUsd: parsedSpendLimit,
                       allowedModelIds: modelAccessMode === "filtered" ? selectedModelIds : null,
+                      includeFutureModels: modelAccessMode === "future",
                     },
                     {
                       onSuccess: (data) => {
@@ -216,16 +256,29 @@ export function ApiKeysPage() {
                           value={modelAccessMode}
                           onValueChange={(value) => setModelAccessMode(value as ModelAccessMode)}
                         >
-                          <DropdownMenuRadioItem value="all">
-                            Allow all models
+                          <DropdownMenuRadioItem value="snapshot">
+                            Current enabled models
                           </DropdownMenuRadioItem>
                           <DropdownMenuRadioItem value="filtered">
-                            Filter models
+                            Selected models
+                          </DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="future">
+                            Current and future models
                           </DropdownMenuRadioItem>
                         </DropdownMenuRadioGroup>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
+                  {modelAccessMode === "snapshot" ? (
+                    <p className="text-sm text-muted-foreground">
+                      The key will be limited to models enabled right now.
+                    </p>
+                  ) : null}
+                  {modelAccessMode === "future" ? (
+                    <p className="text-sm text-destructive">
+                      This key will automatically gain access to providers and models added later.
+                    </p>
+                  ) : null}
                   {modelAccessMode === "filtered" ? (
                     <div className="grid gap-3 rounded-md border p-3">
                       <div className="flex items-center justify-between gap-3">
@@ -263,7 +316,7 @@ export function ApiKeysPage() {
                                       id={checkboxId}
                                       checked={selected}
                                       onCheckedChange={(checked) =>
-                                        toggleModel(model.id, checked === true)
+                                        toggleCreateModel(model.id, checked === true)
                                       }
                                       className="mt-0.5"
                                     />
@@ -313,6 +366,155 @@ export function ApiKeysPage() {
         </Dialog>
       </div>
 
+      <Dialog open={Boolean(editingKey)} onOpenChange={(open) => !open && closeEditModelAccess()}>
+        <DialogContent className="sm:max-w-2xl">
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!editingKey) return;
+
+              const input = toModelAccessInput(editModelAccessMode, editSelectedModelIds);
+              if (!input) return;
+
+              updateModelAccess.mutate(
+                { id: editingKey.id, ...input },
+                {
+                  onSuccess: closeEditModelAccess,
+                },
+              );
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>Edit model access</DialogTitle>
+              <DialogDescription>{editingKey?.name ?? "API key"}</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-2">
+              <div className="grid gap-2">
+                <Label>Model access</Label>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" className="w-full justify-between">
+                      {modelAccessLabels[editModelAccessMode]}
+                      <HugeiconsIcon icon={ArrowDown01Icon} className="size-4 opacity-60" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="start"
+                    className="w-[var(--radix-dropdown-menu-trigger-width)]"
+                  >
+                    <DropdownMenuRadioGroup
+                      value={editModelAccessMode}
+                      onValueChange={(value) => setEditModelAccessMode(value as ModelAccessMode)}
+                    >
+                      <DropdownMenuRadioItem value="snapshot">
+                        Current enabled models
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="filtered">
+                        Selected models
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="future">
+                        Current and future models
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              {editModelAccessMode === "snapshot" ? (
+                <p className="text-sm text-muted-foreground">
+                  Saving will replace this key&apos;s model list with models enabled right now.
+                </p>
+              ) : null}
+              {editModelAccessMode === "future" ? (
+                <p className="text-sm text-destructive">
+                  This key will automatically gain access to providers and models added later.
+                </p>
+              ) : null}
+              {editModelAccessMode === "filtered" ? (
+                <div className="grid gap-3 rounded-md border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label htmlFor="edit-model-filter-search">Models</Label>
+                    <span className="text-xs text-muted-foreground">
+                      {editSelectedModelIds.length} selected
+                    </span>
+                  </div>
+                  <Input
+                    id="edit-model-filter-search"
+                    type="search"
+                    value={editModelSearch}
+                    onChange={(event) => setEditModelSearch(event.target.value)}
+                    placeholder="Search models or providers..."
+                  />
+                  {modelsQuery.isLoading ? (
+                    <p className="text-sm text-muted-foreground">Loading models...</p>
+                  ) : !models.length ? (
+                    <p className="text-sm text-muted-foreground">No models available.</p>
+                  ) : (
+                    <ScrollArea className="h-64 rounded-md border">
+                      <div className="grid divide-y">
+                        {filteredEditModels.length ? (
+                          filteredEditModels.map((model, index) => {
+                            const checkboxId = `edit-api-key-model-${index}`;
+                            const selected = editSelectedModelIds.includes(model.id);
+
+                            return (
+                              <label
+                                key={model.id}
+                                htmlFor={checkboxId}
+                                className="flex cursor-pointer items-start gap-3 px-3 py-2 text-sm hover:bg-muted/40"
+                              >
+                                <Checkbox
+                                  id={checkboxId}
+                                  checked={selected}
+                                  onCheckedChange={(checked) =>
+                                    toggleEditModel(model.id, checked === true)
+                                  }
+                                  className="mt-0.5"
+                                />
+                                <span className="grid min-w-0 gap-1">
+                                  <span className="truncate font-medium">{model.id}</span>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {model.provider === "mux" ? "Mux" : model.provider}
+                                    {model.name !== model.id ? ` · ${model.name}` : ""}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })
+                        ) : (
+                          <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                            No models match your search.
+                          </p>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  )}
+                  {editSelectedModelIds.length === 0 ? (
+                    <p className="text-sm text-destructive">Select at least one model.</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {updateModelAccess.error ? (
+                <p className="text-sm text-destructive">{updateModelAccess.error.message}</p>
+              ) : null}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={closeEditModelAccess}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={
+                  updateModelAccess.isPending ||
+                  (editModelAccessMode === "filtered" && editSelectedModelIds.length === 0)
+                }
+              >
+                {updateModelAccess.isPending ? "Saving..." : "Save access"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <section className="grid min-w-0 gap-3">
         <h2 className="text-sm font-medium">{keys.length} keys</h2>
         {query.isLoading ? (
@@ -352,15 +554,26 @@ export function ApiKeysPage() {
                     <TableCell className="text-muted-foreground">
                       {new Date(key.createdAt).toLocaleString()}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!key.isActive || revoke.isPending}
-                        onClick={() => revoke.mutate(key.id)}
-                      >
-                        Revoke
-                      </Button>
+                    <TableCell>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!key.isActive || updateModelAccess.isPending}
+                          onClick={() => openEditModelAccess(key)}
+                        >
+                          <HugeiconsIcon icon={Edit02Icon} className="size-4" />
+                          Models
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!key.isActive || revoke.isPending}
+                          onClick={() => revoke.mutate(key.id)}
+                        >
+                          Revoke
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -398,13 +611,30 @@ function formatBalance(key: ApiKey) {
 }
 
 function formatModelAccess(key: ApiKey) {
-  if (key.allowAllModels || key.allowedModelIds === null) {
-    return "All models";
+  if (key.includeFutureModels && key.allowAllModels) {
+    return "All current and future models";
   }
 
-  return `${key.allowedModelIds.length} models`;
+  return `${key.allowedModelIds?.length ?? 0} models`;
 }
 
 function formatUsd(value: number) {
   return `$${value.toFixed(2)}`;
+}
+
+function toModelAccessInput(
+  mode: ModelAccessMode,
+  selectedModelIds: string[],
+): UpdateApiKeyModelAccessInput | null {
+  if (mode === "future") {
+    return { mode: "future" };
+  }
+
+  if (mode === "snapshot") {
+    return { mode: "snapshot" };
+  }
+
+  return selectedModelIds.length > 0
+    ? { mode: "selected", allowedModelIds: selectedModelIds }
+    : null;
 }

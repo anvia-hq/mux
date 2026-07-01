@@ -7,6 +7,7 @@ import { prisma } from "../../utils/prisma";
 import { encrypt, lastFour } from "./crypto";
 import { reloadProvider, listAllModels } from "../../providers/registry";
 import { providerNameSchema, setProviderKeySchema } from "./schema";
+import { freezeLegacyApiKeyModelAccess } from "../keys/services";
 
 type AdminContext = { Variables: { adminUser: { id: string } } };
 
@@ -54,6 +55,14 @@ providersRouter.put(
 
     const ciphertext = encrypt(apiKey);
     const four = lastFour(apiKey);
+    const existingProvider = await prisma.providerKey.findUnique({
+      where: { provider: name },
+      select: { provider: true },
+    });
+
+    if (!existingProvider) {
+      await freezeLegacyApiKeyModelAccess();
+    }
 
     const row = await prisma.providerKey.upsert({
       where: { provider: name },

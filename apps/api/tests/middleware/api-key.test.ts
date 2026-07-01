@@ -50,6 +50,7 @@ describe("api-key middleware", () => {
       name: "test-key",
       spendLimitUsd: null,
       allowAllModels: false,
+      includeFutureModels: false,
       allowedModelIds: ["openai:gpt-4o"],
     });
     const app = new Hono();
@@ -61,6 +62,7 @@ describe("api-key middleware", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
       allowAllModels: false,
+      includeFutureModels: false,
       allowedModelIds: ["openai:gpt-4o"],
     });
   });
