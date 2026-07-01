@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { mockPrisma, mockDecrypt } = vi.hoisted(() => ({
   mockPrisma: {
     providerKey: { findMany: vi.fn(), findUnique: vi.fn() },
+    customProvider: { findMany: vi.fn(), findUnique: vi.fn() },
     disabledModel: { findMany: vi.fn() },
-    fallbackGroup: { findUnique: vi.fn() },
+    fallbackGroup: { findMany: vi.fn(), findUnique: vi.fn() },
   },
   mockDecrypt: vi.fn(),
 }));
@@ -12,15 +13,23 @@ const { mockPrisma, mockDecrypt } = vi.hoisted(() => ({
 vi.mock("../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../src/modules/providers/crypto", () => ({ decrypt: mockDecrypt }));
 
-import { estimateCost, resolveResponseTarget } from "../../src/providers/registry";
+import {
+  clearProviderCacheForE2e,
+  estimateCost,
+  initProviders,
+  listPublicModels,
+  resolveResponseTarget,
+} from "../../src/providers/registry";
 
 describe("resolveResponseTarget", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    clearProviderCacheForE2e();
+    mockPrisma.customProvider.findMany.mockResolvedValue([]);
   });
 
   it("returns null for a model id that does not parse as provider:model", async () => {
-    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
     expect(await resolveResponseTarget("not-a-model")).toBeNull();
   });
 
@@ -49,6 +58,57 @@ describe("resolveResponseTarget", () => {
       targets: [{ provider: "anthropic", modelId: "claude", position: 0 }],
     });
     expect(await resolveResponseTarget("mux:anthropic-only")).toBeNull();
+  });
+});
+
+describe("custom providers", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    clearProviderCacheForE2e();
+  });
+
+  it("loads custom providers from database metadata", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "custom-openai", ciphertext: "enc" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([
+      {
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        models: [
+          {
+            modelId: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            reasoning: false,
+            toolCall: true,
+            structuredOutput: true,
+            weights: "closed",
+          },
+        ],
+      },
+    ]);
+    mockDecrypt.mockReturnValueOnce("custom-key");
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
+    mockPrisma.fallbackGroup.findMany.mockResolvedValue([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValue(null);
+
+    await initProviders();
+
+    await expect(listPublicModels()).resolves.toEqual([
+      expect.objectContaining({
+        provider: "custom-openai",
+        id: "custom-chat",
+        inputPricePer1M: 1,
+      }),
+    ]);
+    await expect(resolveResponseTarget("custom-openai:custom-chat")).resolves.toBeNull();
   });
 });
 

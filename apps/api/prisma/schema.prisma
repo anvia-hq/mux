@@ -21,6 +21,7 @@ model User {
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
   providerKeys ProviderKey[]
+  customProviders CustomProvider[]
   invitationsCreated Invitation[] @relation("InvitationCreator")
   invitationsRedeemed Invitation[] @relation("InvitationRedeemer")
 }
@@ -108,6 +109,40 @@ model ProviderKey {
   updater     User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
+}
+
+model CustomProvider {
+  id        String                @id
+  name      String
+  apiBase   String
+  createdBy String
+  creator   User                  @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  models    CustomProviderModel[]
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  @@index([createdBy])
+}
+
+model CustomProviderModel {
+  providerId         String
+  provider           CustomProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId            String
+  name               String
+  inputPricePer1M    Float
+  outputPricePer1M   Float
+  contextWindow      Int
+  maxOutputTokens    Int
+  inputModalities    String[]
+  outputModalities   String[]
+  reasoning          Boolean
+  toolCall           Boolean
+  structuredOutput   Boolean
+  weights            String
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@id([providerId, modelId])
 }
 
 /// Tracks which models are disabled. A model is enabled by default — presence of

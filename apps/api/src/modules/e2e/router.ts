@@ -14,6 +14,8 @@ const tables = [
   "FallbackTarget",
   "FallbackGroup",
   "DisabledModel",
+  "CustomProviderModel",
+  "CustomProvider",
   "ProviderKey",
   "ApiKey",
   "Invitation",

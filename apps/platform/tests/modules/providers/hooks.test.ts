@@ -9,7 +9,11 @@ vi.mock("../../../src/lib/api-client", () => ({
 
 import { apiFetch } from "../../../src/lib/api-client";
 import {
+  useCreateCustomProviderMutation,
+  useDeleteCustomProviderMutation,
+  useProviderCatalogQuery,
   useProvidersQuery,
+  useReplaceCustomProviderModelsMutation,
   useSetProviderKeyMutation,
   useDeleteProviderKeyMutation,
   useProviderModelsQuery,
@@ -37,6 +41,15 @@ describe("providers hooks", () => {
     expect(apiFetch).toHaveBeenCalledWith("/providers");
   });
 
+  it("useProviderCatalogQuery fetches /providers/catalog", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      providers: [{ provider: "custom-openai", name: "Custom", type: "custom" }],
+    });
+    const { result } = renderHook(() => useProviderCatalogQuery(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(apiFetch).toHaveBeenCalledWith("/providers/catalog");
+  });
+
   it("useSetProviderKeyMutation puts to /providers/:name", async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce({
       provider: { provider: "openai", lastFour: "abcd" },
@@ -56,6 +69,47 @@ describe("providers hooks", () => {
     expect(apiFetch).toHaveBeenCalledWith("/providers/openai", { method: "DELETE" });
   });
 
+  it("useCreateCustomProviderMutation posts custom provider payloads", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({ provider: { provider: "custom-openai" } });
+    const { result } = renderHook(() => useCreateCustomProviderMutation(), { wrapper });
+    const input = {
+      id: "custom-openai",
+      name: "Custom OpenAI",
+      apiBase: "https://custom.example/v1",
+      apiKey: "custom-key",
+      models: [
+        {
+          id: "custom-chat",
+          name: "Custom Chat",
+          inputPricePer1M: 1,
+          outputPricePer1M: 2,
+          contextWindow: 128000,
+          maxOutputTokens: 4096,
+          inputModalities: ["text"],
+          outputModalities: ["text"],
+          reasoning: false,
+          toolCall: true,
+          structuredOutput: true,
+          weights: "closed" as const,
+        },
+      ],
+    };
+    await act(() => result.current.mutateAsync(input));
+    expect(apiFetch).toHaveBeenCalledWith("/providers/custom", {
+      method: "POST",
+      body: input,
+    });
+  });
+
+  it("useDeleteCustomProviderMutation deletes custom providers", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => useDeleteCustomProviderMutation(), { wrapper });
+    await act(() => result.current.mutateAsync("custom-openai"));
+    expect(apiFetch).toHaveBeenCalledWith("/providers/custom/custom-openai", {
+      method: "DELETE",
+    });
+  });
+
   it("useProviderModelsQuery fetches /providers/:name/models", async () => {
     vi.mocked(apiFetch).mockResolvedValueOnce({ data: [] });
     const { result } = renderHook(() => useProviderModelsQuery("openai"), { wrapper });
@@ -70,6 +124,34 @@ describe("providers hooks", () => {
     expect(apiFetch).toHaveBeenCalledWith("/providers/openai/models/toggle", {
       method: "PUT",
       body: { modelId: "gpt-4", enabled: true },
+    });
+  });
+
+  it("useReplaceCustomProviderModelsMutation replaces models", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true });
+    const { result } = renderHook(() => useReplaceCustomProviderModelsMutation("custom-openai"), {
+      wrapper,
+    });
+    const models = [
+      {
+        id: "custom-chat",
+        name: "Custom Chat",
+        inputPricePer1M: 1,
+        outputPricePer1M: 2,
+        contextWindow: 128000,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: false,
+        toolCall: true,
+        structuredOutput: true,
+        weights: "closed" as const,
+      },
+    ];
+    await act(() => result.current.mutateAsync(models));
+    expect(apiFetch).toHaveBeenCalledWith("/providers/custom-openai/models", {
+      method: "PUT",
+      body: { models },
     });
   });
 

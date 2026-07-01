@@ -13,6 +13,7 @@ import {
 import { useModelsQuery, type Model } from "./hooks";
 import { ModelIdCopyButton } from "./model-id-copy-button";
 import { ModalityIcons } from "./modality-icons";
+import { PROVIDER_LABELS, providerLabel } from "../providers/hooks";
 
 function formatTokens(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -40,6 +41,14 @@ function ProviderLogo({ provider }: { provider: string }) {
     return (
       <span className="flex size-5 items-center justify-center rounded-[5px] bg-white font-black text-[11px] text-black leading-none">
         M
+      </span>
+    );
+  }
+
+  if (!(provider in PROVIDER_LABELS)) {
+    return (
+      <span className="flex size-5 items-center justify-center rounded-[5px] border bg-muted/40 font-semibold text-[10px] uppercase leading-none">
+        {provider.slice(0, 1)}
       </span>
     );
   }
@@ -150,7 +159,7 @@ export function ModelsPage() {
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <ProviderLogo provider={m.provider} />
                         <span className="capitalize">
-                          {m.provider === "mux" ? "Mux" : m.provider}
+                          {m.provider === "mux" ? "Mux" : providerLabel(m.provider)}
                         </span>
                       </div>
                       {m.fallbackTargets?.length ? (

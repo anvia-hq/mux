@@ -145,6 +145,7 @@ import { E2eAdapter } from "./e2e";
 import { IflowcnAdapter } from "./iflowcn";
 import { XiaomiTokenPlanSgpAdapter } from "./xiaomi-token-plan-sgp";
 import { ClaudinioAdapter } from "./claudinio";
+import { CustomOpenAICompatibleAdapter } from "./custom-openai-compatible";
 import { prisma } from "../utils/prisma";
 import { decrypt } from "../modules/providers/crypto";
 import { applyRuntimeCapabilities } from "./chat-compat";
@@ -301,8 +302,57 @@ const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter | nul
   claudinio: (apiKey) => new ClaudinioAdapter(apiKey),
 };
 
-function buildAdapter(provider: string, apiKey: string): ProviderAdapter | null {
-  return adapterFactories[provider]?.(apiKey) ?? null;
+type CustomProviderWithModels = {
+  id: string;
+  name: string;
+  apiBase: string;
+  models: Array<{
+    modelId: string;
+    name: string;
+    inputPricePer1M: number;
+    outputPricePer1M: number;
+    contextWindow: number;
+    maxOutputTokens: number;
+    inputModalities: string[];
+    outputModalities: string[];
+    reasoning: boolean;
+    toolCall: boolean;
+    structuredOutput: boolean;
+    weights: string;
+  }>;
+};
+
+function buildCustomAdapter(row: CustomProviderWithModels, apiKey: string): ProviderAdapter {
+  return new CustomOpenAICompatibleAdapter({
+    name: row.id,
+    apiKey,
+    apiBase: row.apiBase,
+    models: row.models.map((model) => ({
+      id: model.modelId,
+      name: model.name,
+      provider: row.id,
+      inputPricePer1M: model.inputPricePer1M,
+      outputPricePer1M: model.outputPricePer1M,
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      inputModalities: model.inputModalities,
+      outputModalities: model.outputModalities,
+      reasoning: model.reasoning,
+      toolCall: model.toolCall,
+      structuredOutput: model.structuredOutput,
+      weights: model.weights === "open" ? "open" : "closed",
+    })),
+  });
+}
+
+function buildAdapter(
+  provider: string,
+  apiKey: string,
+  customProvider?: CustomProviderWithModels,
+): ProviderAdapter | null {
+  const builtInAdapter = adapterFactories[provider]?.(apiKey) ?? null;
+  if (builtInAdapter) return builtInAdapter;
+  return customProvider ? buildCustomAdapter(customProvider, apiKey) : null;
 }
 
 /**
@@ -313,9 +363,22 @@ function buildAdapter(provider: string, apiKey: string): ProviderAdapter | null 
 export async function initProviders() {
   try {
     const rows = await prisma.providerKey.findMany();
+    let customProvidersById = new Map<string, CustomProviderWithModels>();
+    try {
+      const customProviders = await prisma.customProvider.findMany({
+        include: { models: { orderBy: { name: "asc" } } },
+      });
+      customProvidersById = new Map(customProviders.map((provider) => [provider.id, provider]));
+    } catch (error) {
+      console.warn(
+        "CustomProvider table not available yet:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+
     for (const row of rows) {
       const apiKey = decrypt(row.ciphertext);
-      const adapter = buildAdapter(row.provider, apiKey);
+      const adapter = buildAdapter(row.provider, apiKey, customProvidersById.get(row.provider));
       if (adapter) providers.set(row.provider, adapter);
     }
   } catch (error) {
@@ -339,7 +402,14 @@ export async function reloadProvider(name: string): Promise<void> {
     return;
   }
   const apiKey = decrypt(row.ciphertext);
-  const adapter = buildAdapter(name, apiKey);
+  let customProvider: CustomProviderWithModels | null = null;
+  if (!adapterFactories[name]) {
+    customProvider = await prisma.customProvider.findUnique({
+      where: { id: name },
+      include: { models: { orderBy: { name: "asc" } } },
+    });
+  }
+  const adapter = buildAdapter(name, apiKey, customProvider ?? undefined);
   if (adapter) {
     providers.set(name, adapter);
   } else {

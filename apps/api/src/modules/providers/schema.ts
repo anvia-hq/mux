@@ -152,8 +152,104 @@ export const providerNames = [
   "claudinio",
 ] as const;
 
-export const providerNameSchema = z.enum(providerNames);
+export type BuiltInProviderName = (typeof providerNames)[number];
+
+export function isBuiltInProviderName(value: string): value is BuiltInProviderName {
+  return providerNames.includes(value as BuiltInProviderName);
+}
+
+export function isReservedProviderName(value: string): boolean {
+  return value === "mux" || isBuiltInProviderName(value);
+}
+
+export const providerNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/, {
+    message:
+      "provider id must use lowercase letters, numbers, dots, underscores, or hyphens, and cannot start or end with punctuation",
+  });
 
 export const setProviderKeySchema = z.object({
   apiKey: z.string().min(8),
 });
+
+const modelIdSchema = z.string().trim().min(1).max(256);
+
+export const customProviderModelSchema = z.object({
+  id: modelIdSchema,
+  name: z.string().trim().min(1).max(160),
+  inputPricePer1M: z.number().finite().nonnegative(),
+  outputPricePer1M: z.number().finite().nonnegative(),
+  contextWindow: z.number().int().nonnegative(),
+  maxOutputTokens: z.number().int().nonnegative(),
+  inputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
+  outputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
+  reasoning: z.boolean(),
+  toolCall: z.boolean(),
+  structuredOutput: z.boolean(),
+  weights: z.enum(["open", "closed"]),
+});
+
+const customProviderModelsSchema = z
+  .array(customProviderModelSchema)
+  .min(1)
+  .max(200)
+  .superRefine((models, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, model] of models.entries()) {
+      if (seen.has(model.id)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `duplicate model id: ${model.id}`,
+          path: [index, "id"],
+        });
+      }
+      seen.add(model.id);
+    }
+  });
+
+export const createCustomProviderSchema = z.object({
+  id: providerNameSchema.refine((id) => !isReservedProviderName(id), {
+    message: "provider id is reserved",
+  }),
+  name: z.string().trim().min(1).max(120),
+  apiBase: z
+    .string()
+    .trim()
+    .url()
+    .refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
+      message: "apiBase must be an http(s) URL",
+    }),
+  apiKey: z.string().min(8),
+  models: customProviderModelsSchema,
+});
+
+export const updateCustomProviderSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    apiBase: z
+      .string()
+      .trim()
+      .url()
+      .refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
+        message: "apiBase must be an http(s) URL",
+      })
+      .optional(),
+    apiKey: z.string().min(8).optional(),
+  })
+  .refine(
+    (input) =>
+      input.name !== undefined || input.apiBase !== undefined || input.apiKey !== undefined,
+    {
+      message: "at least one field must be provided",
+    },
+  );
+
+export const replaceCustomProviderModelsSchema = z.object({
+  models: customProviderModelsSchema,
+});
+
+export type CustomProviderModelInput = z.infer<typeof customProviderModelSchema>;

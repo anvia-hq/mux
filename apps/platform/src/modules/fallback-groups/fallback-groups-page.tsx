@@ -40,7 +40,7 @@ import {
   useFallbackGroupsQuery,
   useUpdateFallbackGroupMutation,
 } from "./hooks";
-import { PROVIDER_LABELS, type ProviderName } from "../providers/hooks";
+import { providerLabel } from "../providers/hooks";
 
 type TargetDraft = {
   clientId: string;
@@ -76,10 +76,6 @@ function createTargetDraft(provider = "", modelId = ""): TargetDraft {
 function modelTargetId(model: Model) {
   const prefix = `${model.provider}:`;
   return model.id.startsWith(prefix) ? model.id.slice(prefix.length) : model.id;
-}
-
-function providerLabel(provider: string) {
-  return provider in PROVIDER_LABELS ? PROVIDER_LABELS[provider as ProviderName] : provider;
 }
 
 function toFormState(group: FallbackGroup): FormState {

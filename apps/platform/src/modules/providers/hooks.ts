@@ -4,9 +4,21 @@ import type { Model } from "../models/hooks";
 
 export type ProviderRow = {
   provider: string;
-  lastFour: string;
+  lastFour: string | null;
   updatedAt: string;
   updater?: { email: string };
+};
+
+export type ProviderCatalogRow = {
+  provider: string;
+  name: string;
+  type: "built-in" | "custom" | "unknown";
+  configured: boolean;
+  lastFour: string | null;
+  updatedAt: string | null;
+  updater?: { email: string } | null;
+  apiBase: string | null;
+  modelCount: number | null;
 };
 
 export const PROVIDER_NAMES = [
@@ -156,9 +168,9 @@ export const PROVIDER_NAMES = [
   "xiaomi-token-plan-sgp",
   "claudinio",
 ] as const;
-export type ProviderName = (typeof PROVIDER_NAMES)[number];
+export type ProviderName = string;
 
-export const PROVIDER_LABELS: Record<ProviderName, string> = {
+export const PROVIDER_LABELS = {
   requesty: "Requesty",
   "qiniu-ai": "Qiniu",
   "alibaba-cn": "Alibaba (China)",
@@ -304,9 +316,14 @@ export const PROVIDER_LABELS: Record<ProviderName, string> = {
   iflowcn: "iFlow",
   "xiaomi-token-plan-sgp": "Xiaomi Token Plan (Singapore)",
   claudinio: "Claudinio",
-};
+} satisfies Record<(typeof PROVIDER_NAMES)[number], string>;
+
+export function providerLabel(provider: string, customName?: string | null) {
+  return customName || PROVIDER_LABELS[provider as keyof typeof PROVIDER_LABELS] || provider;
+}
 
 const providersKey = ["providers"] as const;
+const providerCatalogKey = ["providers", "catalog"] as const;
 
 export function useProvidersQuery() {
   return useQuery({
@@ -315,37 +332,132 @@ export function useProvidersQuery() {
   });
 }
 
+export function useProviderCatalogQuery() {
+  return useQuery({
+    queryKey: providerCatalogKey,
+    queryFn: () => apiFetch<{ providers: ProviderCatalogRow[] }>("/providers/catalog"),
+  });
+}
+
 export function useSetProviderKeyMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { provider: ProviderName; apiKey: string }) =>
+    mutationFn: (input: { provider: string; apiKey: string }) =>
       apiFetch<{ provider: ProviderRow }>(`/providers/${input.provider}`, {
         method: "PUT",
         body: { apiKey: input.apiKey },
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: providersKey }),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: providersKey });
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["providers", input.provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
   });
 }
 
 export function useDeleteProviderKeyMutation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (provider: ProviderName) =>
+    mutationFn: (provider: string) =>
       apiFetch<{ ok: true }>(`/providers/${provider}`, { method: "DELETE" }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: providersKey }),
+    onSuccess: (_data, provider) => {
+      qc.invalidateQueries({ queryKey: providersKey });
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
   });
 }
 
 export type ProviderModel = Model & { enabled: boolean };
 
-export function useProviderModelsQuery(provider: ProviderName) {
+export type CustomProviderModelInput = {
+  id: string;
+  name: string;
+  inputPricePer1M: number;
+  outputPricePer1M: number;
+  contextWindow: number;
+  maxOutputTokens: number;
+  inputModalities: string[];
+  outputModalities: string[];
+  reasoning: boolean;
+  toolCall: boolean;
+  structuredOutput: boolean;
+  weights: "open" | "closed";
+};
+
+export type CreateCustomProviderInput = {
+  id: string;
+  name: string;
+  apiBase: string;
+  apiKey: string;
+  models: CustomProviderModelInput[];
+};
+
+export type UpdateCustomProviderInput = {
+  id: string;
+  name?: string;
+  apiBase?: string;
+  apiKey?: string;
+};
+
+export function useCreateCustomProviderMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateCustomProviderInput) =>
+      apiFetch<{ provider: ProviderCatalogRow }>("/providers/custom", {
+        method: "POST",
+        body: input,
+      }),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: providersKey });
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["providers", input.id, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
+  });
+}
+
+export function useUpdateCustomProviderMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: UpdateCustomProviderInput) =>
+      apiFetch<{ provider: ProviderCatalogRow }>(`/providers/custom/${id}`, {
+        method: "PUT",
+        body,
+      }),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["providers", input.id, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
+  });
+}
+
+export function useDeleteCustomProviderMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (provider: string) =>
+      apiFetch<{ ok: true }>(`/providers/custom/${provider}`, { method: "DELETE" }),
+    onSuccess: (_data, provider) => {
+      qc.invalidateQueries({ queryKey: providersKey });
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["fallback-groups"] });
+    },
+  });
+}
+
+export function useProviderModelsQuery(provider: string) {
   return useQuery({
     queryKey: ["providers", provider, "models"],
     queryFn: () => apiFetch<{ data: ProviderModel[] }>(`/providers/${provider}/models`),
   });
 }
 
-export function useToggleModelMutation(provider: ProviderName) {
+export function useToggleModelMutation(provider: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: { modelId: string; enabled: boolean }) =>
@@ -353,28 +465,54 @@ export function useToggleModelMutation(provider: ProviderName) {
         method: "PUT",
         body: input,
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers", provider, "models"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
   });
 }
 
-export function useEnableAllMutation(provider: ProviderName) {
+export function useReplaceCustomProviderModelsMutation(provider: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (models: CustomProviderModelInput[]) =>
+      apiFetch<{ ok: true }>(`/providers/${provider}/models`, {
+        method: "PUT",
+        body: { models },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: providerCatalogKey });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["fallback-groups"] });
+    },
+  });
+}
+
+export function useEnableAllMutation(provider: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<{ ok: true }>(`/providers/${provider}/models/enable-all`, {
         method: "PUT",
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers", provider, "models"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
   });
 }
 
-export function useDisableAllMutation(provider: ProviderName) {
+export function useDisableAllMutation(provider: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
       apiFetch<{ ok: true }>(`/providers/${provider}/models/disable-all`, {
         method: "PUT",
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["providers", provider, "models"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+    },
   });
 }
