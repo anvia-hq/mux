@@ -32,3 +32,11 @@ export function useModelsQuery(options: { enabled?: boolean } = {}) {
     enabled: options.enabled ?? true,
   });
 }
+
+export function useModelTargetsQuery(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: ["dashboard", "model-targets"] as const,
+    queryFn: () => apiFetch<{ data: Model[] }>("/dashboard/models/targets"),
+    enabled: options.enabled ?? true,
+  });
+}

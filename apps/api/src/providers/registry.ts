@@ -803,7 +803,16 @@ export async function listModelAliasModels(baseModels?: Model[]): Promise<Model[
 export async function listPublicModels(): Promise<Model[]> {
   const disabledModels = await listDisabledModelKeys();
   const baseModels = await listPublicNonAliasModels(disabledModels);
-  return [...baseModels, ...(await listModelAliasModels(baseModels))];
+  const aliasModels = await listModelAliasModels(baseModels);
+  const aliasedTargetIds = new Set(
+    aliasModels
+      .map((model) => model.aliasTargetModelId)
+      .filter((modelId): modelId is string => Boolean(modelId)),
+  );
+  const visibleBaseModels = baseModels.filter(
+    (model) => !aliasedTargetIds.has(toPublicModelIdForModel(model)),
+  );
+  return [...visibleBaseModels, ...aliasModels];
 }
 
 export function listConfiguredProviders(): string[] {

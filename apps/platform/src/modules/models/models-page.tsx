@@ -74,7 +74,6 @@ function matchesSearch(model: Model, query: string) {
     model.type,
     model.weights,
     model.fallbackTargets?.map((target) => target.publicModelId).join(" ") ?? "",
-    model.aliasTargetModelId ?? "",
     model.inputModalities.join(" "),
     model.outputModalities.join(" "),
   ]
@@ -160,9 +159,6 @@ export function ModelsPage() {
                           <Badge variant="outline" className="rounded-md">
                             Alias
                           </Badge>
-                          <span className="text-xs text-muted-foreground">
-                            {m.aliasTargetModelId}
-                          </span>
                         </div>
                       ) : null}
                     </TableCell>
@@ -184,13 +180,6 @@ export function ModelsPage() {
                               {target.position}. {target.publicModelId}
                             </Badge>
                           ))}
-                        </div>
-                      ) : null}
-                      {m.aliasTargetModelId ? (
-                        <div className="mt-1">
-                          <Badge variant="outline" className="text-[10px]">
-                            {m.aliasTargetModelId}
-                          </Badge>
                         </div>
                       ) : null}
                     </TableCell>

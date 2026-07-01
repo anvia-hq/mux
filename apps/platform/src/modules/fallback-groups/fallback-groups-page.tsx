@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { Textarea } from "@repo/ui/components/textarea";
-import { useModelsQuery, type Model } from "../models/hooks";
+import { useModelTargetsQuery, type Model } from "../models/hooks";
 import {
   type FallbackGroup,
   type FallbackGroupInput,
@@ -120,7 +120,7 @@ function groupModelsByProvider(models: Model[]) {
 
 export function FallbackGroupsPage() {
   const groupsQuery = useFallbackGroupsQuery();
-  const modelsQuery = useModelsQuery();
+  const modelsQuery = useModelTargetsQuery();
   const createGroup = useCreateFallbackGroupMutation();
   const updateGroup = useUpdateFallbackGroupMutation();
   const deleteGroup = useDeleteFallbackGroupMutation();

@@ -94,7 +94,7 @@ vi.mock("@repo/ui/components/textarea", () => ({
   Textarea: (props: Record<string, unknown>) => React.createElement("textarea", props),
 }));
 vi.mock("../../../src/modules/models/hooks", () => ({
-  useModelsQuery: () => mockModelsQuery,
+  useModelTargetsQuery: () => mockModelsQuery,
 }));
 vi.mock("../../../src/modules/fallback-groups/hooks", () => ({
   useCreateFallbackGroupMutation: () => mockCreateGroup,

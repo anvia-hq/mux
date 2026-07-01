@@ -128,7 +128,7 @@ describe("model aliases", () => {
     mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
   });
 
-  it("lists enabled aliases with target model metadata", async () => {
+  it("lists enabled aliases instead of their target models", async () => {
     mockPrisma.providerKey.findMany.mockResolvedValueOnce([
       { provider: "custom-openai", ciphertext: "enc" },
     ]);
@@ -169,10 +169,6 @@ describe("model aliases", () => {
     await initProviders();
 
     await expect(listPublicModels()).resolves.toEqual([
-      expect.objectContaining({
-        id: "custom-chat",
-        provider: "custom-openai",
-      }),
       expect.objectContaining({
         id: "fast-chat",
         name: "Fast chat",

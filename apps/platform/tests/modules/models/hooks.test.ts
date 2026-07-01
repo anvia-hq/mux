@@ -8,7 +8,7 @@ vi.mock("../../../src/lib/api-client", () => ({
 }));
 
 import { apiFetch } from "../../../src/lib/api-client";
-import { useModelsQuery } from "../../../src/modules/models/hooks";
+import { useModelTargetsQuery, useModelsQuery } from "../../../src/modules/models/hooks";
 
 const wrapper = ({ children }: { children: React.ReactNode }) => {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -28,6 +28,17 @@ describe("models hooks", () => {
       const { result } = renderHook(() => useModelsQuery(), { wrapper });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(apiFetch).toHaveBeenCalledWith("/dashboard/models");
+    });
+  });
+
+  describe("useModelTargetsQuery", () => {
+    it("fetches /dashboard/models/targets", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({
+        data: [{ id: "openai:gpt-4", name: "GPT-4", provider: "openai" }],
+      });
+      const { result } = renderHook(() => useModelTargetsQuery(), { wrapper });
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      expect(apiFetch).toHaveBeenCalledWith("/dashboard/models/targets");
     });
   });
 });

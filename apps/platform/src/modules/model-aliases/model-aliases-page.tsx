@@ -24,7 +24,7 @@ import {
   TableRow,
 } from "@repo/ui/components/table";
 import { Textarea } from "@repo/ui/components/textarea";
-import { useModelsQuery, type Model } from "../models/hooks";
+import { useModelTargetsQuery, type Model } from "../models/hooks";
 import {
   type ModelAlias,
   type ModelAliasInput,
@@ -87,7 +87,7 @@ function targetOptions(models: Model[]) {
 
 export function ModelAliasesPage() {
   const aliasesQuery = useModelAliasesQuery();
-  const modelsQuery = useModelsQuery();
+  const modelsQuery = useModelTargetsQuery();
   const createAlias = useCreateModelAliasMutation();
   const updateAlias = useUpdateModelAliasMutation();
   const deleteAlias = useDeleteModelAliasMutation();

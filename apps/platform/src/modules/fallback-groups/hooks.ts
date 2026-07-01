@@ -47,6 +47,7 @@ export function useCreateFallbackGroupMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: fallbackGroupsKey });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -67,6 +68,7 @@ export function useUpdateFallbackGroupMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: fallbackGroupsKey });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -81,6 +83,7 @@ export function useDeleteFallbackGroupMutation() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: fallbackGroupsKey });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }

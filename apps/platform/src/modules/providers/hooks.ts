@@ -352,6 +352,7 @@ export function useSetProviderKeyMutation() {
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["providers", input.provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -366,6 +367,7 @@ export function useDeleteProviderKeyMutation() {
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -415,6 +417,7 @@ export function useCreateCustomProviderMutation() {
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["providers", input.id, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -431,6 +434,7 @@ export function useUpdateCustomProviderMutation() {
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["providers", input.id, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -445,6 +449,7 @@ export function useDeleteCustomProviderMutation() {
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
       qc.invalidateQueries({ queryKey: ["fallback-groups"] });
     },
   });
@@ -468,6 +473,7 @@ export function useToggleModelMutation(provider: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -484,6 +490,7 @@ export function useReplaceCustomProviderModelsMutation(provider: string) {
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: providerCatalogKey });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
       qc.invalidateQueries({ queryKey: ["fallback-groups"] });
     },
   });
@@ -499,6 +506,7 @@ export function useEnableAllMutation(provider: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }
@@ -513,6 +521,7 @@ export function useDisableAllMutation(provider: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers", provider, "models"] });
       qc.invalidateQueries({ queryKey: ["dashboard", "models"] });
+      qc.invalidateQueries({ queryKey: ["dashboard", "model-targets"] });
     },
   });
 }

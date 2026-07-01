@@ -1,39 +1,45 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-const { mockGetCurrentUser, mockListPublicModels, mockModelAccess, mockPrisma } = vi.hoisted(
-  () => ({
-    mockGetCurrentUser: vi.fn().mockResolvedValue({
-      id: "admin-1",
-      email: "admin@test.com",
-      name: "Admin",
-      role: "ADMIN",
-    }),
-    mockListPublicModels: vi.fn().mockResolvedValue([]),
-    mockModelAccess: {
-      allowAllModels: true,
-      includeFutureModels: true,
-      allowedModelIds: [] as string[],
-    },
-    mockPrisma: {
-      disabledModel: { findMany: vi.fn().mockResolvedValue([]) },
-      user: {
-        findUnique: vi.fn().mockResolvedValue({
-          id: "admin-1",
-          email: "admin@test.com",
-          name: "Admin",
-          role: "ADMIN",
-          passwordHash: "hash",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        }),
-      },
-    },
+const {
+  mockGetCurrentUser,
+  mockListPublicModels,
+  mockListPublicNonAliasModels,
+  mockModelAccess,
+  mockPrisma,
+} = vi.hoisted(() => ({
+  mockGetCurrentUser: vi.fn().mockResolvedValue({
+    id: "admin-1",
+    email: "admin@test.com",
+    name: "Admin",
+    role: "ADMIN",
   }),
-);
+  mockListPublicModels: vi.fn().mockResolvedValue([]),
+  mockListPublicNonAliasModels: vi.fn().mockResolvedValue([]),
+  mockModelAccess: {
+    allowAllModels: true,
+    includeFutureModels: true,
+    allowedModelIds: [] as string[],
+  },
+  mockPrisma: {
+    disabledModel: { findMany: vi.fn().mockResolvedValue([]) },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: "admin-1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    },
+  },
+}));
 
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
+  listPublicNonAliasModels: mockListPublicNonAliasModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
   toPublicModelIdForModel: (model: { id: string; provider: string; type?: string }) =>
     model.type === "alias" ? model.id : `${model.provider}:${model.id}`,
@@ -85,6 +91,7 @@ describe("models router", () => {
       role: "ADMIN",
     });
     mockListPublicModels.mockResolvedValue([]);
+    mockListPublicNonAliasModels.mockResolvedValue([]);
     mockModelAccess.allowAllModels = true;
     mockModelAccess.includeFutureModels = true;
     mockModelAccess.allowedModelIds = [];
@@ -232,6 +239,32 @@ describe("models router", () => {
     ]);
     const app = new Hono().route("/dashboard/models", modelsDashboardRouter);
     const res = await app.request("/dashboard/models");
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      data: [{ id: "openai:gpt-4", provider: "openai" }],
+    });
+  });
+
+  it("GET /dashboard/models/targets returns non-alias targets", async () => {
+    mockListPublicNonAliasModels.mockResolvedValueOnce([
+      {
+        id: "gpt-4",
+        name: "GPT-4",
+        provider: "openai",
+        inputPricePer1M: 10,
+        outputPricePer1M: 30,
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: true,
+        toolCall: true,
+        structuredOutput: false,
+        weights: "closed",
+      },
+    ]);
+    const app = new Hono().route("/dashboard/models", modelsDashboardRouter);
+    const res = await app.request("/dashboard/models/targets");
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
       data: [{ id: "openai:gpt-4", provider: "openai" }],

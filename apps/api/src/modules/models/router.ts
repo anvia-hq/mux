@@ -1,6 +1,10 @@
 import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
-import { listPublicModels, toPublicModelIdForModel } from "../../providers/registry";
+import {
+  listPublicModels,
+  listPublicNonAliasModels,
+  toPublicModelIdForModel,
+} from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
 import { isModelAllowedForApiKey } from "../keys/services";
 
@@ -72,6 +76,18 @@ modelsDashboardRouter.use("*", requireUser);
 modelsDashboardRouter.get("/", async (c) => {
   try {
     const models = await listPublicModels();
+    return c.json({
+      data: models.map(toDashboardModel),
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
+modelsDashboardRouter.get("/targets", async (c) => {
+  try {
+    const models = await listPublicNonAliasModels();
     return c.json({
       data: models.map(toDashboardModel),
     });
