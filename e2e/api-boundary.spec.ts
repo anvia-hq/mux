@@ -18,6 +18,7 @@ test("protects dashboard API routes at the HTTP boundary", async ({ request }) =
     { path: "/api-keys", status: 403 },
     { path: "/providers", status: 403 },
     { path: "/fallback-groups", status: 403 },
+    { path: "/invitations", status: 403 },
     { path: "/users", status: 403 },
     { path: "/logs", status: 401 },
     { path: "/dashboard/models", status: 401 },
@@ -41,7 +42,7 @@ test("keeps admin APIs forbidden to regular users while allowing read-only user 
   await loginViaUi(page, regularUser);
 
   const api = page.context().request;
-  for (const path of ["/api-keys", "/providers", "/fallback-groups", "/users"]) {
+  for (const path of ["/api-keys", "/providers", "/fallback-groups", "/invitations", "/users"]) {
     await expectJsonStatus(await apiRequest(api, "GET", path), 403);
   }
 

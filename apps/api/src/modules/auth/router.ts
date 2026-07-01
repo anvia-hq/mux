@@ -1,6 +1,6 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { loginSchema, onboardSchema } from "./schema";
+import { loginSchema, onboardSchema, registerSchema } from "./schema";
 import {
   authenticateUser,
   clearAuthCookie,
@@ -10,6 +10,7 @@ import {
   setAuthCookie,
 } from "./services";
 import { authValidationHook, isUniqueConstraintError, sanitizeUser } from "./utils";
+import { InvalidInvitationCodeError, redeemInvitation } from "../invitations/services";
 
 export const authRouter = new Hono()
   .get("/onboarding-status", async (c) => {
@@ -72,6 +73,35 @@ export const authRouter = new Hono()
 
     return c.json({ user: sanitizeUser(user) });
   })
-  .post("/register", (c) => {
-    return c.json({ error: "registration is disabled" }, 403);
+  .post("/register", zValidator("json", registerSchema, authValidationHook), async (c) => {
+    const input = c.req.valid("json");
+
+    try {
+      const result = await redeemInvitation({
+        invitationCode: input.invitationCode,
+        email: input.email,
+        password: input.password,
+        name: input.name,
+      });
+
+      await setAuthCookie(c, result.user);
+
+      return c.json(
+        {
+          user: sanitizeUser(result.user),
+          apiKey: result.apiKey,
+        },
+        201,
+      );
+    } catch (error) {
+      if (error instanceof InvalidInvitationCodeError) {
+        return c.json({ error: error.message }, 403);
+      }
+
+      if (isUniqueConstraintError(error)) {
+        return c.json({ error: "email is already registered" }, 409);
+      }
+
+      throw error;
+    }
   });

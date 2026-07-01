@@ -11,7 +11,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../../../../src/modules/auth/services", () => ({
   getCurrentUser: vi.fn().mockResolvedValue({ id: "1", email: "a@b.com", role: "USER" }),
   login: vi.fn().mockResolvedValue({ id: "1", email: "a@b.com", role: "USER" }),
-  register: vi.fn().mockResolvedValue({ id: "2", email: "new@b.com", role: "USER" }),
+  register: vi.fn().mockResolvedValue({
+    user: { id: "2", email: "new@b.com", role: "USER" },
+    apiKey: { id: "k1", key: "mux_live_test", spendLimitUsd: null },
+  }),
   logout: vi.fn().mockResolvedValue(undefined),
   onboard: vi.fn().mockResolvedValue({ id: "3", email: "admin@test.com", role: "ADMIN" }),
   onboardingStatus: vi.fn().mockResolvedValue({ needsOnboarding: false }),
@@ -55,10 +58,16 @@ describe("auth hooks", () => {
     expect(mockNavigate).toHaveBeenCalled();
   });
 
-  it("useRegisterMutation triggers navigate on success", async () => {
+  it("useRegisterMutation invalidates auth without navigating", async () => {
     const { result } = renderHook(() => useRegisterMutation(), { wrapper });
-    await act(() => result.current.mutateAsync({ email: "a@b.com", password: "password" }));
-    expect(mockNavigate).toHaveBeenCalled();
+    await act(() =>
+      result.current.mutateAsync({
+        email: "a@b.com",
+        password: "password",
+        invitationCode: "MUX-TEST",
+      }),
+    );
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("useOnboardMutation triggers navigate on success", async () => {

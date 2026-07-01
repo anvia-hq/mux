@@ -17,6 +17,7 @@ export const registerSchema = z.object({
   email: emailSchema,
   password: z.string().min(8, "password must be at least 8 characters"),
   name: z.string().nullish().transform(normalizeName),
+  invitationCode: z.string().trim().min(1, "invitation code is required"),
 });
 
 export const onboardSchema = z.object({

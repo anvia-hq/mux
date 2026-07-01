@@ -4,10 +4,13 @@ import { validateApiKey } from "../modules/keys/services";
 
 export function readApiKeyModelAccess(c: Context): ApiKeyModelAccess {
   const allowAllModels = c.get("apiKeyAllowAllModels" as never) as boolean | undefined;
+  const includeFutureModels = c.get("apiKeyIncludeFutureModels" as never) as boolean | undefined;
   const allowedModelIds = c.get("apiKeyAllowedModelIds" as never) as string[] | undefined;
+  const normalizedAllowAllModels = allowAllModels ?? true;
 
   return {
-    allowAllModels: allowAllModels ?? true,
+    allowAllModels: normalizedAllowAllModels,
+    includeFutureModels: includeFutureModels ?? normalizedAllowAllModels,
     allowedModelIds: allowedModelIds ?? [],
   };
 }
@@ -31,6 +34,7 @@ export async function apiKeyAuth(c: Context, next: Next) {
   c.set("apiKeyName", apiKey.name);
   c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd);
   c.set("apiKeyAllowAllModels", apiKey.allowAllModels);
+  c.set("apiKeyIncludeFutureModels", apiKey.includeFutureModels);
   c.set("apiKeyAllowedModelIds", apiKey.allowedModelIds);
 
   await next();

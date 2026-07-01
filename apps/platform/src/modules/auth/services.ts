@@ -1,6 +1,6 @@
 import { apiFetch, UnauthorizedError } from "../../lib/api-client";
 import { authApiPaths } from "./schema";
-import type { AuthResponse, AuthUser, LoginInput, RegisterInput } from "./types";
+import type { AuthResponse, AuthUser, LoginInput, RegisterInput, RegisterResponse } from "./types";
 
 export { UnauthorizedError };
 
@@ -19,12 +19,11 @@ export async function login(input: LoginInput): Promise<AuthUser> {
   return data.user;
 }
 
-export async function register(input: RegisterInput): Promise<AuthUser> {
-  const data = await apiFetch<AuthResponse>(authApiPaths.register, {
+export async function register(input: RegisterInput): Promise<RegisterResponse> {
+  return apiFetch<RegisterResponse>(authApiPaths.register, {
     method: "POST",
     body: input,
   });
-  return data.user;
 }
 
 export async function logout(): Promise<void> {

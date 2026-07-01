@@ -21,6 +21,8 @@ model User {
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
   providerKeys ProviderKey[]
+  invitationsCreated Invitation[] @relation("InvitationCreator")
+  invitationsRedeemed Invitation[] @relation("InvitationRedeemer")
 }
 
 model ApiKey {
@@ -32,12 +34,36 @@ model ApiKey {
   isActive      Boolean  @default(true)
   spendLimitUsd Float?
   allowAllModels Boolean  @default(true)
+  includeFutureModels Boolean @default(false)
   allowedModelIds String[] @default([])
+  invitationId  String?
+  invitation    Invitation? @relation(fields: [invitationId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   logs          RequestLog[]
   backgroundJobs BackgroundResponseJob[]
 
   @@index([isActive])
+  @@index([invitationId])
+}
+
+model Invitation {
+  id          String   @id @default(cuid())
+  codeHash    String   @unique
+  codeLastFour String
+  balanceUsd  Float?
+  isActive    Boolean  @default(true)
+  createdBy   String
+  creator     User     @relation("InvitationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  redeemedBy  String?
+  redeemer    User?    @relation("InvitationRedeemer", fields: [redeemedBy], references: [id], onDelete: SetNull)
+  redeemedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  apiKeys     ApiKey[]
+
+  @@index([isActive])
+  @@index([createdBy])
+  @@index([redeemedBy])
 }
 
 model RequestLog {

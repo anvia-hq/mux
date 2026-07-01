@@ -5,10 +5,15 @@ const { mockPrisma, mockListAllModels, mockReloadProvider } = vi.hoisted(() => (
   mockPrisma: {
     providerKey: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       upsert: vi
         .fn()
         .mockResolvedValue({ provider: "openai", lastFour: "abcd", updatedAt: new Date() }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    apiKey: {
+      findMany: vi.fn().mockResolvedValue([]),
+      updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     disabledModel: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -34,7 +39,20 @@ const { mockPrisma, mockListAllModels, mockReloadProvider } = vi.hoisted(() => (
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../../src/providers/registry", () => ({
   listAllModels: mockListAllModels,
+  listPublicModels: vi.fn().mockResolvedValue([]),
   reloadProvider: mockReloadProvider,
+  toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+}));
+vi.mock("../../../src/utils/cache", () => ({
+  cacheDelete: vi.fn().mockResolvedValue(undefined),
+  cacheGet: vi.fn().mockResolvedValue(null),
+  cacheSet: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../../src/utils/redis", () => ({
+  redis: {
+    get: vi.fn(),
+    incrbyfloat: vi.fn(),
+  },
 }));
 vi.mock("../../../src/modules/providers/crypto", () => ({
   encrypt: vi.fn().mockReturnValue("enc"),

@@ -16,6 +16,7 @@ const tables = [
   "DisabledModel",
   "ProviderKey",
   "ApiKey",
+  "Invitation",
   "User",
 ];
 

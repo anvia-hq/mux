@@ -16,9 +16,18 @@ export type RegisterInput = {
   email: string;
   password: string;
   name?: string;
+  invitationCode: string;
 };
 
 export type AuthResponse = {
   user: AuthUser;
   error?: string;
+};
+
+export type RegisterResponse = AuthResponse & {
+  apiKey: {
+    id: string;
+    key: string;
+    spendLimitUsd: number | null;
+  };
 };

@@ -2,12 +2,13 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { requireRole } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
-import { createKeySchema } from "./schema";
+import { createKeySchema, updateKeyModelAccessSchema } from "./schema";
 import {
   ApiKeyModelFilterValidationError,
   createApiKey,
   listApiKeys,
   revokeApiKey,
+  updateApiKeyModelAccess,
 } from "./services";
 
 /**
@@ -73,11 +74,17 @@ keysRouter.get("/", async (c) => {
  * SHA-256 hash, so the raw value cannot be recovered later.
  */
 keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), async (c) => {
-  const { name, spendLimitUsd, allowedModelIds } = c.req.valid("json");
+  const { name, spendLimitUsd, allowedModelIds, includeFutureModels } = c.req.valid("json");
   const userId = c.get("userId");
 
   try {
-    const { id, key } = await createApiKey(name, userId, spendLimitUsd, allowedModelIds);
+    const { id, key } = await createApiKey(
+      name,
+      userId,
+      spendLimitUsd,
+      allowedModelIds,
+      includeFutureModels,
+    );
     return c.json({ id, key }, 201);
   } catch (error) {
     if (error instanceof ApiKeyModelFilterValidationError) {
@@ -88,6 +95,36 @@ keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), as
     return c.json({ error: message }, 500);
   }
 });
+
+keysRouter.patch(
+  "/:id/model-access",
+  zValidator("json", updateKeyModelAccessSchema, authValidationHook),
+  async (c) => {
+    const { id } = c.req.param();
+    const input = c.req.valid("json");
+
+    try {
+      await updateApiKeyModelAccess(id, input);
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof ApiKeyModelFilterValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code: string }).code === "P2025"
+      ) {
+        return c.json({ error: "API key not found" }, 404);
+      }
+
+      const message = error instanceof Error ? error.message : "Internal server error";
+      return c.json({ error: message }, 500);
+    }
+  },
+);
 
 /**
  * DELETE /:id
