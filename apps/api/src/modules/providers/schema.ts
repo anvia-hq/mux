@@ -187,9 +187,9 @@ export const customProviderModelSchema = z.object({
   maxOutputTokens: z.number().int().nonnegative(),
   inputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
   outputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
-  reasoning: z.boolean(),
-  toolCall: z.boolean(),
-  structuredOutput: z.boolean(),
+  reasoning: z.boolean().default(true),
+  toolCall: z.boolean().default(true),
+  structuredOutput: z.boolean().default(true),
   weights: z.enum(["open", "closed"]),
 });
 

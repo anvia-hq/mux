@@ -202,7 +202,14 @@ describe("providers router", () => {
         data: expect.objectContaining({
           id: "custom-openai",
           models: expect.objectContaining({
-            create: [expect.objectContaining({ modelId: "custom-chat" })],
+            create: [
+              expect.objectContaining({
+                modelId: "custom-chat",
+                reasoning: false,
+                toolCall: true,
+                structuredOutput: true,
+              }),
+            ],
           }),
         }),
       }),
@@ -213,6 +220,53 @@ describe("providers router", () => {
       }),
     );
     expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
+  });
+
+  it("POST /custom defaults custom model capabilities when omitted", async () => {
+    mockPrisma.providerKey.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.customProvider.findUnique.mockResolvedValueOnce(null);
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        apiKey: "custom-key",
+        models: [
+          {
+            id: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text", "image", "pdf"],
+            outputModalities: ["text"],
+            weights: "closed",
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockPrisma.customProvider.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          models: expect.objectContaining({
+            create: [
+              expect.objectContaining({
+                modelId: "custom-chat",
+                reasoning: true,
+                toolCall: true,
+                structuredOutput: true,
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
   });
 
   it("PUT /:name keeps disabled model preferences", async () => {
@@ -309,13 +363,62 @@ describe("providers router", () => {
       where: { providerId: "custom-openai" },
     });
     expect(mockPrisma.customProviderModel.createMany).toHaveBeenCalledWith({
-      data: [expect.objectContaining({ providerId: "custom-openai", modelId: "kept-chat" })],
+      data: [
+        expect.objectContaining({
+          providerId: "custom-openai",
+          modelId: "kept-chat",
+          reasoning: false,
+          toolCall: true,
+          structuredOutput: true,
+        }),
+      ],
     });
     expect(mockPrisma.disabledModel.deleteMany).toHaveBeenCalledWith({
       where: { provider: "custom-openai", modelId: { in: ["old-chat"] } },
     });
     expect(mockPrisma.fallbackTarget.deleteMany).toHaveBeenCalledWith({
       where: { provider: "custom-openai", modelId: { in: ["old-chat"] } },
+    });
+    expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
+  });
+
+  it("PUT /:name/models defaults omitted custom model capabilities", async () => {
+    mockPrisma.customProvider.findUnique.mockResolvedValueOnce({
+      id: "custom-openai",
+      models: [{ modelId: "custom-chat" }],
+    });
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/custom-openai/models", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        models: [
+          {
+            id: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text", "image", "pdf"],
+            outputModalities: ["text"],
+            weights: "closed",
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.customProviderModel.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          providerId: "custom-openai",
+          modelId: "custom-chat",
+          reasoning: true,
+          toolCall: true,
+          structuredOutput: true,
+        }),
+      ],
     });
     expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
   });
