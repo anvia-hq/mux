@@ -209,6 +209,34 @@ describe("chat services", () => {
     );
   });
 
+  it("uses concrete target pricing while returning the requested alias", async () => {
+    const chatCompletion = vi.fn().mockResolvedValueOnce({
+      id: "chat-1",
+      model: "gpt-4",
+      choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    });
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "fast-chat",
+      targets: [createResolvedModel("openai", "gpt-4", { chatCompletion })],
+    });
+    mockGetModelPricing.mockReturnValueOnce({ id: "gpt-4" });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    const result = await handleChatCompletion(createRequest({ model: "fast-chat" }), "key-1", {
+      requireBillableUsage: true,
+    });
+
+    expect(result).toMatchObject({ kind: "complete", response: { model: "fast-chat" } });
+    expect(chatCompletion).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4" }));
+    expect(mockGetModelPricing).toHaveBeenCalledWith("openai:gpt-4");
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4", 10, 20);
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "openai:gpt-4", statusCode: 200 }),
+    );
+  });
+
   it("logs error on provider failure", async () => {
     mockResolveChatModel.mockResolvedValueOnce({
       kind: "direct",

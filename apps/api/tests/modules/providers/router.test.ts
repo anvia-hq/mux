@@ -65,6 +65,8 @@ vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: vi.fn().mockResolvedValue([]),
   reloadProvider: mockReloadProvider,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+  toPublicModelIdForModel: (model: { id: string; provider: string; type?: string }) =>
+    model.type === "alias" ? model.id : `${model.provider}:${model.id}`,
 }));
 vi.mock("../../../src/utils/cache", () => ({
   cacheDelete: vi.fn().mockResolvedValue(undefined),

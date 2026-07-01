@@ -35,6 +35,8 @@ const { mockGetCurrentUser, mockListPublicModels, mockModelAccess, mockPrisma } 
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+  toPublicModelIdForModel: (model: { id: string; provider: string; type?: string }) =>
+    model.type === "alias" ? model.id : `${model.provider}:${model.id}`,
 }));
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("hono/cookie", () => ({
@@ -159,6 +161,54 @@ describe("models router", () => {
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
       data: [{ id: "openai:gpt-4o", owned_by: "openai" }],
+    });
+  });
+
+  it("GET /v1/models returns bare alias ids when allowed", async () => {
+    mockModelAccess.allowAllModels = false;
+    mockModelAccess.includeFutureModels = false;
+    mockModelAccess.allowedModelIds = ["fast-chat"];
+    mockListPublicModels.mockResolvedValueOnce([
+      {
+        id: "fast-chat",
+        name: "Fast chat",
+        provider: "mux",
+        type: "alias",
+        aliasTargetModelId: "openai:gpt-4o",
+        inputPricePer1M: 10,
+        outputPricePer1M: 30,
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: true,
+        toolCall: true,
+        structuredOutput: false,
+        weights: "closed",
+      },
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        provider: "openai",
+        inputPricePer1M: 10,
+        outputPricePer1M: 30,
+        contextWindow: 8192,
+        maxOutputTokens: 4096,
+        inputModalities: ["text"],
+        outputModalities: ["text"],
+        reasoning: true,
+        toolCall: true,
+        structuredOutput: false,
+        weights: "closed",
+      },
+    ]);
+    const app = new Hono().route("/v1/models", modelsRouter);
+    const res = await app.request("/v1/models", {
+      headers: { Authorization: "Bearer valid-key" },
+    });
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      data: [{ id: "fast-chat", owned_by: "mux" }],
     });
   });
 

@@ -48,6 +48,8 @@ vi.mock("../../../src/utils/redis", () => ({ redis: mockRedis }));
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+  toPublicModelIdForModel: (model: { id: string; provider: string; type?: string }) =>
+    model.type === "alias" ? model.id : `${model.provider}:${model.id}`,
 }));
 vi.mock("../../../src/modules/providers/crypto", () => ({
   decrypt: mockDecrypt,

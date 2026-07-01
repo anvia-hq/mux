@@ -39,6 +39,7 @@ vi.mock("@hugeicons/core-free-icons", () => ({
   DashboardSquare01Icon: {},
   Flowchart02Icon: {},
   Key01Icon: {},
+  Link01Icon: {},
   Logout01Icon: {},
   PlayIcon: {},
   Plug01Icon: {},
@@ -114,6 +115,16 @@ describe("AppShell", () => {
 
     expect(screen.getByRole("link", { name: "Playground" }).getAttribute("href")).toBe(
       "/playground",
+    );
+  });
+
+  it("shows model alias navigation for admins", () => {
+    mockUser.data.role = "ADMIN";
+
+    render(React.createElement(AppShell));
+
+    expect(screen.getByRole("link", { name: "Aliases" }).getAttribute("href")).toBe(
+      "/model-aliases",
     );
   });
 

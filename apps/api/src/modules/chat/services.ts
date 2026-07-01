@@ -71,7 +71,7 @@ export async function handleChatCompletion(
   if (
     options.requireBillableUsage &&
     resolved.kind === "direct" &&
-    !getModelPricing(resolved.requestedModelId)
+    !getModelPricing(resolved.targets[0].publicModelId)
   ) {
     throw new ApiKeyUnbillableUsageError();
   }

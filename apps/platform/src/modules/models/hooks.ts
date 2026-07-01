@@ -5,7 +5,7 @@ export interface Model {
   id: string;
   name: string;
   provider: string;
-  type?: "provider" | "fallback-group";
+  type?: "provider" | "fallback-group" | "alias";
   inputPricePer1M: number;
   outputPricePer1M: number;
   contextWindow: number;
@@ -22,6 +22,7 @@ export interface Model {
     publicModelId: string;
     position: number;
   }[];
+  aliasTargetModelId?: string;
 }
 
 export function useModelsQuery(options: { enabled?: boolean } = {}) {

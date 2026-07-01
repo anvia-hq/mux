@@ -650,6 +650,33 @@ describe("responses services", () => {
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
   });
 
+  it("uses concrete target pricing while returning the requested alias", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-1",
+      model: "gpt-4o",
+      usage: { input_tokens: 10, output_tokens: 20, total_tokens: 30 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "fast-chat",
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
+    });
+    mockGetModelPricing.mockReturnValueOnce({ id: "gpt-4o" });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    const result = await handleResponseCreate(createRequest({ model: "fast-chat" }), "key-1", {
+      requireBillableUsage: true,
+    });
+
+    expect(result).toMatchObject({ id: "resp-1", model: "fast-chat" });
+    expect(createResponse).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4o" }));
+    expect(mockGetModelPricing).toHaveBeenCalledWith("openai:gpt-4o");
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4o", 10, 20, undefined);
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "openai:gpt-4o", statusCode: 200 }),
+    );
+  });
+
   it("throws when limited key request cannot be billed", async () => {
     const createResponse = vi.fn().mockResolvedValueOnce({
       id: "resp-1",

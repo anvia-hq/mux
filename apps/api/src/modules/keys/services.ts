@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { prisma } from "../../utils/prisma";
 import { cacheDelete, cacheGet, cacheSet } from "../../utils/cache";
 import { redis } from "../../utils/redis";
-import { listPublicModels, toPublicModelId } from "../../providers/registry";
+import { listPublicModels, toPublicModelIdForModel } from "../../providers/registry";
 import { decrypt, encrypt } from "../providers/crypto";
 import type { UpdateKeyModelAccessInput } from "./schema";
 
@@ -161,7 +161,7 @@ async function validateSelectedModelIds(allowedModelIds: string[]): Promise<stri
 
 async function listCurrentPublicModelIds(): Promise<string[]> {
   const publicModels = await listPublicModels();
-  return publicModels.map((model) => toPublicModelId(model.provider, model.id));
+  return publicModels.map((model) => toPublicModelIdForModel(model));
 }
 
 export function normalizeApiKeyModelAccess(apiKey: {

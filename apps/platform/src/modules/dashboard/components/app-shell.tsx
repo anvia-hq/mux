@@ -24,6 +24,7 @@ import {
   DashboardSquare01Icon,
   Flowchart02Icon,
   Key01Icon,
+  Link01Icon,
   Logout01Icon,
   PlayIcon,
   Plug01Icon,
@@ -62,6 +63,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/providers", label: "Providers", icon: Plug01Icon, adminOnly: true },
       { to: "/models", label: "Models", icon: BoxesIcon },
+      { to: "/model-aliases", label: "Aliases", icon: Link01Icon, adminOnly: true },
       { to: "/fallback-groups", label: "Fallbacks", icon: Flowchart02Icon, adminOnly: true },
       { to: "/playground", label: "Playground", icon: PlayIcon, adminOnly: true },
     ],

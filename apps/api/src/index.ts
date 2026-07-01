@@ -9,6 +9,7 @@ import { invitationsRouter } from "./modules/invitations/router";
 import { keysRouter } from "./modules/keys/router";
 import { freezeLegacyApiKeyModelAccess } from "./modules/keys/services";
 import { logsRouter } from "./modules/logs/router";
+import { modelAliasesRouter } from "./modules/model-aliases/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
 import { playgroundRouter } from "./modules/playground/router";
 import { providersRouter } from "./modules/providers/router";
@@ -46,6 +47,7 @@ const app = new Hono()
   .route("/api-keys", keysRouter)
   .route("/invitations", invitationsRouter)
   .route("/logs", logsRouter)
+  .route("/model-aliases", modelAliasesRouter)
   .route("/fallback-groups", fallbackGroupsRouter)
   .route("/providers", providersRouter)
   .route("/playground", playgroundRouter);

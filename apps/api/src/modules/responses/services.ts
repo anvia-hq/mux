@@ -102,7 +102,7 @@ export async function handleResponseCreate(
     );
   }
 
-  if (options.requireBillableUsage && !getModelPricing(requestedModelId)) {
+  if (options.requireBillableUsage && !getModelPricing(target.publicModelId)) {
     throw new ApiKeyUnbillableResponseUsageError();
   }
 
@@ -978,7 +978,7 @@ export async function handleResponseCompact(
     candidates.push({ provider: azure, providerName: "azure-cognitive-services" });
   }
 
-  if (options.requireBillableUsage && !getModelPricing(resolved.requestedModelId)) {
+  if (options.requireBillableUsage && !getModelPricing(primary.publicModelId)) {
     throw new ApiKeyUnbillableResponseUsageError();
   }
 
@@ -996,7 +996,7 @@ export async function handleResponseCompact(
       const cachedTokens = readCachedTokens(usage);
       const reasoningTokens = readReasoningTokens(usage);
       const estimatedCost = estimateCost(
-        resolved.requestedModelId,
+        primary.publicModelId,
         usage?.input_tokens,
         usage?.output_tokens,
         cachedTokens,
@@ -1006,7 +1006,7 @@ export async function handleResponseCompact(
         await logRequest({
           apiKeyId,
           provider: candidate.providerName,
-          model: resolved.requestedModelId,
+          model: primary.publicModelId,
           endpoint: "/v1/responses/compact",
           latencyMs,
           promptTokens: usage?.input_tokens,
@@ -1026,7 +1026,7 @@ export async function handleResponseCompact(
       await logRequest({
         apiKeyId,
         provider: candidate.providerName,
-        model: resolved.requestedModelId,
+        model: primary.publicModelId,
         endpoint: "/v1/responses/compact",
         latencyMs,
         promptTokens: usage?.input_tokens,

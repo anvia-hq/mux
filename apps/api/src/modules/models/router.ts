@@ -1,6 +1,6 @@
 import { type Context, Hono, type Next } from "hono";
 import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
-import { listPublicModels, toPublicModelId } from "../../providers/registry";
+import { listPublicModels, toPublicModelIdForModel } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
 import { isModelAllowedForApiKey } from "../keys/services";
 
@@ -11,7 +11,7 @@ type PublicModel = Awaited<ReturnType<typeof listPublicModels>>[number];
 
 function toOpenAIModel(model: PublicModel) {
   return {
-    id: toPublicModelId(model.provider, model.id),
+    id: toPublicModelIdForModel(model),
     object: "model",
     created: Date.now(),
     owned_by: model.provider,
@@ -21,7 +21,7 @@ function toOpenAIModel(model: PublicModel) {
 function toDashboardModel(model: PublicModel) {
   return {
     ...model,
-    id: toPublicModelId(model.provider, model.id),
+    id: toPublicModelIdForModel(model),
   };
 }
 
@@ -41,7 +41,7 @@ modelsRouter.get("/", async (c) => {
   try {
     const modelAccess = readApiKeyModelAccess(c);
     const models = (await listPublicModels()).filter((model) =>
-      isModelAllowedForApiKey(toPublicModelId(model.provider, model.id), modelAccess),
+      isModelAllowedForApiKey(toPublicModelIdForModel(model), modelAccess),
     );
     return c.json({ object: "list", data: models.map(toOpenAIModel) });
   } catch (error) {

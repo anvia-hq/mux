@@ -205,7 +205,7 @@ export interface Model {
   id: string;
   name: string;
   provider: string;
-  type?: "provider" | "fallback-group";
+  type?: "provider" | "fallback-group" | "alias";
   /** Price per 1M input (prompt) tokens in USD. */
   inputPricePer1M: number;
   /** Price per 1M output (completion) tokens in USD. */
@@ -226,6 +226,7 @@ export interface Model {
     publicModelId: string;
     position: number;
   }[];
+  aliasTargetModelId?: string;
 }
 
 /** Sensible defaults for most modern chat models. Override as needed. */

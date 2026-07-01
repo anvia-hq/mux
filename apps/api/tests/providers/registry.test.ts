@@ -6,6 +6,7 @@ const { mockPrisma, mockDecrypt } = vi.hoisted(() => ({
     customProvider: { findMany: vi.fn(), findUnique: vi.fn() },
     disabledModel: { findMany: vi.fn() },
     fallbackGroup: { findMany: vi.fn(), findUnique: vi.fn() },
+    modelAlias: { findMany: vi.fn(), findUnique: vi.fn() },
   },
   mockDecrypt: vi.fn(),
 }));
@@ -18,6 +19,7 @@ import {
   estimateCost,
   initProviders,
   listPublicModels,
+  resolveChatModel,
   resolveResponseTarget,
 } from "../../src/providers/registry";
 
@@ -26,6 +28,8 @@ describe("resolveResponseTarget", () => {
     vi.clearAllMocks();
     clearProviderCacheForE2e();
     mockPrisma.customProvider.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
   });
 
   it("returns null for a model id that does not parse as provider:model", async () => {
@@ -65,6 +69,8 @@ describe("custom providers", () => {
   afterEach(() => {
     vi.clearAllMocks();
     clearProviderCacheForE2e();
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
   });
 
   it("loads custom providers from database metadata", async () => {
@@ -98,6 +104,7 @@ describe("custom providers", () => {
     mockPrisma.disabledModel.findMany.mockResolvedValue([]);
     mockPrisma.fallbackGroup.findMany.mockResolvedValue([]);
     mockPrisma.fallbackGroup.findUnique.mockResolvedValue(null);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
 
     await initProviders();
 
@@ -109,6 +116,119 @@ describe("custom providers", () => {
       }),
     ]);
     await expect(resolveResponseTarget("custom-openai:custom-chat")).resolves.toBeNull();
+  });
+});
+
+describe("model aliases", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    clearProviderCacheForE2e();
+    mockPrisma.customProvider.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
+  });
+
+  it("lists enabled aliases with target model metadata", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "custom-openai", ciphertext: "enc" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([
+      {
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        models: [
+          {
+            modelId: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            reasoning: false,
+            toolCall: true,
+            structuredOutput: true,
+            weights: "closed",
+          },
+        ],
+      },
+    ]);
+    mockDecrypt.mockReturnValueOnce("custom-key");
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
+    mockPrisma.fallbackGroup.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValueOnce([
+      {
+        id: "fast-chat",
+        name: "Fast chat",
+        targetModelId: "custom-openai:custom-chat",
+      },
+    ]);
+
+    await initProviders();
+
+    await expect(listPublicModels()).resolves.toEqual([
+      expect.objectContaining({
+        id: "custom-chat",
+        provider: "custom-openai",
+      }),
+      expect.objectContaining({
+        id: "fast-chat",
+        name: "Fast chat",
+        provider: "mux",
+        type: "alias",
+        aliasTargetModelId: "custom-openai:custom-chat",
+        inputPricePer1M: 1,
+      }),
+    ]);
+  });
+
+  it("resolves an alias to its concrete target while preserving the requested model id", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "custom-openai", ciphertext: "enc" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([
+      {
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        models: [
+          {
+            modelId: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            reasoning: false,
+            toolCall: true,
+            structuredOutput: true,
+            weights: "closed",
+          },
+        ],
+      },
+    ]);
+    mockDecrypt.mockReturnValueOnce("custom-key");
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValue(null);
+    mockPrisma.modelAlias.findUnique.mockResolvedValueOnce({
+      id: "fast-chat",
+      enabled: true,
+      targetModelId: "custom-openai:custom-chat",
+    });
+
+    await initProviders();
+
+    const resolved = await resolveChatModel("fast-chat");
+
+    expect(resolved).toMatchObject({
+      kind: "direct",
+      requestedModelId: "fast-chat",
+      targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],
+    });
   });
 });
 

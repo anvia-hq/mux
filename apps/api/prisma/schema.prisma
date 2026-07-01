@@ -206,6 +206,19 @@ model FallbackTarget {
   @@index([provider, modelId])
 }
 
+model ModelAlias {
+  id            String   @id
+  name          String
+  description   String?
+  targetModelId String
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([targetModelId])
+}
+
 /// Tracks background response jobs submitted via POST /v1/responses
 /// with background: true. The primary key is the upstream response id
 /// (e.g. resp_abc123) returned by the provider, so the row can be

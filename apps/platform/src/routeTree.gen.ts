@@ -18,6 +18,7 @@ import { Route as AuthedUsersRouteImport } from './routes/_authed.users'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
 import { Route as AuthedPlaygroundRouteImport } from './routes/_authed.playground'
+import { Route as AuthedModelAliasesRouteImport } from './routes/_authed.model-aliases'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
 import { Route as AuthedFallbackGroupsRouteImport } from './routes/_authed.fallback-groups'
@@ -70,6 +71,11 @@ const AuthedProvidersRoute = AuthedProvidersRouteImport.update({
 const AuthedPlaygroundRoute = AuthedPlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedModelAliasesRoute = AuthedModelAliasesRouteImport.update({
+  id: '/model-aliases',
+  path: '/model-aliases',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedModelsRoute = AuthedModelsRouteImport.update({
@@ -128,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/docs': typeof AuthedDocsRouteWithChildren
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
+  '/model-aliases': typeof AuthedModelAliasesRoute
   '/models': typeof AuthedModelsRoute
   '/playground': typeof AuthedPlaygroundRoute
   '/providers': typeof AuthedProvidersRouteWithChildren
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/docs': typeof AuthedDocsRouteWithChildren
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
+  '/model-aliases': typeof AuthedModelAliasesRoute
   '/models': typeof AuthedModelsRoute
   '/playground': typeof AuthedPlaygroundRoute
   '/settings': typeof AuthedSettingsRoute
@@ -166,6 +174,7 @@ export interface FileRoutesById {
   '/_authed/docs': typeof AuthedDocsRouteWithChildren
   '/_authed/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/_authed/logs': typeof AuthedLogsRoute
+  '/_authed/model-aliases': typeof AuthedModelAliasesRoute
   '/_authed/models': typeof AuthedModelsRoute
   '/_authed/playground': typeof AuthedPlaygroundRoute
   '/_authed/providers': typeof AuthedProvidersRouteWithChildren
@@ -188,6 +197,7 @@ export interface FileRouteTypes {
     | '/docs'
     | '/fallback-groups'
     | '/logs'
+    | '/model-aliases'
     | '/models'
     | '/playground'
     | '/providers'
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/docs'
     | '/fallback-groups'
     | '/logs'
+    | '/model-aliases'
     | '/models'
     | '/playground'
     | '/settings'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/_authed/docs'
     | '/_authed/fallback-groups'
     | '/_authed/logs'
+    | '/_authed/model-aliases'
     | '/_authed/models'
     | '/_authed/playground'
     | '/_authed/providers'
@@ -323,6 +335,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedLogsRouteImport
       parentRoute: typeof AuthedRoute
     }
+    '/_authed/model-aliases': {
+      id: '/_authed/model-aliases'
+      path: '/model-aliases'
+      fullPath: '/model-aliases'
+      preLoaderRoute: typeof AuthedModelAliasesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
     '/_authed/fallback-groups': {
       id: '/_authed/fallback-groups'
       path: '/fallback-groups'
@@ -408,6 +427,7 @@ interface AuthedRouteChildren {
   AuthedDocsRoute: typeof AuthedDocsRouteWithChildren
   AuthedFallbackGroupsRoute: typeof AuthedFallbackGroupsRoute
   AuthedLogsRoute: typeof AuthedLogsRoute
+  AuthedModelAliasesRoute: typeof AuthedModelAliasesRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
   AuthedPlaygroundRoute: typeof AuthedPlaygroundRoute
   AuthedProvidersRoute: typeof AuthedProvidersRouteWithChildren
@@ -421,6 +441,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedDocsRoute: AuthedDocsRouteWithChildren,
   AuthedFallbackGroupsRoute: AuthedFallbackGroupsRoute,
   AuthedLogsRoute: AuthedLogsRoute,
+  AuthedModelAliasesRoute: AuthedModelAliasesRoute,
   AuthedModelsRoute: AuthedModelsRoute,
   AuthedPlaygroundRoute: AuthedPlaygroundRoute,
   AuthedProvidersRoute: AuthedProvidersRouteWithChildren,

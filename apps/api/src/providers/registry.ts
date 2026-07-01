@@ -455,6 +455,13 @@ export function toPublicModelId(provider: string, modelId: string): string {
   return `${provider}:${modelId}`;
 }
 
+export function toPublicModelIdForModel(model: Pick<Model, "id" | "provider" | "type">): string {
+  if (model.type === "alias") {
+    return model.id;
+  }
+  return toPublicModelId(model.provider, model.id);
+}
+
 export function toFallbackGroupModelId(groupId: string): string {
   return toPublicModelId(FALLBACK_GROUP_PROVIDER, groupId);
 }
@@ -569,8 +576,10 @@ export async function resolveFallbackGroupModel(
   };
 }
 
-export async function resolveChatModel(model: string): Promise<ResolvedChatModel | null> {
-  const disabledModels = await listDisabledModelKeys();
+async function resolveBaseChatModel(
+  model: string,
+  disabledModels: Set<string>,
+): Promise<ResolvedChatModel | null> {
   const direct = resolveEnabledProviderModel(model, disabledModels);
   if (direct) {
     return { kind: "direct", requestedModelId: direct.publicModelId, targets: [direct] };
@@ -589,6 +598,45 @@ export async function resolveChatModel(model: string): Promise<ResolvedChatModel
     requestedModelId: fallbackGroup.publicModelId,
     targets: fallbackGroup.targets,
   };
+}
+
+async function resolveAliasChatModel(
+  model: string,
+  disabledModels: Set<string>,
+): Promise<ResolvedChatModel | null> {
+  if (model.includes(":")) {
+    return null;
+  }
+
+  const alias = await prisma.modelAlias.findUnique({
+    where: { id: model },
+    select: { id: true, enabled: true, targetModelId: true },
+  });
+
+  if (!alias?.enabled) {
+    return null;
+  }
+
+  const resolved = await resolveBaseChatModel(alias.targetModelId, disabledModels);
+  if (!resolved) {
+    return null;
+  }
+
+  if (resolved.kind === "direct") {
+    return { ...resolved, requestedModelId: alias.id };
+  }
+
+  return { ...resolved, requestedModelId: alias.id };
+}
+
+export async function resolveChatModel(model: string): Promise<ResolvedChatModel | null> {
+  const disabledModels = await listDisabledModelKeys();
+  const base = await resolveBaseChatModel(model, disabledModels);
+  if (base) {
+    return base;
+  }
+
+  return resolveAliasChatModel(model, disabledModels);
 }
 
 export function getProvider(model: string): ProviderAdapter | null {
@@ -711,12 +759,51 @@ export async function listFallbackGroupModels(disabledModels?: Set<string>): Pro
   return models;
 }
 
+export async function listPublicNonAliasModels(disabledModels?: Set<string>): Promise<Model[]> {
+  const disabled = disabledModels ?? (await listDisabledModelKeys());
+  const providerModels = listAllModels().filter(
+    (model) => !isModelDisabled(disabled, model.provider, model.id),
+  );
+  return [...providerModels, ...(await listFallbackGroupModels(disabled))];
+}
+
+export async function listModelAliasModels(baseModels?: Model[]): Promise<Model[]> {
+  const resolvedBaseModels = baseModels ?? (await listPublicNonAliasModels());
+  const modelsByPublicId = new Map(
+    resolvedBaseModels.map((model) => [toPublicModelIdForModel(model), model]),
+  );
+  const aliases = await prisma.modelAlias.findMany({
+    where: { enabled: true },
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      targetModelId: true,
+    },
+  });
+
+  const models: Model[] = [];
+  for (const alias of aliases) {
+    const target = modelsByPublicId.get(alias.targetModelId);
+    if (!target) continue;
+
+    models.push({
+      ...target,
+      id: alias.id,
+      name: alias.name,
+      provider: FALLBACK_GROUP_PROVIDER,
+      type: "alias",
+      aliasTargetModelId: alias.targetModelId,
+    });
+  }
+
+  return models;
+}
+
 export async function listPublicModels(): Promise<Model[]> {
   const disabledModels = await listDisabledModelKeys();
-  const providerModels = listAllModels().filter(
-    (model) => !isModelDisabled(disabledModels, model.provider, model.id),
-  );
-  return [...providerModels, ...(await listFallbackGroupModels(disabledModels))];
+  const baseModels = await listPublicNonAliasModels(disabledModels);
+  return [...baseModels, ...(await listModelAliasModels(baseModels))];
 }
 
 export function listConfiguredProviders(): string[] {
