@@ -19,7 +19,7 @@ import {
   assertApiKeyCanSpend,
 } from "../keys/services";
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
-import type { ChatCompletionChunk, ChatCompletionRequest } from "../../providers/types";
+import type { ChatCompletionRequest } from "../../providers/types";
 
 /**
  * Router exposing the OpenAI-compatible chat completions endpoint.
@@ -129,14 +129,6 @@ chatRouter.post("/completions", async (c) => {
                 completionTokens = maybeUsage.completion_tokens;
             }
 
-            if (isTerminalChatCompletionChunk(chunk)) {
-              try {
-                await finalizeSuccessfulStreamLog();
-              } catch (logError) {
-                console.error("Failed to finalize request log:", logError);
-              }
-            }
-
             await streamWriter.write(`data: ${JSON.stringify(chunk)}\n\n`);
           }
 
@@ -209,7 +201,3 @@ chatRouter.post("/completions", async (c) => {
     return c.json({ error: errorMessage }, 500);
   }
 });
-
-function isTerminalChatCompletionChunk(chunk: ChatCompletionChunk): boolean {
-  return chunk.choices.some((choice) => choice.finish_reason !== null);
-}

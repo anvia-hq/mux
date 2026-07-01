@@ -351,6 +351,66 @@ describe("chat router", () => {
     );
   });
 
+  it("POST /completions logs usage from a usage-only chunk after finish_reason", async () => {
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [{ index: 0, delta: { content: "OK" }, finish_reason: null }],
+        usage: null,
+      };
+      yield {
+        id: "chunk-2",
+        model: "gpt-4",
+        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+        usage: null,
+      };
+      yield {
+        id: "chunk-3",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 11, completion_tokens: 17, total_tokens: 28 },
+      };
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      startTime: Date.now(),
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('"finish_reason":"stop"');
+    expect(text).toContain('"choices":[]');
+    expect(mockLogStreamFinal).toHaveBeenCalledTimes(1);
+    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17);
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logId: "log-1",
+        promptTokens: 11,
+        completionTokens: 17,
+        totalTokens: 28,
+        estimatedCost: 0.01,
+        statusCode: 200,
+      }),
+    );
+  });
+
   it("POST /completions 503 when request logging is unavailable", async () => {
     mockHandleChatCompletion.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
     const app = new Hono().route("/v1/chat", chatRouter);
