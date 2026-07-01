@@ -7,6 +7,7 @@ const { mockPrisma, mockTx } = vi.hoisted(() => {
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    invitationRedemption: { create: vi.fn() },
     user: { create: vi.fn() },
     apiKey: { create: vi.fn() },
   };
@@ -20,6 +21,7 @@ const { mockPrisma, mockTx } = vi.hoisted(() => {
         findUnique: vi.fn(),
         update: vi.fn(),
       },
+      appSetting: { upsert: vi.fn() },
       $transaction: vi.fn((callback) => callback(tx)),
     },
   };
@@ -27,6 +29,10 @@ const { mockPrisma, mockTx } = vi.hoisted(() => {
 
 const { mockGenerateApiKey } = vi.hoisted(() => ({
   mockGenerateApiKey: vi.fn(() => ({ raw: "mux_live_raw", hashed: "hashed-api-key" })),
+}));
+
+const { mockEncrypt } = vi.hoisted(() => ({
+  mockEncrypt: vi.fn((value: string) => `encrypted:${value}`),
 }));
 
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
@@ -41,15 +47,20 @@ vi.mock("../../../src/modules/keys/services", () => ({
   }),
   generateApiKey: mockGenerateApiKey,
 }));
+vi.mock("../../../src/modules/providers/crypto", () => ({
+  encrypt: mockEncrypt,
+}));
 
 import {
   generateInvitationCode,
   hashInvitationCode,
+  getInvitationSettings,
   InvalidInvitationCodeError,
   redeemInvitation,
   revokeInvitation,
   InvitationAlreadyRedeemedError,
   createInvitation,
+  updateInvitationSettings,
 } from "../../../src/modules/invitations/services";
 
 const baseInvitation = {
@@ -58,6 +69,8 @@ const baseInvitation = {
   codeLastFour: "ABCD",
   balanceUsd: 5,
   isActive: true,
+  maxRedemptions: 1,
+  redeemedCount: 0,
   createdBy: "admin-1",
   redeemedBy: null,
   redeemedAt: null,
@@ -83,7 +96,7 @@ describe("invitation services", () => {
   it("creates an invitation and returns the raw code once", async () => {
     mockPrisma.invitation.create.mockResolvedValueOnce(baseInvitation);
 
-    const result = await createInvitation("admin-1", 5);
+    const result = await createInvitation("admin-1", 5, 3);
 
     expect(result.code).toMatch(/^MUX-/);
     expect(result.invitation).toMatchObject({
@@ -96,6 +109,7 @@ describe("invitation services", () => {
         data: expect.objectContaining({
           createdBy: "admin-1",
           balanceUsd: 5,
+          maxRedemptions: 3,
           codeHash: expect.stringMatching(/^[0-9a-f]{64}$/),
         }),
       }),
@@ -106,6 +120,7 @@ describe("invitation services", () => {
     mockPrisma.invitation.findUnique.mockResolvedValueOnce({
       ...baseInvitation,
       redeemedAt: new Date("2026-01-02T00:00:00.000Z"),
+      redeemedCount: 1,
     });
 
     await expect(revokeInvitation("invite-1")).rejects.toBeInstanceOf(
@@ -117,6 +132,12 @@ describe("invitation services", () => {
   it("redeems an invitation into a user and API key transaction", async () => {
     mockTx.invitation.findUnique.mockResolvedValueOnce({
       ...baseInvitation,
+      creator: undefined,
+      redeemer: undefined,
+    });
+    mockTx.invitation.findUnique.mockResolvedValueOnce({
+      ...baseInvitation,
+      redeemedCount: 1,
       creator: undefined,
       redeemer: undefined,
     });
@@ -134,6 +155,7 @@ describe("invitation services", () => {
       id: "key-1",
       spendLimitUsd: 5,
     });
+    mockTx.invitationRedemption.create.mockResolvedValueOnce({});
     mockTx.invitation.update.mockResolvedValueOnce({});
 
     const result = await redeemInvitation({
@@ -145,8 +167,8 @@ describe("invitation services", () => {
 
     expect(result.apiKey).toEqual({ id: "key-1", key: "mux_live_raw", spendLimitUsd: 5 });
     expect(mockTx.invitation.updateMany).toHaveBeenCalledWith({
-      where: { id: "invite-1", isActive: true, redeemedAt: null },
-      data: { isActive: false },
+      where: { id: "invite-1", isActive: true, redeemedCount: { lt: 1 } },
+      data: { redeemedCount: { increment: 1 } },
     });
     expect(mockTx.user.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -161,6 +183,7 @@ describe("invitation services", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           key: "hashed-api-key",
+          keyCiphertext: "encrypted:mux_live_raw",
           spendLimitUsd: 5,
           allowAllModels: false,
           includeFutureModels: false,
@@ -169,6 +192,21 @@ describe("invitation services", () => {
         }),
       }),
     );
+    expect(mockTx.invitationRedemption.create).toHaveBeenCalledWith({
+      data: {
+        invitationId: "invite-1",
+        userId: "user-1",
+        apiKeyId: "key-1",
+      },
+    });
+    expect(mockTx.invitation.update).toHaveBeenCalledWith({
+      where: { id: "invite-1" },
+      data: {
+        isActive: false,
+        redeemedBy: "user-1",
+        redeemedAt: expect.any(Date),
+      },
+    });
   });
 
   it("rejects inactive, missing, or already redeemed codes", async () => {
@@ -182,5 +220,49 @@ describe("invitation services", () => {
         name: null,
       }),
     ).rejects.toBeInstanceOf(InvalidInvitationCodeError);
+  });
+
+  it("rejects codes that reached their redemption limit", async () => {
+    mockTx.invitation.findUnique.mockResolvedValueOnce({
+      ...baseInvitation,
+      redeemedCount: 1,
+      creator: undefined,
+      redeemer: undefined,
+    });
+
+    await expect(
+      redeemInvitation({
+        invitationCode: "used",
+        email: "new@test.com",
+        password: "password123",
+        name: null,
+      }),
+    ).rejects.toBeInstanceOf(InvalidInvitationCodeError);
+
+    expect(mockTx.invitation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("reads and updates invitation settings", async () => {
+    mockPrisma.appSetting.upsert
+      .mockResolvedValueOnce({ inviteRegistrationEnabled: true })
+      .mockResolvedValueOnce({ inviteRegistrationEnabled: false });
+
+    await expect(getInvitationSettings()).resolves.toEqual({
+      inviteRegistrationEnabled: true,
+    });
+    await expect(updateInvitationSettings({ inviteRegistrationEnabled: false })).resolves.toEqual({
+      inviteRegistrationEnabled: false,
+    });
+
+    expect(mockPrisma.appSetting.upsert).toHaveBeenNthCalledWith(1, {
+      where: { id: "default" },
+      update: {},
+      create: { id: "default" },
+    });
+    expect(mockPrisma.appSetting.upsert).toHaveBeenNthCalledWith(2, {
+      where: { id: "default" },
+      update: { inviteRegistrationEnabled: false },
+      create: { id: "default", inviteRegistrationEnabled: false },
+    });
   });
 });

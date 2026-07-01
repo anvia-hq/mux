@@ -20,8 +20,10 @@ import { apiFetch, ApiError } from "../../../src/lib/api-client";
 import {
   isForbiddenError,
   useCreateInvitationMutation,
+  useInvitationSettingsQuery,
   useInvitationsQuery,
   useRevokeInvitationMutation,
+  useUpdateInvitationSettingsMutation,
 } from "../../../src/modules/invitations/hooks";
 
 const wrapper = ({ children }: { children: React.ReactNode }) => {
@@ -47,10 +49,10 @@ describe("invitations hooks", () => {
     vi.mocked(apiFetch).mockResolvedValueOnce({ invitation: { id: "invite-1" }, code: "MUX" });
     const created = renderHook(() => useCreateInvitationMutation(), { wrapper });
 
-    await act(() => created.result.current.mutateAsync({ balanceUsd: 5 }));
+    await act(() => created.result.current.mutateAsync({ balanceUsd: 5, maxRedemptions: 3 }));
     expect(apiFetch).toHaveBeenCalledWith("/invitations", {
       method: "POST",
-      body: { balanceUsd: 5 },
+      body: { balanceUsd: 5, maxRedemptions: 3 },
     });
 
     vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true });
@@ -58,6 +60,24 @@ describe("invitations hooks", () => {
 
     await act(() => revoked.result.current.mutateAsync("invite-1"));
     expect(apiFetch).toHaveBeenCalledWith("/invitations/invite-1", { method: "DELETE" });
+  });
+
+  it("gets and updates invitation settings", async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce({ inviteRegistrationEnabled: true });
+
+    const settings = renderHook(() => useInvitationSettingsQuery(), { wrapper });
+
+    await waitFor(() => expect(settings.result.current.isSuccess).toBe(true));
+    expect(apiFetch).toHaveBeenCalledWith("/invitations/settings");
+
+    vi.mocked(apiFetch).mockResolvedValueOnce({ inviteRegistrationEnabled: false });
+    const updated = renderHook(() => useUpdateInvitationSettingsMutation(), { wrapper });
+
+    await act(() => updated.result.current.mutateAsync({ inviteRegistrationEnabled: false }));
+    expect(apiFetch).toHaveBeenCalledWith("/invitations/settings", {
+      method: "PATCH",
+      body: { inviteRegistrationEnabled: false },
+    });
   });
 
   it("recognizes forbidden API errors", () => {

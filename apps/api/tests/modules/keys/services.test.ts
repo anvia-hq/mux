@@ -33,6 +33,11 @@ const { mockListPublicModels } = vi.hoisted(() => ({
   mockListPublicModels: vi.fn(),
 }));
 
+const { mockDecrypt, mockEncrypt } = vi.hoisted(() => ({
+  mockDecrypt: vi.fn((value: string) => value.replace(/^encrypted:/, "")),
+  mockEncrypt: vi.fn((value: string) => `encrypted:${value}`),
+}));
+
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../../src/utils/cache", () => ({
   cacheDelete: mockCacheDelete,
@@ -43,6 +48,10 @@ vi.mock("../../../src/utils/redis", () => ({ redis: mockRedis }));
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+}));
+vi.mock("../../../src/modules/providers/crypto", () => ({
+  decrypt: mockDecrypt,
+  encrypt: mockEncrypt,
 }));
 
 import {
@@ -56,6 +65,10 @@ import {
   generateApiKey,
   getApiKeySpentUsd,
   listApiKeys,
+  revealApiKey,
+  ApiKeyNotFoundError,
+  ApiKeyRevealUnavailableError,
+  rotateApiKey,
   revokeApiKey,
   updateApiKeyModelAccess,
   validateApiKey,
@@ -89,6 +102,7 @@ describe("keys services", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             spendLimitUsd: 25,
+            keyCiphertext: expect.stringMatching(/^encrypted:mux_live_/),
             allowAllModels: false,
             includeFutureModels: false,
             allowedModelIds: ["openai:gpt-4o", "mux:fast"],
@@ -224,6 +238,7 @@ describe("keys services", () => {
           allowAllModels: false,
           includeFutureModels: false,
           allowedModelIds: ["openai:gpt-4o"],
+          keyCiphertext: "encrypted:mux_live_saved",
           createdAt: new Date(),
           creator: { email: "a@b.com" },
         },
@@ -238,10 +253,144 @@ describe("keys services", () => {
           allowAllModels: false,
           includeFutureModels: false,
           allowedModelIds: ["openai:gpt-4o"],
+          canReveal: true,
           spentUsd: 2.5,
           remainingUsd: 7.5,
         }),
       );
+    });
+
+    it("filters keys by owner", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([]);
+
+      await listApiKeys({ ownerUserId: "user-1" });
+
+      expect(mockPrisma.apiKey.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { createdBy: "user-1" },
+        }),
+      );
+    });
+  });
+
+  describe("revealApiKey", () => {
+    it("reveals encrypted keys to the owner", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        keyCiphertext: "encrypted:mux_live_saved",
+      });
+
+      await expect(
+        revealApiKey({ id: "k1", viewer: { id: "user-1", role: "USER" } }),
+      ).resolves.toEqual({ key: "mux_live_saved" });
+    });
+
+    it("reveals encrypted keys to admins", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        keyCiphertext: "encrypted:mux_live_saved",
+      });
+
+      await expect(
+        revealApiKey({ id: "k1", viewer: { id: "admin-1", role: "ADMIN" } }),
+      ).resolves.toEqual({ key: "mux_live_saved" });
+    });
+
+    it("rejects non-owner users", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        keyCiphertext: "encrypted:mux_live_saved",
+      });
+
+      await expect(
+        revealApiKey({ id: "k1", viewer: { id: "user-2", role: "USER" } }),
+      ).rejects.toBeInstanceOf(ApiKeyNotFoundError);
+    });
+
+    it("rejects revoked or legacy keys", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: false,
+        keyCiphertext: "encrypted:mux_live_saved",
+      });
+
+      await expect(
+        revealApiKey({ id: "k1", viewer: { id: "user-1", role: "USER" } }),
+      ).rejects.toBeInstanceOf(ApiKeyRevealUnavailableError);
+
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        keyCiphertext: null,
+      });
+
+      await expect(
+        revealApiKey({ id: "k1", viewer: { id: "user-1", role: "USER" } }),
+      ).rejects.toBeInstanceOf(ApiKeyRevealUnavailableError);
+    });
+  });
+
+  describe("rotateApiKey", () => {
+    it("regenerates active keys for the owner", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        key: "old-hash",
+      });
+      mockPrisma.apiKey.update.mockResolvedValueOnce({ id: "k1" });
+
+      const result = await rotateApiKey({ id: "k1", viewer: { id: "user-1", role: "USER" } });
+
+      expect(result.key).toMatch(/^mux_live_/);
+      expect(mockPrisma.apiKey.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "k1" },
+          data: expect.objectContaining({
+            key: expect.stringMatching(/^[0-9a-f]{64}$/),
+            keyCiphertext: expect.stringMatching(/^encrypted:mux_live_/),
+          }),
+        }),
+      );
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:old-hash");
+    });
+
+    it("regenerates active keys for admins", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        key: "old-hash",
+      });
+      mockPrisma.apiKey.update.mockResolvedValueOnce({ id: "k1" });
+
+      await expect(
+        rotateApiKey({ id: "k1", viewer: { id: "admin-1", role: "ADMIN" } }),
+      ).resolves.toEqual({ key: expect.stringMatching(/^mux_live_/) });
+    });
+
+    it("rejects non-owner users and revoked keys", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: true,
+        key: "old-hash",
+      });
+
+      await expect(
+        rotateApiKey({ id: "k1", viewer: { id: "user-2", role: "USER" } }),
+      ).rejects.toBeInstanceOf(ApiKeyNotFoundError);
+
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        isActive: false,
+        key: "old-hash",
+      });
+
+      await expect(
+        rotateApiKey({ id: "k1", viewer: { id: "user-1", role: "USER" } }),
+      ).rejects.toBeInstanceOf(ApiKeyRevealUnavailableError);
+      expect(mockPrisma.apiKey.update).not.toHaveBeenCalled();
     });
   });
 

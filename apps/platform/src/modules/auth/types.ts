@@ -31,3 +31,8 @@ export type RegisterResponse = AuthResponse & {
     spendLimitUsd: number | null;
   };
 };
+
+export type OnboardingStatus = {
+  needsOnboarding: boolean;
+  inviteRegistrationEnabled: boolean;
+};

@@ -4,7 +4,10 @@ type RegisterRouteConfig = {
   beforeLoad: (args: {
     context: {
       queryClient: {
-        ensureQueryData: (options: unknown) => Promise<{ needsOnboarding: boolean }>;
+        ensureQueryData: (options: unknown) => Promise<{
+          needsOnboarding: boolean;
+          inviteRegistrationEnabled: boolean;
+        }>;
       };
     };
   }) => Promise<void>;
@@ -47,7 +50,10 @@ vi.mock("../../src/modules/auth/components/register-form", () => ({
 import "../../src/routes/register";
 
 async function runBeforeLoad(needsOnboarding: boolean) {
-  const ensureQueryData = vi.fn().mockResolvedValue({ needsOnboarding });
+  const ensureQueryData = vi.fn().mockResolvedValue({
+    needsOnboarding,
+    inviteRegistrationEnabled: true,
+  });
 
   let thrown: unknown;
   try {

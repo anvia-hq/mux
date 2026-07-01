@@ -1,6 +1,12 @@
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import { Card, CardDescription, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +18,7 @@ import {
 } from "@repo/ui/components/dialog";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
+import { Switch } from "@repo/ui/components/switch";
 import {
   Table,
   TableBody,
@@ -23,10 +30,13 @@ import {
 import { Add01Icon, Copy01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useState } from "react";
+import { useCopyFeedback } from "../../lib/use-copy-feedback";
 import {
   useCreateInvitationMutation,
+  useInvitationSettingsQuery,
   useInvitationsQuery,
   useRevokeInvitationMutation,
+  useUpdateInvitationSettingsMutation,
   type Invitation,
 } from "../invitations/hooks";
 import { isForbiddenError, useUsersQuery, type DashboardUser } from "./hooks";
@@ -34,9 +44,13 @@ import { isForbiddenError, useUsersQuery, type DashboardUser } from "./hooks";
 export function UsersPage() {
   const query = useUsersQuery();
   const invitationsQuery = useInvitationsQuery();
+  const invitationSettingsQuery = useInvitationSettingsQuery();
   const createInvitation = useCreateInvitationMutation();
   const revokeInvitation = useRevokeInvitationMutation();
+  const updateInvitationSettings = useUpdateInvitationSettingsMutation();
+  const { copiedId, copy } = useCopyFeedback();
   const [balanceUsd, setBalanceUsd] = useState("");
+  const [maxRedemptions, setMaxRedemptions] = useState("1");
   const [revealedCode, setRevealedCode] = useState<string | null>(null);
 
   if (isForbiddenError(query.error)) {
@@ -52,9 +66,11 @@ export function UsersPage() {
 
   const users = query.data?.users ?? [];
   const invitations = invitationsQuery.data?.invitations ?? [];
+  const inviteRegistrationEnabled = invitationSettingsQuery.data?.inviteRegistrationEnabled ?? true;
 
   function resetInviteForm() {
     setBalanceUsd("");
+    setMaxRedemptions("1");
     setRevealedCode(null);
     createInvitation.reset();
   }
@@ -97,10 +113,17 @@ export function UsersPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => navigator.clipboard.writeText(revealedCode)}
+                    onClick={() =>
+                      copy({
+                        value: revealedCode,
+                        copiedId: invitationCopyId(revealedCode),
+                        successMessage: "Invite code copied",
+                        errorMessage: "Could not copy invite code",
+                      })
+                    }
                   >
                     <HugeiconsIcon icon={Copy01Icon} className="size-4" />
-                    Copy
+                    {copiedId === invitationCopyId(revealedCode) ? "Copied" : "Copy"}
                   </Button>
                   <Button type="button" onClick={() => setRevealedCode(null)}>
                     Done
@@ -112,6 +135,9 @@ export function UsersPage() {
                 onSubmit={(event) => {
                   event.preventDefault();
                   const parsedBalance = balanceUsd.trim() ? Number(balanceUsd.trim()) : null;
+                  const parsedMaxRedemptions = maxRedemptions.trim()
+                    ? Number(maxRedemptions.trim())
+                    : 1;
 
                   if (
                     parsedBalance !== null &&
@@ -120,12 +146,17 @@ export function UsersPage() {
                     return;
                   }
 
+                  if (!Number.isInteger(parsedMaxRedemptions) || parsedMaxRedemptions < 1) {
+                    return;
+                  }
+
                   createInvitation.mutate(
-                    { balanceUsd: parsedBalance },
+                    { balanceUsd: parsedBalance, maxRedemptions: parsedMaxRedemptions },
                     {
                       onSuccess: (data) => {
                         setRevealedCode(data.code);
                         setBalanceUsd("");
+                        setMaxRedemptions("1");
                       },
                     },
                   );
@@ -134,7 +165,7 @@ export function UsersPage() {
                 <DialogHeader>
                   <DialogTitle>Create invite</DialogTitle>
                   <DialogDescription>
-                    The balance becomes the new user&apos;s first API key limit.
+                    The balance becomes each new user&apos;s first API key limit.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-2 py-2">
@@ -147,6 +178,15 @@ export function UsersPage() {
                     value={balanceUsd}
                     onChange={(event) => setBalanceUsd(event.target.value)}
                     placeholder="Unlimited"
+                  />
+                  <Label htmlFor="invite-max-redemptions">Max redemptions</Label>
+                  <Input
+                    id="invite-max-redemptions"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={maxRedemptions}
+                    onChange={(event) => setMaxRedemptions(event.target.value)}
                   />
                   {createInvitation.error ? (
                     <p className="text-sm text-destructive">{createInvitation.error.message}</p>
@@ -162,6 +202,31 @@ export function UsersPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div className="min-w-0">
+            <CardTitle className="text-sm font-medium">Invite-code registration</CardTitle>
+            <CardDescription>
+              Control whether invitation codes can create new user accounts.
+            </CardDescription>
+          </div>
+          <Switch
+            id="invite-registration-enabled"
+            aria-label="Enable invite-code registration"
+            checked={inviteRegistrationEnabled}
+            disabled={invitationSettingsQuery.isLoading || updateInvitationSettings.isPending}
+            onCheckedChange={(checked) =>
+              updateInvitationSettings.mutate({ inviteRegistrationEnabled: checked })
+            }
+          />
+        </CardHeader>
+        {updateInvitationSettings.error ? (
+          <CardContent>
+            <p className="text-sm text-destructive">{updateInvitationSettings.error.message}</p>
+          </CardContent>
+        ) : null}
+      </Card>
 
       <section className="grid min-w-0 gap-3">
         <h2 className="text-sm font-medium">{formatUserCount(users.length)}</h2>
@@ -219,7 +284,8 @@ export function UsersPage() {
                   <TableHead>Code</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Balance</TableHead>
-                  <TableHead>Redeemed by</TableHead>
+                  <TableHead>Redemptions</TableHead>
+                  <TableHead>Latest redeemer</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -235,6 +301,9 @@ export function UsersPage() {
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {formatInvitationBalance(invitation.balanceUsd)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatInvitationUsage(invitation)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {invitation.redeemer?.email ?? "Not redeemed"}
@@ -288,4 +357,12 @@ function formatInvitationStatus(status: Invitation["status"]) {
 
 function formatInvitationBalance(balanceUsd: number | null) {
   return balanceUsd === null ? "Unlimited" : `$${balanceUsd.toFixed(2)}`;
+}
+
+function formatInvitationUsage(invitation: Invitation) {
+  return `${invitation.redeemedCount} / ${invitation.maxRedemptions}`;
+}
+
+function invitationCopyId(code: string) {
+  return `invitation:${code}`;
 }

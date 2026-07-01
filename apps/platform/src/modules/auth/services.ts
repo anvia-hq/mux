@@ -1,6 +1,13 @@
 import { apiFetch, UnauthorizedError } from "../../lib/api-client";
 import { authApiPaths } from "./schema";
-import type { AuthResponse, AuthUser, LoginInput, RegisterInput, RegisterResponse } from "./types";
+import type {
+  AuthResponse,
+  AuthUser,
+  LoginInput,
+  OnboardingStatus,
+  RegisterInput,
+  RegisterResponse,
+} from "./types";
 
 export { UnauthorizedError };
 
@@ -30,8 +37,8 @@ export async function logout(): Promise<void> {
   await apiFetch<{ ok: true }>(authApiPaths.logout, { method: "POST" });
 }
 
-export async function onboardingStatus(): Promise<{ needsOnboarding: boolean }> {
-  return apiFetch<{ needsOnboarding: boolean }>("/auth/onboarding-status");
+export async function onboardingStatus(): Promise<OnboardingStatus> {
+  return apiFetch<OnboardingStatus>("/auth/onboarding-status");
 }
 
 export async function onboard(input: {

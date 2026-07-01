@@ -31,13 +31,18 @@ import {
 } from "@repo/ui/components/table";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowDown01Icon, Copy01Icon, Edit02Icon, Key01Icon } from "@hugeicons/core-free-icons";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useCopyFeedback } from "../../lib/use-copy-feedback";
+import { meQueryOptions } from "../auth/hooks/use-auth";
 import { useModelsQuery, type Model } from "../models/hooks";
 import {
   isForbiddenError,
   useApiKeysQuery,
   useCreateApiKeyMutation,
+  useRevealApiKeyMutation,
   useRevokeApiKeyMutation,
+  useRotateApiKeyMutation,
   useUpdateApiKeyModelAccessMutation,
   type ApiKey,
   type UpdateApiKeyModelAccessInput,
@@ -53,10 +58,17 @@ const modelAccessLabels: Record<ModelAccessMode, string> = {
 
 export function ApiKeysPage() {
   const query = useApiKeysQuery();
+  const user = useQuery(meQueryOptions).data;
   const create = useCreateApiKeyMutation();
+  const reveal = useRevealApiKeyMutation();
   const revoke = useRevokeApiKeyMutation();
+  const rotate = useRotateApiKeyMutation();
   const updateModelAccess = useUpdateApiKeyModelAccessMutation();
-  const [revealed, setRevealed] = useState<{ id: string; key: string } | null>(null);
+  const { copiedId, copy } = useCopyFeedback();
+  const [createdKey, setCreatedKey] = useState<{ id: string; key: string } | null>(null);
+  const [revealedKey, setRevealedKey] = useState<{ id: string; name: string; key: string } | null>(
+    null,
+  );
   const [name, setName] = useState("");
   const [spendLimitUsd, setSpendLimitUsd] = useState("");
   const [modelAccessMode, setModelAccessMode] = useState<ModelAccessMode>("snapshot");
@@ -71,6 +83,7 @@ export function ApiKeysPage() {
       modelAccessMode === "filtered" || (Boolean(editingKey) && editModelAccessMode === "filtered"),
   });
   const models = modelsQuery.data?.data ?? [];
+  const isAdmin = user?.role === "ADMIN";
   const filteredModels = useMemo(
     () => models.filter((model) => matchesModelSearch(model, modelSearch)),
     [models, modelSearch],
@@ -123,6 +136,33 @@ export function ApiKeysPage() {
     };
   }
 
+  async function showCopiedKey(key: ApiKey, rawKey: string, successMessage: string) {
+    setRevealedKey({ id: key.id, name: key.name, key: rawKey });
+    await copy({
+      value: rawKey,
+      copiedId: revealedApiKeyCopyId(key.id),
+      successMessage,
+      errorMessage: "Could not copy API key",
+    });
+  }
+
+  function handleKeyCopy(key: ApiKey) {
+    if (key.canReveal) {
+      reveal.mutate(key.id, {
+        onSuccess: (data) => {
+          void showCopiedKey(key, data.key, "API key copied");
+        },
+      });
+      return;
+    }
+
+    rotate.mutate(key.id, {
+      onSuccess: (data) => {
+        void showCopiedKey(key, data.key, "API key regenerated and copied");
+      },
+    });
+  }
+
   if (isForbiddenError(query.error)) {
     return (
       <Card>
@@ -142,43 +182,55 @@ export function ApiKeysPage() {
         <div>
           <h1 className="text-2xl font-semibold">API keys</h1>
           <p className="text-sm text-muted-foreground">
-            Create keys for internal services to call the gateway. Each key is shown once.
+            {isAdmin
+              ? "Create and manage keys for internal services to call the gateway."
+              : "View and copy your active API keys for gateway access."}
           </p>
         </div>
         <Dialog
           onOpenChange={(open) => {
             if (!open) {
-              setRevealed(null);
+              setCreatedKey(null);
               resetCreateForm();
             }
           }}
         >
-          <DialogTrigger asChild>
-            <Button>
-              <HugeiconsIcon icon={Key01Icon} className="size-4" />
-              New API key
-            </Button>
-          </DialogTrigger>
+          {isAdmin ? (
+            <DialogTrigger asChild>
+              <Button>
+                <HugeiconsIcon icon={Key01Icon} className="size-4" />
+                New API key
+              </Button>
+            </DialogTrigger>
+          ) : null}
           <DialogContent className="sm:max-w-2xl">
-            {revealed ? (
+            {createdKey ? (
               <>
                 <DialogHeader>
                   <DialogTitle>Save this key</DialogTitle>
                   <DialogDescription>
-                    This is the only time the full key will be shown. Copy it now.
+                    This key is encrypted at rest and can be revealed again by its owner.
                   </DialogDescription>
                 </DialogHeader>
                 <div className="rounded-md border bg-muted/30 p-3">
-                  <code className="block break-all text-xs">{revealed.key}</code>
+                  <code className="block break-all text-xs">{createdKey.key}</code>
                 </div>
                 <DialogFooter>
                   <Button
                     variant="outline"
-                    onClick={() => navigator.clipboard.writeText(revealed.key)}
+                    onClick={() =>
+                      copy({
+                        value: createdKey.key,
+                        copiedId: createdApiKeyCopyId(createdKey.id),
+                        successMessage: "API key copied",
+                        errorMessage: "Could not copy API key",
+                      })
+                    }
                   >
-                    <HugeiconsIcon icon={Copy01Icon} className="size-4" /> Copy
+                    <HugeiconsIcon icon={Copy01Icon} className="size-4" />
+                    {copiedId === createdApiKeyCopyId(createdKey.id) ? "Copied" : "Copy"}
                   </Button>
-                  <Button onClick={() => setRevealed(null)}>Done</Button>
+                  <Button onClick={() => setCreatedKey(null)}>Done</Button>
                 </DialogFooter>
               </>
             ) : (
@@ -206,7 +258,7 @@ export function ApiKeysPage() {
                     },
                     {
                       onSuccess: (data) => {
-                        setRevealed({ id: data.id, key: data.key });
+                        setCreatedKey({ id: data.id, key: data.key });
                         resetCreateForm();
                       },
                     },
@@ -366,6 +418,36 @@ export function ApiKeysPage() {
         </Dialog>
       </div>
 
+      <Dialog open={Boolean(revealedKey)} onOpenChange={(open) => !open && setRevealedKey(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy API key</DialogTitle>
+            <DialogDescription>{revealedKey?.name ?? "API key"}</DialogDescription>
+          </DialogHeader>
+          <div className="rounded-md border bg-muted/30 p-3">
+            <code className="block break-all text-xs">{revealedKey?.key}</code>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() =>
+                revealedKey &&
+                copy({
+                  value: revealedKey.key,
+                  copiedId: revealedApiKeyCopyId(revealedKey.id),
+                  successMessage: "API key copied",
+                  errorMessage: "Could not copy API key",
+                })
+              }
+            >
+              <HugeiconsIcon icon={Copy01Icon} className="size-4" />
+              {revealedKey && copiedId === revealedApiKeyCopyId(revealedKey.id) ? "Copied" : "Copy"}
+            </Button>
+            <Button onClick={() => setRevealedKey(null)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(editingKey)} onOpenChange={(open) => !open && closeEditModelAccess()}>
         <DialogContent className="sm:max-w-2xl">
           <form
@@ -520,7 +602,9 @@ export function ApiKeysPage() {
         {query.isLoading ? (
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : keys.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No API keys yet. Create one above.</p>
+          <p className="text-sm text-muted-foreground">
+            {isAdmin ? "No API keys yet. Create one above." : "No API keys are assigned to you."}
+          </p>
         ) : (
           <Card className="gap-0 overflow-hidden p-0">
             <Table className="min-w-full">
@@ -559,20 +643,33 @@ export function ApiKeysPage() {
                         <Button
                           size="sm"
                           variant="outline"
-                          disabled={!key.isActive || updateModelAccess.isPending}
-                          onClick={() => openEditModelAccess(key)}
+                          disabled={!key.isActive || reveal.isPending || rotate.isPending}
+                          onClick={() => handleKeyCopy(key)}
                         >
-                          <HugeiconsIcon icon={Edit02Icon} className="size-4" />
-                          Models
+                          <HugeiconsIcon icon={Copy01Icon} className="size-4" />
+                          {formatKeyCopyAction(key, copiedId)}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={!key.isActive || revoke.isPending}
-                          onClick={() => revoke.mutate(key.id)}
-                        >
-                          Revoke
-                        </Button>
+                        {isAdmin ? (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!key.isActive || updateModelAccess.isPending}
+                              onClick={() => openEditModelAccess(key)}
+                            >
+                              <HugeiconsIcon icon={Edit02Icon} className="size-4" />
+                              Models
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={!key.isActive || revoke.isPending}
+                              onClick={() => revoke.mutate(key.id)}
+                            >
+                              Revoke
+                            </Button>
+                          </>
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -637,4 +734,20 @@ function toModelAccessInput(
   return selectedModelIds.length > 0
     ? { mode: "selected", allowedModelIds: selectedModelIds }
     : null;
+}
+
+function createdApiKeyCopyId(id: string) {
+  return `api-key-created:${id}`;
+}
+
+function revealedApiKeyCopyId(id: string) {
+  return `api-key-revealed:${id}`;
+}
+
+function formatKeyCopyAction(key: ApiKey, copiedId: string | null) {
+  if (copiedId === revealedApiKeyCopyId(key.id)) {
+    return "Copied";
+  }
+
+  return key.canReveal ? "Copy" : "Regenerate";
 }

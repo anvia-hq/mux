@@ -11,6 +11,7 @@ export type ApiKey = {
   allowAllModels: boolean;
   includeFutureModels: boolean;
   allowedModelIds: string[] | null;
+  canReveal: boolean;
   createdAt: string;
   creator: { email: string };
 };
@@ -60,6 +61,21 @@ export function useRevokeApiKeyMutation() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => apiFetch<{ ok: true }>(`/api-keys/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey }),
+  });
+}
+
+export function useRevealApiKeyMutation() {
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<{ key: string }>(`/api-keys/${id}/reveal`),
+  });
+}
+
+export function useRotateApiKeyMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiFetch<{ key: string }>(`/api-keys/${id}/rotate`, { method: "POST" }),
     onSuccess: () => qc.invalidateQueries({ queryKey }),
   });
 }

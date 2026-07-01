@@ -10,6 +10,8 @@ export type InvitationSummary = {
   codeLastFour: string;
   balanceUsd: number | null;
   isActive: boolean;
+  maxRedemptions: number;
+  redeemedCount: number;
   status: InvitationStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -21,4 +23,8 @@ export type InvitationSummary = {
 export type InvitationCreateResponse = {
   invitation: InvitationSummary;
   code: string;
+};
+
+export type InvitationSettings = {
+  inviteRegistrationEnabled: boolean;
 };

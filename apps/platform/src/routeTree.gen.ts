@@ -24,6 +24,8 @@ import { Route as AuthedFallbackGroupsRouteImport } from './routes/_authed.fallb
 import { Route as AuthedDocsRouteImport } from './routes/_authed.docs'
 import { Route as AuthedApiKeysRouteImport } from './routes/_authed.api-keys'
 import { Route as AuthedProvidersIndexRouteImport } from './routes/_authed.providers.index'
+import { Route as AuthedDocsServicesRouteImport } from './routes/_authed.docs.services'
+import { Route as AuthedDocsCodingHarnessRouteImport } from './routes/_authed.docs.coding-harness'
 import { Route as AuthedProvidersNameModelsRouteImport } from './routes/_authed.providers.$name.models'
 
 const RegisterRoute = RegisterRouteImport.update({
@@ -100,6 +102,16 @@ const AuthedProvidersIndexRoute = AuthedProvidersIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthedProvidersRoute,
 } as any)
+const AuthedDocsServicesRoute = AuthedDocsServicesRouteImport.update({
+  id: '/services',
+  path: '/services',
+  getParentRoute: () => AuthedDocsRoute,
+} as any)
+const AuthedDocsCodingHarnessRoute = AuthedDocsCodingHarnessRouteImport.update({
+  id: '/coding-harness',
+  path: '/coding-harness',
+  getParentRoute: () => AuthedDocsRoute,
+} as any)
 const AuthedProvidersNameModelsRoute =
   AuthedProvidersNameModelsRouteImport.update({
     id: '/$name/models',
@@ -113,7 +125,7 @@ export interface FileRoutesByFullPath {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
-  '/docs': typeof AuthedDocsRoute
+  '/docs': typeof AuthedDocsRouteWithChildren
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
@@ -121,6 +133,8 @@ export interface FileRoutesByFullPath {
   '/providers': typeof AuthedProvidersRouteWithChildren
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
+  '/docs/coding-harness': typeof AuthedDocsCodingHarnessRoute
+  '/docs/services': typeof AuthedDocsServicesRoute
   '/providers/': typeof AuthedProvidersIndexRoute
   '/providers/$name/models': typeof AuthedProvidersNameModelsRoute
 }
@@ -129,7 +143,7 @@ export interface FileRoutesByTo {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/api-keys': typeof AuthedApiKeysRoute
-  '/docs': typeof AuthedDocsRoute
+  '/docs': typeof AuthedDocsRouteWithChildren
   '/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/logs': typeof AuthedLogsRoute
   '/models': typeof AuthedModelsRoute
@@ -137,6 +151,8 @@ export interface FileRoutesByTo {
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
   '/': typeof AuthedIndexRoute
+  '/docs/coding-harness': typeof AuthedDocsCodingHarnessRoute
+  '/docs/services': typeof AuthedDocsServicesRoute
   '/providers': typeof AuthedProvidersIndexRoute
   '/providers/$name/models': typeof AuthedProvidersNameModelsRoute
 }
@@ -147,7 +163,7 @@ export interface FileRoutesById {
   '/onboard': typeof OnboardRoute
   '/register': typeof RegisterRoute
   '/_authed/api-keys': typeof AuthedApiKeysRoute
-  '/_authed/docs': typeof AuthedDocsRoute
+  '/_authed/docs': typeof AuthedDocsRouteWithChildren
   '/_authed/fallback-groups': typeof AuthedFallbackGroupsRoute
   '/_authed/logs': typeof AuthedLogsRoute
   '/_authed/models': typeof AuthedModelsRoute
@@ -156,6 +172,8 @@ export interface FileRoutesById {
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/users': typeof AuthedUsersRoute
   '/_authed/': typeof AuthedIndexRoute
+  '/_authed/docs/coding-harness': typeof AuthedDocsCodingHarnessRoute
+  '/_authed/docs/services': typeof AuthedDocsServicesRoute
   '/_authed/providers/': typeof AuthedProvidersIndexRoute
   '/_authed/providers/$name/models': typeof AuthedProvidersNameModelsRoute
 }
@@ -175,6 +193,8 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/users'
+    | '/docs/coding-harness'
+    | '/docs/services'
     | '/providers/'
     | '/providers/$name/models'
   fileRoutesByTo: FileRoutesByTo
@@ -191,6 +211,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/users'
     | '/'
+    | '/docs/coding-harness'
+    | '/docs/services'
     | '/providers'
     | '/providers/$name/models'
   id:
@@ -209,6 +231,8 @@ export interface FileRouteTypes {
     | '/_authed/settings'
     | '/_authed/users'
     | '/_authed/'
+    | '/_authed/docs/coding-harness'
+    | '/_authed/docs/services'
     | '/_authed/providers/'
     | '/_authed/providers/$name/models'
   fileRoutesById: FileRoutesById
@@ -327,6 +351,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedProvidersIndexRouteImport
       parentRoute: typeof AuthedProvidersRoute
     }
+    '/_authed/docs/services': {
+      id: '/_authed/docs/services'
+      path: '/services'
+      fullPath: '/docs/services'
+      preLoaderRoute: typeof AuthedDocsServicesRouteImport
+      parentRoute: typeof AuthedDocsRoute
+    }
+    '/_authed/docs/coding-harness': {
+      id: '/_authed/docs/coding-harness'
+      path: '/coding-harness'
+      fullPath: '/docs/coding-harness'
+      preLoaderRoute: typeof AuthedDocsCodingHarnessRouteImport
+      parentRoute: typeof AuthedDocsRoute
+    }
     '/_authed/providers/$name/models': {
       id: '/_authed/providers/$name/models'
       path: '/$name/models'
@@ -336,6 +374,20 @@ declare module '@tanstack/react-router' {
     }
   }
 }
+
+interface AuthedDocsRouteChildren {
+  AuthedDocsCodingHarnessRoute: typeof AuthedDocsCodingHarnessRoute
+  AuthedDocsServicesRoute: typeof AuthedDocsServicesRoute
+}
+
+const AuthedDocsRouteChildren: AuthedDocsRouteChildren = {
+  AuthedDocsCodingHarnessRoute: AuthedDocsCodingHarnessRoute,
+  AuthedDocsServicesRoute: AuthedDocsServicesRoute,
+}
+
+const AuthedDocsRouteWithChildren = AuthedDocsRoute._addFileChildren(
+  AuthedDocsRouteChildren,
+)
 
 interface AuthedProvidersRouteChildren {
   AuthedProvidersIndexRoute: typeof AuthedProvidersIndexRoute
@@ -353,7 +405,7 @@ const AuthedProvidersRouteWithChildren = AuthedProvidersRoute._addFileChildren(
 
 interface AuthedRouteChildren {
   AuthedApiKeysRoute: typeof AuthedApiKeysRoute
-  AuthedDocsRoute: typeof AuthedDocsRoute
+  AuthedDocsRoute: typeof AuthedDocsRouteWithChildren
   AuthedFallbackGroupsRoute: typeof AuthedFallbackGroupsRoute
   AuthedLogsRoute: typeof AuthedLogsRoute
   AuthedModelsRoute: typeof AuthedModelsRoute
@@ -366,7 +418,7 @@ interface AuthedRouteChildren {
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedApiKeysRoute: AuthedApiKeysRoute,
-  AuthedDocsRoute: AuthedDocsRoute,
+  AuthedDocsRoute: AuthedDocsRouteWithChildren,
   AuthedFallbackGroupsRoute: AuthedFallbackGroupsRoute,
   AuthedLogsRoute: AuthedLogsRoute,
   AuthedModelsRoute: AuthedModelsRoute,

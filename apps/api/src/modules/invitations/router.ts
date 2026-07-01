@@ -2,13 +2,15 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { requireRole } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
-import { createInvitationSchema } from "./schema";
+import { createInvitationSchema, updateInvitationSettingsSchema } from "./schema";
 import {
   createInvitation,
+  getInvitationSettings,
   InvitationAlreadyRedeemedError,
   InvitationNotFoundError,
   listInvitations,
   revokeInvitation,
+  updateInvitationSettings,
 } from "./services";
 
 type InvitationsRouterEnv = {
@@ -35,13 +37,27 @@ invitationsRouter.get("/", async (c) => {
   return c.json({ invitations });
 });
 
+invitationsRouter.get("/settings", async (c) => {
+  const settings = await getInvitationSettings();
+  return c.json(settings);
+});
+
+invitationsRouter.patch(
+  "/settings",
+  zValidator("json", updateInvitationSettingsSchema, authValidationHook),
+  async (c) => {
+    const settings = await updateInvitationSettings(c.req.valid("json"));
+    return c.json(settings);
+  },
+);
+
 invitationsRouter.post(
   "/",
   zValidator("json", createInvitationSchema, authValidationHook),
   async (c) => {
-    const { balanceUsd } = c.req.valid("json");
+    const { balanceUsd, maxRedemptions } = c.req.valid("json");
     const createdBy = c.get("userId");
-    const result = await createInvitation(createdBy, balanceUsd);
+    const result = await createInvitation(createdBy, balanceUsd, maxRedemptions);
 
     return c.json(result, 201);
   },

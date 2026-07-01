@@ -16,7 +16,9 @@ import { apiFetch, ApiError } from "../../../src/lib/api-client";
 import {
   useApiKeysQuery,
   useCreateApiKeyMutation,
+  useRevealApiKeyMutation,
   useRevokeApiKeyMutation,
+  useRotateApiKeyMutation,
   useUpdateApiKeyModelAccessMutation,
   isForbiddenError,
 } from "../../../src/modules/api-keys/hooks";
@@ -81,6 +83,24 @@ describe("api-keys hooks", () => {
       const { result } = renderHook(() => useRevokeApiKeyMutation(), { wrapper });
       await act(() => result.current.mutateAsync("k1"));
       expect(apiFetch).toHaveBeenCalledWith("/api-keys/k1", { method: "DELETE" });
+    });
+  });
+
+  describe("useRevealApiKeyMutation", () => {
+    it("gets /api-keys/:id/reveal", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({ key: "mux_live_saved" });
+      const { result } = renderHook(() => useRevealApiKeyMutation(), { wrapper });
+      await act(() => result.current.mutateAsync("k1"));
+      expect(apiFetch).toHaveBeenCalledWith("/api-keys/k1/reveal");
+    });
+  });
+
+  describe("useRotateApiKeyMutation", () => {
+    it("posts /api-keys/:id/rotate", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({ key: "mux_live_new" });
+      const { result } = renderHook(() => useRotateApiKeyMutation(), { wrapper });
+      await act(() => result.current.mutateAsync("k1"));
+      expect(apiFetch).toHaveBeenCalledWith("/api-keys/k1/rotate", { method: "POST" });
     });
   });
 

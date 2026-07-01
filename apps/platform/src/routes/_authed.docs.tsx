@@ -1,6 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { DocsPage } from "../modules/docs/docs-page";
+import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authed/docs")({
-  component: DocsPage,
+  beforeLoad: ({ location }) => {
+    if (location.pathname === "/docs" || location.pathname === "/docs/") {
+      throw redirect({ to: "/docs/services" });
+    }
+  },
+  component: DocsLayout,
 });
+
+function DocsLayout() {
+  return <Outlet />;
+}

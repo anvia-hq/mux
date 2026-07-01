@@ -104,10 +104,35 @@ describe("logs router", () => {
         take: 25,
         where: expect.objectContaining({
           apiKeyId: "key-1",
+          apiKey: { createdBy: "user-1" },
           provider: "openai",
           model: "gpt-4",
           createdAt: expect.objectContaining({ gte: new Date("2026-01-01") }),
         }),
+      }),
+    );
+  });
+
+  it("GET / does not scope admin log visibility", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce({
+      id: "admin-1",
+      email: "admin@test.com",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: "hash",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.requestLog.findMany.mockResolvedValueOnce([]);
+    mockPrisma.requestLog.count.mockResolvedValueOnce(0);
+
+    const app = new Hono().route("/logs", logsRouter);
+    const res = await app.request("/logs?provider=openai");
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.requestLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ apiKey: expect.anything() }),
       }),
     );
   });
@@ -133,7 +158,11 @@ describe("logs router", () => {
     const res = await app.request("/logs/stats?days=30&provider=openai&model=gpt-4");
     expect(res.status).toBe(200);
     expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({ provider: "openai", model: "gpt-4" }),
+      where: expect.objectContaining({
+        provider: "openai",
+        model: "gpt-4",
+        apiKey: { createdBy: "user-1" },
+      }),
     });
   });
 
@@ -153,6 +182,7 @@ describe("logs router", () => {
     expect(res.status).toBe(200);
     expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
       where: expect.objectContaining({
+        apiKey: { createdBy: "user-1" },
         createdAt: expect.objectContaining({
           gte: new Date("2026-01-01"),
           lte: new Date("2026-01-31"),

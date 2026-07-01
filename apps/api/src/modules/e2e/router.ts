@@ -17,8 +17,10 @@ const tables = [
   "CustomProviderModel",
   "CustomProvider",
   "ProviderKey",
+  "InvitationRedemption",
   "ApiKey",
   "Invitation",
+  "AppSetting",
   "User",
 ];
 

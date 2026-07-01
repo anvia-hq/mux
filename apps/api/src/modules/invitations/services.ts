@@ -4,11 +4,13 @@ import { prisma } from "../../utils/prisma";
 import { hashPassword } from "../auth/password";
 import { isUniqueConstraintError } from "../auth/utils";
 import { buildApiKeyModelAccess, generateApiKey } from "../keys/services";
-import type { InvitationSummary, InvitationStatus } from "./types";
+import { encrypt } from "../providers/crypto";
+import type { InvitationSettings, InvitationSummary, InvitationStatus } from "./types";
 
 const CODE_PREFIX = "MUX";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const CODE_RANDOM_LENGTH = 16;
+const APP_SETTINGS_ID = "default";
 
 export class InvalidInvitationCodeError extends Error {
   constructor() {
@@ -62,7 +64,36 @@ export function generateInvitationCode(): { raw: string; hashed: string; lastFou
   };
 }
 
-export async function createInvitation(createdBy: string, balanceUsd?: number | null) {
+export async function getInvitationSettings(): Promise<InvitationSettings> {
+  const settings = await prisma.appSetting.upsert({
+    where: { id: APP_SETTINGS_ID },
+    update: {},
+    create: { id: APP_SETTINGS_ID },
+  });
+
+  return { inviteRegistrationEnabled: settings.inviteRegistrationEnabled };
+}
+
+export async function updateInvitationSettings(
+  input: InvitationSettings,
+): Promise<InvitationSettings> {
+  const settings = await prisma.appSetting.upsert({
+    where: { id: APP_SETTINGS_ID },
+    update: { inviteRegistrationEnabled: input.inviteRegistrationEnabled },
+    create: {
+      id: APP_SETTINGS_ID,
+      inviteRegistrationEnabled: input.inviteRegistrationEnabled,
+    },
+  });
+
+  return { inviteRegistrationEnabled: settings.inviteRegistrationEnabled };
+}
+
+export async function createInvitation(
+  createdBy: string,
+  balanceUsd?: number | null,
+  maxRedemptions = 1,
+) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const code = generateInvitationCode();
 
@@ -72,6 +103,7 @@ export async function createInvitation(createdBy: string, balanceUsd?: number | 
           codeHash: code.hashed,
           codeLastFour: code.lastFour,
           balanceUsd: balanceUsd ?? null,
+          maxRedemptions,
           createdBy,
         },
         include: invitationSummaryInclude,
@@ -109,7 +141,7 @@ export async function revokeInvitation(id: string): Promise<InvitationSummary> {
     throw new InvitationNotFoundError();
   }
 
-  if (invitation.redeemedAt) {
+  if (invitation.redeemedCount >= invitation.maxRedemptions) {
     throw new InvitationAlreadyRedeemedError();
   }
 
@@ -137,7 +169,7 @@ export async function redeemInvitation(input: {
   return prisma.$transaction(async (tx) => {
     const invitation = await tx.invitation.findUnique({ where: { codeHash } });
 
-    if (!invitation?.isActive || invitation.redeemedAt) {
+    if (!invitation?.isActive || invitation.redeemedCount >= invitation.maxRedemptions) {
       throw new InvalidInvitationCodeError();
     }
 
@@ -145,12 +177,19 @@ export async function redeemInvitation(input: {
       where: {
         id: invitation.id,
         isActive: true,
-        redeemedAt: null,
+        redeemedCount: { lt: invitation.maxRedemptions },
       },
-      data: { isActive: false },
+      data: {
+        redeemedCount: { increment: 1 },
+      },
     });
 
     if (claimed.count !== 1) {
+      throw new InvalidInvitationCodeError();
+    }
+
+    const claimedInvitation = await tx.invitation.findUnique({ where: { id: invitation.id } });
+    if (!claimedInvitation) {
       throw new InvalidInvitationCodeError();
     }
 
@@ -168,6 +207,7 @@ export async function redeemInvitation(input: {
       data: {
         name: `${input.email} invite key`,
         key: apiKey.hashed,
+        keyCiphertext: encrypt(apiKey.raw),
         createdBy: user.id,
         spendLimitUsd: invitation.balanceUsd,
         allowAllModels: modelAccess.allowAllModels,
@@ -177,9 +217,18 @@ export async function redeemInvitation(input: {
       },
     });
 
+    await tx.invitationRedemption.create({
+      data: {
+        invitationId: invitation.id,
+        userId: user.id,
+        apiKeyId: createdApiKey.id,
+      },
+    });
+
     await tx.invitation.update({
       where: { id: invitation.id },
       data: {
+        isActive: claimedInvitation.redeemedCount < claimedInvitation.maxRedemptions,
         redeemedBy: user.id,
         redeemedAt: new Date(),
       },
@@ -212,6 +261,8 @@ function toInvitationSummary(invitation: InvitationWithSummaryRelations): Invita
     codeLastFour: invitation.codeLastFour,
     balanceUsd: invitation.balanceUsd,
     isActive: invitation.isActive,
+    maxRedemptions: invitation.maxRedemptions,
+    redeemedCount: invitation.redeemedCount,
     status: getInvitationStatus(invitation),
     createdAt: invitation.createdAt,
     updatedAt: invitation.updatedAt,
@@ -222,9 +273,9 @@ function toInvitationSummary(invitation: InvitationWithSummaryRelations): Invita
 }
 
 function getInvitationStatus(
-  invitation: Pick<Invitation, "isActive" | "redeemedAt">,
+  invitation: Pick<Invitation, "isActive" | "maxRedemptions" | "redeemedCount">,
 ): InvitationStatus {
-  if (invitation.redeemedAt) {
+  if (invitation.redeemedCount >= invitation.maxRedemptions) {
     return "redeemed";
   }
 

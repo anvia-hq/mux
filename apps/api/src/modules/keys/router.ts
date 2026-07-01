@@ -1,34 +1,38 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
-import { requireRole } from "../auth/services";
+import type { User } from "../../utils/prisma";
+import { getCurrentUser } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
 import { createKeySchema, updateKeyModelAccessSchema } from "./schema";
 import {
   ApiKeyModelFilterValidationError,
+  ApiKeyNotFoundError,
+  ApiKeyRevealUnavailableError,
   createApiKey,
   listApiKeys,
+  revealApiKey,
   revokeApiKey,
+  rotateApiKey,
   updateApiKeyModelAccess,
 } from "./services";
 
 /**
- * Hono environment for the keys router. `userId` is set by the admin guard
- * below after a successful role check, so handlers can rely on it being a
- * valid admin user id without re-querying the database.
+ * Hono environment for the keys router. `user` is set by the auth guard below
+ * after a successful authentication check, so handlers can apply admin vs owner
+ * visibility rules without re-querying the database.
  */
 type KeysRouterEnv = {
   Variables: {
-    userId: string;
+    user: User;
   };
 };
 
 /**
- * Admin-only router for managing API keys.
+ * Router for API keys.
  *
- * Mounted under `/api-keys` by the main app. Every route requires the caller
- * to be authenticated as a user with the `ADMIN` role; non-admin or
- * unauthenticated callers receive a 401/403 response and never reach the
- * handlers below.
+ * Mounted under `/api-keys` by the main app. Authenticated regular users can
+ * list and reveal their own keys. Admin users can list all keys and perform
+ * management actions.
  *
  * Endpoints:
  * - `GET    /`        - List all API keys (newest first)
@@ -37,28 +41,34 @@ type KeysRouterEnv = {
  */
 export const keysRouter = new Hono<KeysRouterEnv>();
 
-// Admin-only guard: requires an authenticated ADMIN user.
+// Auth guard: any authenticated dashboard user can read owned API keys.
 keysRouter.use("*", async (c, next) => {
-  const user = await requireRole(c, "ADMIN");
+  const user = await getCurrentUser(c);
 
   if (!user) {
-    return c.json({ error: "admin access required" }, 403);
+    return c.json({ error: "unauthorized" }, 401);
   }
 
-  c.set("userId", user.id);
+  c.set("user", user);
   await next();
 });
+
+function requireAdmin(user: User) {
+  return user.role === "ADMIN";
+}
 
 /**
  * GET /
  *
- * Lists every API key in the system along with its creator and active state.
- * The raw key material is never returned - only metadata safe to display in
- * the admin dashboard.
+ * Lists API keys along with creator and active state. Admins see every key;
+ * regular users see only keys they own. Raw key material is never returned
+ * from this endpoint.
  */
 keysRouter.get("/", async (c) => {
+  const user = c.get("user");
+
   try {
-    const keys = await listApiKeys();
+    const keys = await listApiKeys(user.role === "ADMIN" ? {} : { ownerUserId: user.id });
     return c.json({ keys });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal server error";
@@ -69,18 +79,20 @@ keysRouter.get("/", async (c) => {
 /**
  * POST /
  *
- * Creates a new API key. The raw (unhashed) key is returned exactly once in
- * the response body so the admin can copy it; the database only stores a
- * SHA-256 hash, so the raw value cannot be recovered later.
+ * Creates a new API key. Admin-only.
  */
 keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), async (c) => {
   const { name, spendLimitUsd, allowedModelIds, includeFutureModels } = c.req.valid("json");
-  const userId = c.get("userId");
+  const user = c.get("user");
+
+  if (!requireAdmin(user)) {
+    return c.json({ error: "admin access required" }, 403);
+  }
 
   try {
     const { id, key } = await createApiKey(
       name,
-      userId,
+      user.id,
       spendLimitUsd,
       allowedModelIds,
       includeFutureModels,
@@ -96,12 +108,65 @@ keysRouter.post("/", zValidator("json", createKeySchema, authValidationHook), as
   }
 });
 
+keysRouter.get("/:id/reveal", async (c) => {
+  const { id } = c.req.param();
+  const user = c.get("user");
+
+  try {
+    const result = await revealApiKey({
+      id,
+      viewer: { id: user.id, role: user.role },
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof ApiKeyNotFoundError) {
+      return c.json({ error: error.message }, 404);
+    }
+
+    if (error instanceof ApiKeyRevealUnavailableError) {
+      return c.json({ error: error.message }, 409);
+    }
+
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return c.json({ error: message }, 500);
+  }
+});
+
+keysRouter.post("/:id/rotate", async (c) => {
+  const { id } = c.req.param();
+  const user = c.get("user");
+
+  try {
+    const result = await rotateApiKey({
+      id,
+      viewer: { id: user.id, role: user.role },
+    });
+    return c.json(result);
+  } catch (error) {
+    if (error instanceof ApiKeyNotFoundError) {
+      return c.json({ error: error.message }, 404);
+    }
+
+    if (error instanceof ApiKeyRevealUnavailableError) {
+      return c.json({ error: error.message }, 409);
+    }
+
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return c.json({ error: message }, 500);
+  }
+});
+
 keysRouter.patch(
   "/:id/model-access",
   zValidator("json", updateKeyModelAccessSchema, authValidationHook),
   async (c) => {
     const { id } = c.req.param();
     const input = c.req.valid("json");
+    const user = c.get("user");
+
+    if (!requireAdmin(user)) {
+      return c.json({ error: "admin access required" }, 403);
+    }
 
     try {
       await updateApiKeyModelAccess(id, input);
@@ -137,6 +202,11 @@ keysRouter.patch(
  */
 keysRouter.delete("/:id", async (c) => {
   const { id } = c.req.param();
+  const user = c.get("user");
+
+  if (!requireAdmin(user)) {
+    return c.json({ error: "admin access required" }, 403);
+  }
 
   try {
     await revokeApiKey(id);

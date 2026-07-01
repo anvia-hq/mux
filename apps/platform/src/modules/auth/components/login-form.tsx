@@ -2,14 +2,18 @@ import { Button } from "@repo/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
+import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useLoginMutation } from "../hooks/use-auth";
+import { onboardingStatusQueryOptions, useLoginMutation } from "../hooks/use-auth";
 
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const onboardingStatus = useQuery(onboardingStatusQueryOptions);
   const loginMutation = useLoginMutation();
+  const inviteRegistrationEnabled = onboardingStatus.data?.inviteRegistrationEnabled ?? true;
 
   return (
     <Card className="max-w-md">
@@ -58,6 +62,11 @@ export function LoginForm() {
           <Button type="submit" disabled={loginMutation.isPending}>
             {loginMutation.isPending ? "Logging in..." : "Login"}
           </Button>
+          {inviteRegistrationEnabled ? (
+            <Button asChild type="button" variant="link">
+              <Link to="/register">Create account with invite code</Link>
+            </Button>
+          ) : null}
         </form>
       </CardContent>
     </Card>

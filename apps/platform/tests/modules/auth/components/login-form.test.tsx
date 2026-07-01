@@ -2,10 +2,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 
-const { mockLoginMutation } = vi.hoisted(() => ({
+const { mockLoginMutation, mockOnboardingStatusQuery } = vi.hoisted(() => ({
   mockLoginMutation: {
     mutate: vi.fn(),
     isPending: false,
+  },
+  mockOnboardingStatusQuery: {
+    data: { inviteRegistrationEnabled: true },
   },
 }));
 
@@ -31,11 +34,15 @@ vi.mock("@repo/ui/components/label", () => ({
     React.createElement("label", props, children),
 }));
 vi.mock("@tanstack/react-router", () => ({
-  Link: ({ children }: Record<string, unknown> & { children?: React.ReactNode }) =>
-    React.createElement("a", null, children),
+  Link: ({ children, to }: Record<string, unknown> & { children?: React.ReactNode }) =>
+    React.createElement("a", { href: String(to ?? "") }, children),
+}));
+vi.mock("@tanstack/react-query", () => ({
+  useQuery: () => mockOnboardingStatusQuery,
 }));
 
 vi.mock("../../../../src/modules/auth/hooks/use-auth", () => ({
+  onboardingStatusQueryOptions: { queryKey: ["auth", "onboarding-status"] },
   useLoginMutation: () => mockLoginMutation,
 }));
 
@@ -52,12 +59,21 @@ describe("LoginForm", () => {
   beforeEach(() => {
     mockLoginMutation.mutate.mockReset();
     mockLoginMutation.isPending = false;
+    mockOnboardingStatusQuery.data = { inviteRegistrationEnabled: true };
   });
 
   it("renders login form", () => {
     render(React.createElement(LoginForm));
     expect(screen.getByText("Platform login")).toBeDefined();
-    expect(screen.queryByText("Create a user account")).toBeNull();
+    expect(screen.getByText("Create account with invite code")).toBeDefined();
+  });
+
+  it("hides create account link when invite-code registration is disabled", () => {
+    mockOnboardingStatusQuery.data = { inviteRegistrationEnabled: false };
+
+    render(React.createElement(LoginForm));
+
+    expect(screen.queryByText("Create account with invite code")).toBeNull();
   });
 
   it("submits email and password", () => {

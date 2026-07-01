@@ -56,11 +56,19 @@ describe("logs services", () => {
         provider: "openai",
         model: "gpt-4",
         apiKeyId: "key-1",
+        ownerUserId: "user-1",
         limit: 10,
         offset: 5,
       });
       expect(mockPrisma.requestLog.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ take: 10, skip: 5 }),
+        expect.objectContaining({
+          take: 10,
+          skip: 5,
+          where: expect.objectContaining({
+            apiKeyId: "key-1",
+            apiKey: { createdBy: "user-1" },
+          }),
+        }),
       );
     });
   });
@@ -99,12 +107,17 @@ describe("logs services", () => {
       await getStats({
         provider: "openai",
         model: "gpt-4",
+        ownerUserId: "user-1",
         days: 30,
         endDate: new Date("2026-06-21T12:00:00.000Z"),
       });
 
       expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
-        where: expect.objectContaining({ provider: "openai", model: "gpt-4" }),
+        where: expect.objectContaining({
+          provider: "openai",
+          model: "gpt-4",
+          apiKey: { createdBy: "user-1" },
+        }),
       });
     });
   });

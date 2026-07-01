@@ -1,30 +1,50 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 
-const { mockCreateInvitation, mockInvitationsQuery, mockRevokeInvitation, mockUsersQuery } =
-  vi.hoisted(() => ({
-    mockCreateInvitation: {
-      mutate: vi.fn(),
-      reset: vi.fn(),
-      error: null as Error | null,
-      isPending: false,
-    },
-    mockInvitationsQuery: {
-      data: { invitations: [] as unknown[] },
-      error: null as unknown,
-      isLoading: false,
-    },
-    mockRevokeInvitation: {
-      mutate: vi.fn(),
-      isPending: false,
-    },
-    mockUsersQuery: {
-      data: { users: [] as unknown[] },
-      error: null as unknown,
-      isLoading: false,
-    },
-  }));
+const {
+  mockCreateInvitation,
+  mockInvitationSettingsQuery,
+  mockInvitationsQuery,
+  mockRevokeInvitation,
+  mockUpdateInvitationSettings,
+  mockToast,
+  mockUsersQuery,
+} = vi.hoisted(() => ({
+  mockCreateInvitation: {
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    error: null as Error | null,
+    isPending: false,
+  },
+  mockInvitationSettingsQuery: {
+    data: { inviteRegistrationEnabled: true },
+    isLoading: false,
+  },
+  mockInvitationsQuery: {
+    data: { invitations: [] as unknown[] },
+    error: null as unknown,
+    isLoading: false,
+  },
+  mockRevokeInvitation: {
+    mutate: vi.fn(),
+    isPending: false,
+  },
+  mockUpdateInvitationSettings: {
+    mutate: vi.fn(),
+    error: null as Error | null,
+    isPending: false,
+  },
+  mockToast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+  mockUsersQuery: {
+    data: { users: [] as unknown[] },
+    error: null as unknown,
+    isLoading: false,
+  },
+}));
 
 vi.mock("@repo/ui/components/badge", () => ({
   Badge: ({ children }: { children: React.ReactNode }) =>
@@ -43,6 +63,8 @@ vi.mock("@repo/ui/components/card", () => ({
     React.createElement("header", null, children),
   CardTitle: ({ children }: { children: React.ReactNode }) =>
     React.createElement("h2", null, children),
+  CardContent: ({ children }: { children: React.ReactNode }) =>
+    React.createElement("div", null, children),
 }));
 vi.mock("@repo/ui/components/dialog", () => ({
   Dialog: ({ children }: { children: React.ReactNode }) =>
@@ -67,6 +89,23 @@ vi.mock("@repo/ui/components/label", () => ({
   Label: ({ children, ...props }: Record<string, unknown> & { children?: React.ReactNode }) =>
     React.createElement("label", props, children),
 }));
+vi.mock("@repo/ui/components/switch", () => ({
+  Switch: ({
+    checked,
+    onCheckedChange,
+    ...props
+  }: Record<string, unknown> & {
+    checked?: boolean;
+    onCheckedChange?: (checked: boolean) => void;
+  }) =>
+    React.createElement("input", {
+      type: "checkbox",
+      checked,
+      onChange: (event: React.ChangeEvent<HTMLInputElement>) =>
+        onCheckedChange?.(event.target.checked),
+      ...props,
+    }),
+}));
 vi.mock("@repo/ui/components/table", () => ({
   Table: ({ children }: { children: React.ReactNode }) =>
     React.createElement("table", null, children),
@@ -89,15 +128,18 @@ vi.mock("@hugeicons/core-free-icons", () => ({
   Copy01Icon: {},
 }));
 vi.mock("../../../src/modules/invitations/hooks", () => ({
+  useInvitationSettingsQuery: () => mockInvitationSettingsQuery,
   useInvitationsQuery: () => mockInvitationsQuery,
   useCreateInvitationMutation: () => mockCreateInvitation,
   useRevokeInvitationMutation: () => mockRevokeInvitation,
+  useUpdateInvitationSettingsMutation: () => mockUpdateInvitationSettings,
 }));
 vi.mock("../../../src/modules/users/hooks", () => ({
   useUsersQuery: () => mockUsersQuery,
   isForbiddenError: (error: unknown) =>
     typeof error === "object" && error !== null && "status" in error && error.status === 403,
 }));
+vi.mock("sonner", () => ({ toast: mockToast }));
 
 import { UsersPage } from "../../../src/modules/users/users-page";
 
@@ -121,16 +163,27 @@ const users = [
 ];
 
 describe("UsersPage", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   beforeEach(() => {
     mockCreateInvitation.error = null;
     mockCreateInvitation.isPending = false;
     mockCreateInvitation.mutate.mockReset();
     mockCreateInvitation.reset.mockReset();
+    mockInvitationSettingsQuery.data = { inviteRegistrationEnabled: true };
+    mockInvitationSettingsQuery.isLoading = false;
     mockInvitationsQuery.data = { invitations: [] };
     mockInvitationsQuery.error = null;
     mockInvitationsQuery.isLoading = false;
     mockRevokeInvitation.isPending = false;
     mockRevokeInvitation.mutate.mockReset();
+    mockUpdateInvitationSettings.error = null;
+    mockUpdateInvitationSettings.isPending = false;
+    mockUpdateInvitationSettings.mutate.mockReset();
+    mockToast.success.mockReset();
+    mockToast.error.mockReset();
     mockUsersQuery.data = { users: [] };
     mockUsersQuery.error = null;
     mockUsersQuery.isLoading = false;
@@ -165,6 +218,8 @@ describe("UsersPage", () => {
           codeLastFour: "ABCD",
           balanceUsd: 5,
           isActive: true,
+          maxRedemptions: 3,
+          redeemedCount: 1,
           status: "pending",
           createdAt: "2026-01-05T00:00:00.000Z",
           updatedAt: "2026-01-05T00:00:00.000Z",
@@ -177,6 +232,8 @@ describe("UsersPage", () => {
           codeLastFour: "EFGH",
           balanceUsd: null,
           isActive: false,
+          maxRedemptions: 1,
+          redeemedCount: 1,
           status: "redeemed",
           createdAt: "2026-01-06T00:00:00.000Z",
           updatedAt: "2026-01-06T00:00:00.000Z",
@@ -193,8 +250,57 @@ describe("UsersPage", () => {
     expect(screen.getByText("**** ABCD")).toBeDefined();
     expect(screen.getByText("$5.00")).toBeDefined();
     expect(screen.getByText("Unlimited")).toBeDefined();
+    expect(screen.getByText("1 / 3")).toBeDefined();
+    expect(screen.getByText("1 / 1")).toBeDefined();
     expect(screen.getByText("Not redeemed")).toBeDefined();
     expect(screen.getAllByText("user@test.com")).toHaveLength(2);
+  });
+
+  it("creates invitations with max redemptions", () => {
+    render(React.createElement(UsersPage));
+
+    fireEvent.change(screen.getByLabelText("USD balance"), { target: { value: "5" } });
+    fireEvent.change(screen.getByLabelText("Max redemptions"), { target: { value: "3" } });
+    const form = screen.getByRole("button", { name: "Create invite" }).closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+
+    expect(mockCreateInvitation.mutate).toHaveBeenCalledWith(
+      { balanceUsd: 5, maxRedemptions: 3 },
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("copies revealed invitation code with feedback", async () => {
+    const inviteCode = "MUX-ABCD-EFGH-IJKL-MNPQ";
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    mockCreateInvitation.mutate.mockImplementationOnce((_input, options) => {
+      options.onSuccess({ code: inviteCode });
+    });
+
+    render(React.createElement(UsersPage));
+
+    const form = screen.getByRole("button", { name: "Create invite" }).closest("form");
+    expect(form).not.toBeNull();
+    fireEvent.submit(form as HTMLFormElement);
+    expect(screen.getByText(inviteCode)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(inviteCode));
+    expect(mockToast.success).toHaveBeenCalledWith("Invite code copied");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeDefined();
+  });
+
+  it("updates invite-code registration setting", () => {
+    render(React.createElement(UsersPage));
+
+    fireEvent.click(screen.getByLabelText("Enable invite-code registration"));
+
+    expect(mockUpdateInvitationSettings.mutate).toHaveBeenCalledWith({
+      inviteRegistrationEnabled: false,
+    });
   });
 
   it("renders admin-only state for forbidden responses", () => {

@@ -13,6 +13,7 @@ export type LogFilters = {
   endDate?: Date;
   limit?: number;
   offset?: number;
+  ownerUserId?: string;
 };
 
 /**
@@ -53,6 +54,7 @@ function buildLogWhere(filters: LogFilters): Prisma.RequestLogWhereInput {
   const where: Prisma.RequestLogWhereInput = {};
 
   if (filters.apiKeyId) where.apiKeyId = filters.apiKeyId;
+  if (filters.ownerUserId) where.apiKey = { createdBy: filters.ownerUserId };
   if (filters.provider) where.provider = filters.provider;
   if (filters.model) where.model = filters.model;
   if (filters.startDate || filters.endDate) {
@@ -121,6 +123,7 @@ export type StatsFilters = {
   model?: string;
   days?: number;
   groupBy?: "provider" | "model" | "apiKey";
+  ownerUserId?: string;
 };
 
 const DEFAULT_STATS_DAYS = 30;
@@ -158,6 +161,7 @@ function buildStatsWhere(filters: StatsFilters, startDate: Date, endDate: Date) 
 
   if (filters.provider) where.provider = filters.provider;
   if (filters.model) where.model = filters.model;
+  if (filters.ownerUserId) where.apiKey = { createdBy: filters.ownerUserId };
 
   return where;
 }
@@ -213,6 +217,14 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
     ? Prisma.sql`AND "provider" = ${filters.provider}`
     : Prisma.empty;
   const modelFilter = filters.model ? Prisma.sql`AND "model" = ${filters.model}` : Prisma.empty;
+  const ownerFilter = filters.ownerUserId
+    ? Prisma.sql`AND EXISTS (
+        SELECT 1
+        FROM "ApiKey"
+        WHERE "ApiKey"."id" = "RequestLog"."apiKeyId"
+          AND "ApiKey"."createdBy" = ${filters.ownerUserId}
+      )`
+    : Prisma.empty;
 
   const [totalRequests, totalTokensAgg, totalCostAgg, byProvider, byModel, dailyRows] =
     await Promise.all([
@@ -248,6 +260,7 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
           AND "createdAt" <= ${endDate}
           ${providerFilter}
           ${modelFilter}
+          ${ownerFilter}
         GROUP BY DATE("createdAt")
         ORDER BY DATE("createdAt") ASC
       `,

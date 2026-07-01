@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CodeIcon, ComputerTerminal01Icon, Copy01Icon } from "@hugeicons/core-free-icons";
@@ -7,6 +7,7 @@ import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Card, CardDescription, CardTitle } from "@repo/ui/components/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
+import { useCopyFeedback } from "../../lib/use-copy-feedback";
 
 type CodeSample = {
   value: string;
@@ -505,15 +506,18 @@ except AuthenticationError as error:
 ];
 
 function CodeTabs({ samples }: { samples: CodeSample[] }) {
-  const [copied, setCopied] = useState<string | null>(null);
+  const { copiedId, copy } = useCopyFeedback();
   const gatewayBaseUrl = getGatewayBaseUrl();
 
   const resolveCode = (code: string) => code.replaceAll(BASE_URL_PLACEHOLDER, gatewayBaseUrl);
 
   const copySample = async (sample: CodeSample) => {
-    await navigator.clipboard.writeText(resolveCode(sample.code));
-    setCopied(sample.value);
-    window.setTimeout(() => setCopied(null), 1400);
+    await copy({
+      value: resolveCode(sample.code),
+      copiedId: docsSampleCopyId(sample.value),
+      successMessage: "Code copied",
+      errorMessage: "Could not copy code",
+    });
   };
 
   return (
@@ -540,7 +544,7 @@ function CodeTabs({ samples }: { samples: CodeSample[] }) {
               onClick={() => copySample(sample)}
             >
               <HugeiconsIcon icon={Copy01Icon} className="size-4" />
-              {copied === sample.value ? "Copied" : "Copy"}
+              {copiedId === docsSampleCopyId(sample.value) ? "Copied" : "Copy"}
             </Button>
             <SyntaxHighlighter
               language={sample.language}
@@ -565,6 +569,10 @@ function CodeTabs({ samples }: { samples: CodeSample[] }) {
   );
 }
 
+function docsSampleCopyId(value: string) {
+  return `docs-sample:${value}`;
+}
+
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} className="grid gap-4 scroll-mt-24">
@@ -578,7 +586,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function DocsPage() {
+export function ServiceDocsPage() {
   const gatewayBaseUrl = getGatewayBaseUrl();
 
   return (
@@ -817,6 +825,242 @@ export function DocsPage() {
             <CodeTabs samples={errorSamples} />
           </Section>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const harnessEnvSamples: CodeSample[] = [
+  {
+    value: "bash",
+    label: "Bash",
+    language: "bash",
+    code: `export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx
+export MUX_BASE_URL=__MUX_GATEWAY_BASE_URL__
+export MUX_MODEL=mux:fast-chat`,
+  },
+  {
+    value: "fish",
+    label: "Fish",
+    language: "bash",
+    code: `set -gx MUX_API_KEY mux_live_xxxxxxxxxxxxxxxx
+set -gx MUX_BASE_URL __MUX_GATEWAY_BASE_URL__
+set -gx MUX_MODEL mux:fast-chat`,
+  },
+];
+
+const genericOpenAiHarnessSamples: CodeSample[] = [
+  {
+    value: "bash",
+    label: "Env vars",
+    language: "bash",
+    code: `export OPENAI_API_KEY="$MUX_API_KEY"
+export OPENAI_BASE_URL="$MUX_BASE_URL"`,
+  },
+  {
+    value: "curl",
+    label: "Smoke test",
+    language: "bash",
+    code: `curl "$MUX_BASE_URL/models" \\
+  -H "Authorization: Bearer $MUX_API_KEY"`,
+  },
+];
+
+const openCodeSamples: CodeSample[] = [
+  {
+    value: "json",
+    label: "opencode.json",
+    language: "json",
+    code: `{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "mux": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Mux Gateway",
+      "options": {
+        "baseURL": "__MUX_GATEWAY_BASE_URL__",
+        "apiKey": "{env:MUX_API_KEY}"
+      },
+      "models": {
+        "mux:fast-chat": {
+          "name": "Mux Fast Chat"
+        }
+      }
+    }
+  }
+}`,
+  },
+  {
+    value: "bash",
+    label: "Connect",
+    language: "bash",
+    code: `export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx
+opencode
+
+# Run /connect, choose Other, use mux as the provider id, then paste the Mux API key.`,
+  },
+];
+
+const piAgentSamples: CodeSample[] = [
+  {
+    value: "json",
+    label: "models.json",
+    language: "json",
+    code: `{
+  "providers": {
+    "mux": {
+      "baseUrl": "__MUX_GATEWAY_BASE_URL__",
+      "api": "openai-completions",
+      "apiKey": "$MUX_API_KEY",
+      "authHeader": true,
+      "models": [
+        {
+          "id": "mux:fast-chat",
+          "name": "Mux Fast Chat",
+          "input": ["text"],
+          "contextWindow": 128000,
+          "maxTokens": 32000
+        }
+      ]
+    }
+  }
+}`,
+  },
+  {
+    value: "bash",
+    label: "Env vars",
+    language: "bash",
+    code: `export MUX_API_KEY=mux_live_xxxxxxxxxxxxxxxx
+export MUX_BASE_URL=__MUX_GATEWAY_BASE_URL__
+
+# Put the provider config in your Pi models.json, then select mux:fast-chat.`,
+  },
+];
+
+const claudeCodeSamples: CodeSample[] = [
+  {
+    value: "bash",
+    label: "Compatible proxy",
+    language: "bash",
+    code: `export ANTHROPIC_BASE_URL=https://your-anthropic-compatible-gateway.example.com
+export ANTHROPIC_AUTH_TOKEN="$MUX_API_KEY"
+claude`,
+  },
+];
+
+export function CodingHarnessDocsPage() {
+  const gatewayBaseUrl = getGatewayBaseUrl();
+
+  return (
+    <div className="grid gap-8">
+      <Card className="overflow-hidden p-0">
+        <div className="p-6 lg:p-8">
+          <div className="grid max-w-3xl gap-4">
+            <Badge variant="secondary" className="w-fit rounded-md">
+              Coding harness setup
+            </Badge>
+            <div className="grid gap-3">
+              <h1 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
+                Connect coding agents to Mux Gateway
+              </h1>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Use Mux Gateway as the OpenAI-compatible endpoint for coding tools that let you
+                bring a custom provider, base URL, API key, and model id.
+              </p>
+            </div>
+            <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <HugeiconsIcon icon={ComputerTerminal01Icon} className="size-4" />
+                <span>Base URL</span>
+              </div>
+              <code className="min-w-0 truncate font-mono text-xs text-foreground">
+                {gatewayBaseUrl}
+              </code>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-8">
+        <Section id="prerequisites" title="Prerequisites">
+          <p>
+            Create or reveal a key from the{" "}
+            <Link to="/api-keys" className="text-foreground">
+              API keys
+            </Link>{" "}
+            page, then choose a model id from{" "}
+            <Link to="/models" className="text-foreground">
+              Models
+            </Link>
+            . The examples use <code>mux:fast-chat</code>, but any enabled direct model or fallback
+            group can be used.
+          </p>
+          <CodeTabs samples={harnessEnvSamples} />
+        </Section>
+
+        <Section id="generic-openai-compatible" title="Generic OpenAI-compatible tools">
+          <p>
+            Most harnesses that support custom OpenAI-compatible providers only need the Mux base
+            URL, bearer token, and model id. The base URL should include <code>/api/v1</code>.
+          </p>
+          <CodeTabs samples={genericOpenAiHarnessSamples} />
+        </Section>
+
+        <Section id="opencode" title="OpenCode">
+          <p>
+            OpenCode supports custom providers backed by the OpenAI-compatible AI SDK provider.
+            Configure Mux as a provider, map the model ids you want users to select, and keep the
+            key in <code>MUX_API_KEY</code>.
+          </p>
+          <CodeTabs samples={openCodeSamples} />
+        </Section>
+
+        <Section id="pi-agent" title="Pi Agent">
+          <p>
+            Pi Agent can use a custom provider entry with <code>openai-completions</code>. Use{" "}
+            <code>openai-responses</code> only for models and workflows that you have verified
+            against the Responses API.
+          </p>
+          <CodeTabs samples={piAgentSamples} />
+        </Section>
+
+        <Section id="claude-code" title="Claude Code">
+          <p>
+            Claude Code uses Anthropic's gateway variables and expects an Anthropic-compatible
+            Messages API. The current Mux Gateway service docs expose OpenAI-compatible endpoints,
+            so do not point Claude Code directly at <code>{gatewayBaseUrl}</code> unless an
+            Anthropic-compatible adapter is in front of Mux or Mux adds that surface.
+          </p>
+          <CodeTabs samples={claudeCodeSamples} />
+        </Section>
+
+        <Section id="troubleshooting" title="Troubleshooting">
+          <div className="grid gap-2">
+            {[
+              ["401", "The API key is missing, revoked, or pasted into the wrong env var."],
+              [
+                "404 model",
+                "Use the exact model id shown on the Models page, including provider or mux prefix.",
+              ],
+              [
+                "Wrong base URL",
+                "OpenAI-compatible tools should use the Mux base URL ending in /api/v1.",
+              ],
+              [
+                "Streaming",
+                "Confirm the selected harness and upstream model both support streaming.",
+              ],
+            ].map(([status, description]) => (
+              <div
+                key={status}
+                className="grid grid-cols-[7rem_minmax(0,1fr)] rounded-md border p-3"
+              >
+                <span className="font-mono text-sm font-medium text-foreground">{status}</span>
+                <span>{description}</span>
+              </div>
+            ))}
+          </div>
+        </Section>
       </div>
     </div>
   );

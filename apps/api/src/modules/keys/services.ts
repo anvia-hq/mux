@@ -3,6 +3,7 @@ import { prisma } from "../../utils/prisma";
 import { cacheDelete, cacheGet, cacheSet } from "../../utils/cache";
 import { redis } from "../../utils/redis";
 import { listPublicModels, toPublicModelId } from "../../providers/registry";
+import { decrypt, encrypt } from "../providers/crypto";
 import type { UpdateKeyModelAccessInput } from "./schema";
 
 const API_KEY_PREFIX = "mux_live_";
@@ -36,6 +37,20 @@ export class ApiKeyModelAccessDeniedError extends Error {
   }
 }
 
+export class ApiKeyNotFoundError extends Error {
+  constructor() {
+    super("API key not found");
+    this.name = "ApiKeyNotFoundError";
+  }
+}
+
+export class ApiKeyRevealUnavailableError extends Error {
+  constructor(message = "API key material is unavailable") {
+    super(message);
+    this.name = "ApiKeyRevealUnavailableError";
+  }
+}
+
 export type ApiKeyModelAccess = {
   allowAllModels: boolean;
   includeFutureModels: boolean;
@@ -66,6 +81,7 @@ export async function createApiKey(
     data: {
       name,
       key: hashed,
+      keyCiphertext: encrypt(raw),
       createdBy: userId,
       spendLimitUsd: spendLimitUsd ?? null,
       allowAllModels: modelAccess.allowAllModels,
@@ -257,11 +273,13 @@ export async function revokeApiKey(id: string) {
   return apiKey;
 }
 
-export async function listApiKeys() {
+export async function listApiKeys(filters: { ownerUserId?: string } = {}) {
   const keys = await prisma.apiKey.findMany({
+    where: filters.ownerUserId ? { createdBy: filters.ownerUserId } : undefined,
     select: {
       id: true,
       name: true,
+      keyCiphertext: true,
       isActive: true,
       spendLimitUsd: true,
       allowAllModels: true,
@@ -294,6 +312,7 @@ export async function listApiKeys() {
   );
 
   return keys.map((key) => {
+    const { keyCiphertext, ...safeKey } = key;
     const spentUsd = spentByKey.get(key.id) ?? 0;
     const remainingUsd =
       key.spendLimitUsd === null ? null : Math.max(key.spendLimitUsd - spentUsd, 0);
@@ -301,7 +320,8 @@ export async function listApiKeys() {
     const modelAccess = normalizeApiKeyModelAccess(key);
 
     return {
-      ...key,
+      ...safeKey,
+      canReveal: Boolean(keyCiphertext),
       allowAllModels: modelAccess.allowAllModels,
       includeFutureModels: modelAccess.includeFutureModels,
       allowedModelIds: modelAccess.allowAllModels ? null : modelAccess.allowedModelIds,
@@ -309,6 +329,68 @@ export async function listApiKeys() {
       remainingUsd,
     };
   });
+}
+
+export async function revealApiKey(input: {
+  id: string;
+  viewer: { id: string; role: "ADMIN" | "USER" };
+}): Promise<{ key: string }> {
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { id: input.id },
+    select: {
+      createdBy: true,
+      isActive: true,
+      keyCiphertext: true,
+    },
+  });
+
+  if (!apiKey || (input.viewer.role !== "ADMIN" && apiKey.createdBy !== input.viewer.id)) {
+    throw new ApiKeyNotFoundError();
+  }
+
+  if (!apiKey.isActive) {
+    throw new ApiKeyRevealUnavailableError("revoked API key cannot be revealed");
+  }
+
+  if (!apiKey.keyCiphertext) {
+    throw new ApiKeyRevealUnavailableError();
+  }
+
+  return { key: decrypt(apiKey.keyCiphertext) };
+}
+
+export async function rotateApiKey(input: {
+  id: string;
+  viewer: { id: string; role: "ADMIN" | "USER" };
+}): Promise<{ key: string }> {
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { id: input.id },
+    select: {
+      createdBy: true,
+      isActive: true,
+      key: true,
+    },
+  });
+
+  if (!apiKey || (input.viewer.role !== "ADMIN" && apiKey.createdBy !== input.viewer.id)) {
+    throw new ApiKeyNotFoundError();
+  }
+
+  if (!apiKey.isActive) {
+    throw new ApiKeyRevealUnavailableError("revoked API key cannot be regenerated");
+  }
+
+  const next = generateApiKey();
+  await prisma.apiKey.update({
+    where: { id: input.id },
+    data: {
+      key: next.hashed,
+      keyCiphertext: encrypt(next.raw),
+    },
+  });
+  await deleteApiKeyCache(apiKey.key);
+
+  return { key: next.raw };
 }
 
 export async function updateApiKeyModelAccess(id: string, input: UpdateKeyModelAccessInput) {

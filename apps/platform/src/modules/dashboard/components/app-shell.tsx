@@ -52,7 +52,7 @@ const navGroups: NavGroup[] = [
     label: "Dashboard",
     items: [
       { to: "/", label: "Overview", icon: DashboardSquare01Icon },
-      { to: "/api-keys", label: "API keys", icon: Key01Icon, adminOnly: true },
+      { to: "/api-keys", label: "API keys", icon: Key01Icon },
       { to: "/users", label: "Users", icon: User02Icon, adminOnly: true },
       { to: "/logs", label: "Logs", icon: Scroll01Icon },
     ],
@@ -68,7 +68,10 @@ const navGroups: NavGroup[] = [
   },
   {
     label: "Docs",
-    items: [{ to: "/docs", label: "Documentation", icon: BookOpen01Icon }],
+    items: [
+      { to: "/docs/services", label: "Service Docs", icon: BookOpen01Icon },
+      { to: "/docs/coding-harness", label: "Coding Harness", icon: BookOpen01Icon },
+    ],
   },
   {
     items: [{ to: "/settings", label: "Account Settings", icon: Settings01Icon }],
@@ -91,6 +94,9 @@ export function AppShell() {
     .map((group) => ({ ...group, items: group.items.filter(isVisible) }))
     .filter((group) => group.items.length > 0);
   const visibleItems = visibleGroups.flatMap((group) => group.items);
+  const activeItem = visibleItems.find(
+    (i) => location.pathname === i.to || location.pathname.startsWith(`${i.to}/`),
+  );
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
@@ -121,7 +127,13 @@ export function AppShell() {
                 <SidebarMenu>
                   {group.items.map((item) => (
                     <SidebarMenuItem key={item.to}>
-                      <SidebarMenuButton asChild isActive={location.pathname === item.to}>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={
+                          location.pathname === item.to ||
+                          location.pathname.startsWith(`${item.to}/`)
+                        }
+                      >
                         <Link to={item.to}>
                           <HugeiconsIcon icon={item.icon} className="size-4" />
                           <span>{item.label}</span>
@@ -158,7 +170,7 @@ export function AppShell() {
           <div className="flex items-center gap-2">
             <SidebarTrigger />
             <h1 className="text-sm font-medium text-muted-foreground">
-              {visibleItems.find((i) => i.to === location.pathname)?.label ?? "Mux Gateway"}
+              {activeItem?.label ?? "Mux Gateway"}
             </h1>
           </div>
         </header>

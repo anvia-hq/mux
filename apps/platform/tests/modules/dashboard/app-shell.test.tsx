@@ -102,6 +102,7 @@ describe("AppShell", () => {
 
     render(React.createElement(AppShell));
 
+    expect(screen.getByRole("link", { name: "API keys" }).getAttribute("href")).toBe("/api-keys");
     expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Playground" })).toBeNull();
   });
@@ -113,6 +114,19 @@ describe("AppShell", () => {
 
     expect(screen.getByRole("link", { name: "Playground" }).getAttribute("href")).toBe(
       "/playground",
+    );
+  });
+
+  it("shows documentation navigation pages", () => {
+    mockUser.data.role = "USER";
+
+    render(React.createElement(AppShell));
+
+    expect(screen.getByRole("link", { name: "Service Docs" }).getAttribute("href")).toBe(
+      "/docs/services",
+    );
+    expect(screen.getByRole("link", { name: "Coding Harness" }).getAttribute("href")).toBe(
+      "/docs/coding-harness",
     );
   });
 });

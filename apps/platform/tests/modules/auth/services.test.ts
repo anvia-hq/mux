@@ -62,8 +62,14 @@ describe("auth services", () => {
   });
 
   it("onboardingStatus calls /auth/onboarding-status", async () => {
-    vi.mocked(apiFetch).mockResolvedValueOnce({ needsOnboarding: true });
-    expect(await onboardingStatus()).toEqual({ needsOnboarding: true });
+    vi.mocked(apiFetch).mockResolvedValueOnce({
+      needsOnboarding: true,
+      inviteRegistrationEnabled: true,
+    });
+    expect(await onboardingStatus()).toEqual({
+      needsOnboarding: true,
+      inviteRegistrationEnabled: true,
+    });
   });
 
   it("onboard calls POST /auth/onboard", async () => {

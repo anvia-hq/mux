@@ -41,8 +41,8 @@ function parseDate(value: string | undefined): Date | undefined {
  * Router exposing request log browsing and aggregate statistics.
  *
  * Mounted under `/logs` by the main app. Both endpoints require any
- * authenticated user (admin or regular). Future enhancements could narrow
- * visibility to specific API keys owned by the requesting user.
+ * authenticated user. Admins can view every request log; regular users are
+ * restricted to logs written by API keys they own.
  *
  * Endpoints:
  * - `GET /`        - Paginated request log entries with optional filters
@@ -73,9 +73,11 @@ logsRouter.use("*", async (c, next) => {
  * pagination controls without an additional count call.
  */
 logsRouter.get("/", async (c) => {
+  const user = c.get("user");
   const { apiKeyId, provider, model, startDate, endDate, limit, offset } = c.req.query();
 
   const filters: LogFilters = {};
+  if (user.role !== "ADMIN") filters.ownerUserId = user.id;
   if (apiKeyId) filters.apiKeyId = apiKeyId;
   if (provider) filters.provider = provider;
   if (model) filters.model = model;
@@ -110,9 +112,11 @@ logsRouter.get("/", async (c) => {
  * query parameters to scope the window.
  */
 logsRouter.get("/stats", async (c) => {
+  const user = c.get("user");
   const { startDate, endDate, groupBy, days, provider, model } = c.req.query();
 
   const filters: StatsFilters = {};
+  if (user.role !== "ADMIN") filters.ownerUserId = user.id;
   if (provider) filters.provider = provider;
   if (model) filters.model = model;
 

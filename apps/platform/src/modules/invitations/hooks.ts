@@ -8,6 +8,8 @@ export type Invitation = {
   codeLastFour: string;
   balanceUsd: number | null;
   isActive: boolean;
+  maxRedemptions: number;
+  redeemedCount: number;
   status: InvitationStatus;
   createdAt: string;
   updatedAt: string;
@@ -18,6 +20,7 @@ export type Invitation = {
 
 export type CreateInvitationInput = {
   balanceUsd?: number | null;
+  maxRedemptions?: number;
 };
 
 export type CreateInvitationResponse = {
@@ -25,12 +28,24 @@ export type CreateInvitationResponse = {
   code: string;
 };
 
+export type InvitationSettings = {
+  inviteRegistrationEnabled: boolean;
+};
+
 const queryKey = ["invitations"] as const;
+const settingsQueryKey = ["invitations", "settings"] as const;
 
 export function useInvitationsQuery() {
   return useQuery({
     queryKey,
     queryFn: () => apiFetch<{ invitations: Invitation[] }>("/invitations"),
+  });
+}
+
+export function useInvitationSettingsQuery() {
+  return useQuery({
+    queryKey: settingsQueryKey,
+    queryFn: () => apiFetch<InvitationSettings>("/invitations/settings"),
   });
 }
 
@@ -41,6 +56,19 @@ export function useCreateInvitationMutation() {
     mutationFn: (input: CreateInvitationInput) =>
       apiFetch<CreateInvitationResponse>("/invitations", { method: "POST", body: input }),
     onSuccess: () => qc.invalidateQueries({ queryKey }),
+  });
+}
+
+export function useUpdateInvitationSettingsMutation() {
+  const qc = useQueryClient();
+
+  return useMutation({
+    mutationFn: (input: InvitationSettings) =>
+      apiFetch<InvitationSettings>("/invitations/settings", { method: "PATCH", body: input }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: settingsQueryKey });
+      qc.invalidateQueries({ queryKey: ["auth", "onboarding-status"] });
+    },
   });
 }
 

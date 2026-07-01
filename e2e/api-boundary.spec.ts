@@ -15,7 +15,7 @@ import {
 
 test("protects dashboard API routes at the HTTP boundary", async ({ request }) => {
   const cases = [
-    { path: "/api-keys", status: 403 },
+    { path: "/api-keys", status: 401 },
     { path: "/providers", status: 403 },
     { path: "/fallback-groups", status: 403 },
     { path: "/invitations", status: 403 },
@@ -33,16 +33,37 @@ test("keeps admin APIs forbidden to regular users while allowing read-only user 
   page,
   request,
 }) => {
-  await seedE2e(request, {
+  const seed = await seedE2e(request, {
     users: [
       { ...adminUser, role: "ADMIN" },
       { ...regularUser, role: "USER" },
+    ],
+    apiKeys: [
+      { name: "admin-owned-key", createdByEmail: adminUser.email },
+      { name: "user-owned-key", createdByEmail: regularUser.email },
     ],
   });
   await loginViaUi(page, regularUser);
 
   const api = page.context().request;
-  for (const path of ["/api-keys", "/providers", "/fallback-groups", "/invitations", "/users"]) {
+  await expectJsonStatus(await apiRequest(api, "GET", "/api-keys"), 200);
+  const userKey = seed.apiKeys.find((key) => key.name === "user-owned-key");
+  const adminKey = seed.apiKeys.find((key) => key.name === "admin-owned-key");
+  if (!userKey || !adminKey) {
+    throw new Error("seeded API keys were not returned");
+  }
+  const reveal = await expectJsonStatus(
+    await apiRequest(api, "GET", `/api-keys/${userKey.id}/reveal`),
+    200,
+  );
+  expect(reveal.key).toBe(userKey.rawKey);
+  await expectJsonStatus(await apiRequest(api, "GET", `/api-keys/${adminKey.id}/reveal`), 404);
+  await expectJsonStatus(
+    await apiRequest(api, "POST", "/api-keys", { data: { name: "regular-user-key" } }),
+    403,
+  );
+
+  for (const path of ["/providers", "/fallback-groups", "/invitations", "/users"]) {
     await expectJsonStatus(await apiRequest(api, "GET", path), 403);
   }
 

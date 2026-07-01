@@ -1,12 +1,20 @@
 import { Button } from "@repo/ui/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import { Label } from "@repo/ui/components/label";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Copy01Icon, Key01Icon } from "@hugeicons/core-free-icons";
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { useRegisterMutation } from "../hooks/use-auth";
+import { useCopyFeedback } from "../../../lib/use-copy-feedback";
+import { onboardingStatusQueryOptions, useRegisterMutation } from "../hooks/use-auth";
 import type { RegisterResponse } from "../types";
 
 export function RegisterForm() {
@@ -23,7 +31,26 @@ export function RegisterForm() {
   const [invitationCode, setInvitationCode] = useState(initialInvitationCode);
   const [createdApiKey, setCreatedApiKey] = useState<RegisterResponse["apiKey"] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { copiedId, copy } = useCopyFeedback();
+  const onboardingStatus = useQuery(onboardingStatusQueryOptions);
   const registerMutation = useRegisterMutation();
+  const inviteRegistrationEnabled = onboardingStatus.data?.inviteRegistrationEnabled ?? true;
+
+  if (!inviteRegistrationEnabled) {
+    return (
+      <Card className="max-w-md">
+        <CardHeader>
+          <CardTitle>Registration is closed</CardTitle>
+          <CardDescription>Invite-code registration is currently disabled.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild type="button" variant="outline">
+            <Link to="/login">Back to login</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (createdApiKey) {
     return (
@@ -33,7 +60,7 @@ export function RegisterForm() {
         </CardHeader>
         <CardContent className="grid gap-4">
           <p className="text-sm text-muted-foreground">
-            This key is shown once. Use it to call the gateway.
+            Use this key to call the gateway. You can copy it again from API keys.
           </p>
           <div className="rounded-md border bg-muted/30 p-3">
             <code className="block break-all text-xs">{createdApiKey.key}</code>
@@ -45,10 +72,17 @@ export function RegisterForm() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => navigator.clipboard.writeText(createdApiKey.key)}
+              onClick={() =>
+                copy({
+                  value: createdApiKey.key,
+                  copiedId: registeredApiKeyCopyId(createdApiKey.id),
+                  successMessage: "API key copied",
+                  errorMessage: "Could not copy API key",
+                })
+              }
             >
               <HugeiconsIcon icon={Copy01Icon} className="size-4" />
-              Copy
+              {copiedId === registeredApiKeyCopyId(createdApiKey.id) ? "Copied" : "Copy"}
             </Button>
             <Button asChild>
               <Link to="/">
@@ -143,4 +177,8 @@ export function RegisterForm() {
 
 function formatApiKeyBalance(spendLimitUsd: number | null) {
   return spendLimitUsd === null ? "Unlimited" : `$${spendLimitUsd.toFixed(2)}`;
+}
+
+function registeredApiKeyCopyId(id: string) {
+  return `registered-api-key:${id}`;
 }

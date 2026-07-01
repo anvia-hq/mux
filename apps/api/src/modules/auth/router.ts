@@ -10,12 +10,17 @@ import {
   setAuthCookie,
 } from "./services";
 import { authValidationHook, isUniqueConstraintError, sanitizeUser } from "./utils";
-import { InvalidInvitationCodeError, redeemInvitation } from "../invitations/services";
+import {
+  getInvitationSettings,
+  InvalidInvitationCodeError,
+  redeemInvitation,
+} from "../invitations/services";
 
 export const authRouter = new Hono()
   .get("/onboarding-status", async (c) => {
     const count = await getUserCount();
-    return c.json({ needsOnboarding: count === 0 });
+    const settings = await getInvitationSettings();
+    return c.json({ needsOnboarding: count === 0, ...settings });
   })
   .post("/onboard", zValidator("json", onboardSchema, authValidationHook), async (c) => {
     const input = c.req.valid("json");
@@ -75,6 +80,11 @@ export const authRouter = new Hono()
   })
   .post("/register", zValidator("json", registerSchema, authValidationHook), async (c) => {
     const input = c.req.valid("json");
+    const settings = await getInvitationSettings();
+
+    if (!settings.inviteRegistrationEnabled) {
+      return c.json({ error: "invite-code registration is disabled" }, 403);
+    }
 
     try {
       const result = await redeemInvitation({

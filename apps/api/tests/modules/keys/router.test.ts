@@ -3,7 +3,7 @@ import { Hono } from "hono";
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
-    apiKey: { findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
+    apiKey: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
     requestLog: { groupBy: vi.fn() },
     user: { findUnique: vi.fn() },
   },
@@ -13,10 +13,19 @@ const { mockListPublicModels } = vi.hoisted(() => ({
   mockListPublicModels: vi.fn(),
 }));
 
+const { mockDecrypt, mockEncrypt } = vi.hoisted(() => ({
+  mockDecrypt: vi.fn((value: string) => value.replace(/^encrypted:/, "")),
+  mockEncrypt: vi.fn((value: string) => `encrypted:${value}`),
+}));
+
 vi.mock("../../../src/utils/prisma", () => ({ prisma: mockPrisma }));
 vi.mock("../../../src/providers/registry", () => ({
   listPublicModels: mockListPublicModels,
   toPublicModelId: (provider: string, modelId: string) => `${provider}:${modelId}`,
+}));
+vi.mock("../../../src/modules/providers/crypto", () => ({
+  decrypt: mockDecrypt,
+  encrypt: mockEncrypt,
 }));
 vi.mock("hono/jwt", () => ({
   sign: vi.fn().mockResolvedValue("jwt"),
@@ -73,6 +82,27 @@ describe("keys router", () => {
     const app = new Hono().route("/api-keys", keysRouter);
     const res = await app.request("/api-keys");
     expect(res.status).toBe(200);
+  });
+
+  it("GET / returns only owned keys for regular users", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.apiKey.findMany.mockResolvedValueOnce([]);
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys");
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.apiKey.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { createdBy: "user-1" } }),
+    );
   });
 
   it("POST / creates key", async () => {
@@ -155,6 +185,120 @@ describe("keys router", () => {
       body: JSON.stringify({ name: "" }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("POST / rejects regular users", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(mockPrisma.apiKey.create).not.toHaveBeenCalled();
+  });
+
+  it("GET /:id/reveal returns raw key for owners", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+      createdBy: "user-1",
+      isActive: true,
+      keyCiphertext: "encrypted:mux_live_saved",
+    });
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/k1/reveal");
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ key: "mux_live_saved" });
+  });
+
+  it("GET /:id/reveal returns 404 or 409 for known failures", async () => {
+    const app = new Hono().route("/api-keys", keysRouter);
+
+    mockPrisma.apiKey.findUnique.mockResolvedValueOnce(null);
+    expect((await app.request("/api-keys/missing/reveal")).status).toBe(404);
+
+    mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+      createdBy: "admin-1",
+      isActive: true,
+      keyCiphertext: null,
+    });
+    expect((await app.request("/api-keys/k1/reveal")).status).toBe(409);
+  });
+
+  it("POST /:id/rotate regenerates raw key for owners", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+      createdBy: "user-1",
+      isActive: true,
+      key: "old-hash",
+    });
+    mockPrisma.apiKey.update.mockResolvedValueOnce({ id: "k1" });
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/k1/rotate", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ key: expect.stringMatching(/^mux_live_/) });
+    expect(mockPrisma.apiKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "k1" },
+        data: expect.objectContaining({
+          keyCiphertext: expect.stringMatching(/^encrypted:mux_live_/),
+        }),
+      }),
+    );
+  });
+
+  it("POST /:id/rotate returns 404 for non-owner users", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-2",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+      createdBy: "user-1",
+      isActive: true,
+      key: "old-hash",
+    });
+
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/k1/rotate", { method: "POST" });
+
+    expect(res.status).toBe(404);
+    expect(mockPrisma.apiKey.update).not.toHaveBeenCalled();
   });
 
   it("POST / returns 400 for invalid spend limit", async () => {

@@ -4,15 +4,18 @@ test("creates, reveals, lists, and revokes an API key", async ({ page, request }
   await createAndLoginAdmin(page, request);
 
   await page.goto("/api-keys");
+  await page
+    .context()
+    .grantPermissions(["clipboard-write"], { origin: new URL(page.url()).origin });
   await expect(page.getByRole("heading", { name: "API keys" }).last()).toBeVisible();
   await expect(page.getByText("No API keys yet. Create one above.")).toBeVisible();
 
   await page.getByRole("button", { name: "New API key" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Create API key")).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Allow all models" })).toBeVisible();
-  await dialog.getByRole("button", { name: "Allow all models" }).click();
-  await expect(page.getByRole("menuitemradio", { name: "Filter models" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Current enabled models" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Current enabled models" }).click();
+  await expect(page.getByRole("menuitemradio", { name: "Selected models" })).toBeVisible();
   await page.keyboard.press("Escape");
   await dialog.getByLabel("Name").fill("billing-service");
   await dialog.getByLabel("USD balance").fill("5");
@@ -33,9 +36,19 @@ test("creates, reveals, lists, and revokes an API key", async ({ page, request }
   await expect(row.getByText("Active")).toBeVisible();
   await expect(row.getByText("$0.00 / $5.00")).toBeVisible();
 
+  await row.getByRole("button", { name: "Copy" }).click();
+  await expect(page.getByText("API key copied")).toBeVisible();
+  const revealDialog = page.getByRole("dialog");
+  await expect(revealDialog.getByText("Copy API key")).toBeVisible();
+  await expect(revealDialog.locator("code")).toHaveText(rawKey ?? "");
+  await revealDialog.getByRole("button", { name: "Copy" }).click();
+  await expect(revealDialog.getByRole("button", { name: "Copied" })).toBeVisible();
+  await revealDialog.getByRole("button", { name: "Done" }).click();
+
   await row.getByRole("button", { name: "Revoke" }).click();
   await expect(row.getByText("Revoked")).toBeVisible();
   await expect(row.getByRole("button", { name: "Revoke" })).toBeDisabled();
+  await expect(row.getByRole("button", { name: /Copy|Copied/ })).toBeDisabled();
 });
 
 test("validates API key creation inputs before creating a key", async ({ page, request }) => {

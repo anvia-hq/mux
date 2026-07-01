@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const { mockPrisma } = vi.hoisted(() => ({
@@ -6,7 +6,8 @@ const { mockPrisma } = vi.hoisted(() => ({
     user: { count: vi.fn(), create: vi.fn(), findUnique: vi.fn() },
   },
 }));
-const { mockRedeemInvitation } = vi.hoisted(() => ({
+const { mockGetInvitationSettings, mockRedeemInvitation } = vi.hoisted(() => ({
+  mockGetInvitationSettings: vi.fn(),
   mockRedeemInvitation: vi.fn(),
 }));
 
@@ -33,6 +34,7 @@ vi.mock("../../../src/modules/invitations/services", () => {
   }
 
   return {
+    getInvitationSettings: mockGetInvitationSettings,
     InvalidInvitationCodeError,
     redeemInvitation: mockRedeemInvitation,
   };
@@ -42,20 +44,30 @@ import { authRouter } from "../../../src/modules/auth/router";
 import { InvalidInvitationCodeError } from "../../../src/modules/invitations/services";
 
 describe("auth router", () => {
+  beforeEach(() => {
+    mockGetInvitationSettings.mockResolvedValue({ inviteRegistrationEnabled: true });
+  });
+
   afterEach(() => vi.clearAllMocks());
 
   it("GET /onboarding-status true", async () => {
     mockPrisma.user.count.mockResolvedValueOnce(0);
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/onboarding-status");
-    expect(await res.json()).toEqual({ needsOnboarding: true });
+    expect(await res.json()).toEqual({
+      needsOnboarding: true,
+      inviteRegistrationEnabled: true,
+    });
   });
 
   it("GET /onboarding-status false", async () => {
     mockPrisma.user.count.mockResolvedValueOnce(3);
     const app = new Hono().route("/auth", authRouter);
     const res = await app.request("/auth/onboarding-status");
-    expect(await res.json()).toEqual({ needsOnboarding: false });
+    expect(await res.json()).toEqual({
+      needsOnboarding: false,
+      inviteRegistrationEnabled: true,
+    });
   });
 
   it("POST /onboard creates first admin", async () => {
@@ -169,6 +181,26 @@ describe("auth router", () => {
     });
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toEqual({ error: "invalid invitation code" });
+  });
+
+  it("POST /register rejects when invite-code registration is disabled", async () => {
+    mockGetInvitationSettings.mockResolvedValueOnce({ inviteRegistrationEnabled: false });
+    const app = new Hono().route("/auth", authRouter);
+    const res = await app.request("/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "new@test.com",
+        password: "password123",
+        invitationCode: "MUX-TEST",
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({
+      error: "invite-code registration is disabled",
+    });
+    expect(mockRedeemInvitation).not.toHaveBeenCalled();
   });
 
   it("GET /me returns user", async () => {

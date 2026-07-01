@@ -17,7 +17,10 @@ vi.mock("../../../../src/modules/auth/services", () => ({
   }),
   logout: vi.fn().mockResolvedValue(undefined),
   onboard: vi.fn().mockResolvedValue({ id: "3", email: "admin@test.com", role: "ADMIN" }),
-  onboardingStatus: vi.fn().mockResolvedValue({ needsOnboarding: false }),
+  onboardingStatus: vi.fn().mockResolvedValue({
+    needsOnboarding: false,
+    inviteRegistrationEnabled: true,
+  }),
 }));
 
 import {

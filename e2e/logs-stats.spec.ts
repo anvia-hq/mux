@@ -1,4 +1,12 @@
-import { adminUser, expect, loginViaUi, seedE2e, syntheticDeepSeekModelId, test } from "./fixtures";
+import {
+  adminUser,
+  expect,
+  loginViaUi,
+  regularUser,
+  seedE2e,
+  syntheticDeepSeekModelId,
+  test,
+} from "./fixtures";
 
 test("shows seeded logs, filters them, and surfaces overview stats", async ({ page, request }) => {
   const now = new Date();
@@ -101,4 +109,54 @@ test("paginates logs and updates the chart range", async ({ page, request }) => 
   await expect(page.getByLabel("7 days")).toHaveAttribute("data-state", "on");
   await page.getByLabel("90 days").click();
   await expect(page.getByLabel("90 days")).toHaveAttribute("data-state", "on");
+});
+
+test("scopes request logs to the current user unless admin", async ({ page, request }) => {
+  const now = new Date().toISOString();
+
+  await seedE2e(request, {
+    users: [
+      { ...adminUser, role: "ADMIN" },
+      { ...regularUser, role: "USER" },
+    ],
+    apiKeys: [
+      { name: "admin-traffic-key", createdByEmail: adminUser.email, isActive: true },
+      { name: "user-traffic-key", createdByEmail: regularUser.email, isActive: true },
+    ],
+    requestLogs: [
+      {
+        apiKeyName: "admin-traffic-key",
+        provider: "openai",
+        model: "openai:gpt-4o",
+        totalTokens: 200,
+        estimatedCost: 0.004,
+        latencyMs: 220,
+        statusCode: 200,
+        createdAt: now,
+      },
+      {
+        apiKeyName: "user-traffic-key",
+        provider: "synthetic",
+        model: `synthetic:${syntheticDeepSeekModelId}`,
+        totalTokens: 100,
+        estimatedCost: 0.001,
+        latencyMs: 90,
+        statusCode: 200,
+        createdAt: now,
+      },
+    ],
+  });
+
+  await loginViaUi(page, regularUser);
+  await page.goto("/logs");
+  await expect(page.getByText("user-traffic-key")).toBeVisible();
+  await expect(page.getByText("admin-traffic-key")).toHaveCount(0);
+  await expect(page.getByText("100").first()).toBeVisible();
+
+  await page.context().clearCookies();
+  await loginViaUi(page, adminUser);
+  await page.goto("/logs");
+  await expect(page.getByText("user-traffic-key")).toBeVisible();
+  await expect(page.getByText("admin-traffic-key")).toBeVisible();
+  await expect(page.getByText("300").first()).toBeVisible();
 });
