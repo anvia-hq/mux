@@ -19,6 +19,5 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 RUN DATABASE_URL="postgresql://postgres:postgres@postgres:5432/monorepo_template?schema=public" pnpm db:generate
-RUN VITE_API_URL="/api" pnpm --filter @repo/platform build
 
 CMD ["pnpm", "dev"]

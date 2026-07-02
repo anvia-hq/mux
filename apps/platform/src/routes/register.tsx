@@ -5,10 +5,6 @@ import { onboardingStatusQueryOptions } from "../modules/auth/hooks/use-auth";
 
 export const Route = createFileRoute("/register")({
   beforeLoad: async ({ context }) => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
     const status = await context.queryClient.ensureQueryData(onboardingStatusQueryOptions);
     if (status.needsOnboarding) {
       throw redirect({ to: "/onboard" });

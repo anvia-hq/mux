@@ -7,8 +7,7 @@
     "with-env": "dotenv -e ../../.env --",
     "dev": "pnpm with-env vite --host 0.0.0.0 --port 3000",
     "build": "pnpm with-env vite build",
-    "start": "pnpm with-env node .output/server/index.mjs",
-    "preview": "pnpm start",
+    "preview": "pnpm with-env vite preview --host 0.0.0.0 --port 3000",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -23,7 +22,6 @@
     "@repo/ui": "workspace:*",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-router": "^1.170.16",
-    "@tanstack/react-start": "1.168.26",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-syntax-highlighter": "^16.1.1",
@@ -42,7 +40,6 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^29.1.1",
-    "nitro": "3.0.260610-beta",
     "typescript": "^6.0.3",
     "vite": "^8.0.16"
   }
