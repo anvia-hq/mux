@@ -1,5 +1,7 @@
 import type { ChatCompletionRequest, ChatContentPart, Model, ProviderCapabilities } from "./types";
 
+const maxOpenAICompatibleTokens = Math.floor(2_147_483_647 / 2);
+
 export type ChatFeature =
   | "tools"
   | "structuredOutput"
@@ -61,12 +63,15 @@ export class UnsupportedChatFeatureError extends Error {
 
 export function requestedChatFeatures(request: ChatCompletionRequest): Set<ChatFeature> {
   const features = new Set<ChatFeature>();
+  const messages = Array.isArray(request.messages) ? request.messages : [];
 
   if (
     request.tools?.length ||
+    Array.isArray(request.functions) ||
+    request.function_call !== undefined ||
     request.tool_choice !== undefined ||
     request.parallel_tool_calls !== undefined ||
-    request.messages.some((message) => message.role === "tool" || message.tool_calls?.length)
+    messages.some((message) => message.role === "tool" || message.tool_calls?.length)
   ) {
     features.add("tools");
   }
@@ -76,7 +81,7 @@ export function requestedChatFeatures(request: ChatCompletionRequest): Set<ChatF
   }
 
   if (
-    request.messages.some((message) =>
+    messages.some((message) =>
       Array.isArray(message.content) ? message.content.some((part) => part.type !== "text") : false,
     )
   ) {
@@ -105,6 +110,7 @@ export function unsupportedChatFeatures(
 ): ChatFeature[] {
   const requested = requestedChatFeatures(request);
   const unsupported: ChatFeature[] = [];
+  const messages = Array.isArray(request.messages) ? request.messages : [];
 
   for (const feature of requested) {
     if (!capabilities[feature]) {
@@ -120,7 +126,7 @@ export function unsupportedChatFeatures(
   }
   if (
     requested.has("multimodalInput") &&
-    !request.messages.every((message) =>
+    !messages.every((message) =>
       Array.isArray(message.content)
         ? message.content.every((part) => part.type === "text" || supportsInputPart(model, part))
         : true,
@@ -172,39 +178,102 @@ export function buildOpenAICompatibleRequestBody(
   request: ChatCompletionRequest,
   stream: boolean,
 ): string {
-  const body = {
+  const body: Record<string, unknown> = {
+    ...request,
     model: request.model,
-    messages: request.messages,
-    temperature: request.temperature,
-    max_tokens: request.max_tokens,
-    max_completion_tokens: request.max_completion_tokens,
-    stream,
-    stream_options: stream
-      ? { ...request.stream_options, include_usage: request.stream_options?.include_usage ?? true }
-      : undefined,
-    tools: request.tools,
-    tool_choice: request.tool_choice,
-    parallel_tool_calls: request.parallel_tool_calls,
-    response_format: request.response_format,
-    top_p: request.top_p,
-    stop: request.stop,
-    n: request.n,
-    seed: request.seed,
-    frequency_penalty: request.frequency_penalty,
-    presence_penalty: request.presence_penalty,
-    logit_bias: request.logit_bias,
-    logprobs: request.logprobs,
-    top_logprobs: request.top_logprobs,
-    user: request.user,
-    metadata: request.metadata,
-    store: request.store,
-    service_tier: request.service_tier,
-    reasoning_effort: request.reasoning_effort,
-    modalities: request.modalities,
-    audio: request.audio,
-  } satisfies Record<keyof ChatCompletionRequest, unknown>;
+  };
+
+  normalizeOpenAIReasoningModelRequest(body);
+
+  if (stream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  } else {
+    if (request.stream !== undefined) {
+      body.stream = request.stream;
+    } else {
+      delete body.stream;
+    }
+    delete body.stream_options;
+  }
 
   return JSON.stringify(body);
+}
+
+function normalizeOpenAIReasoningModelRequest(body: Record<string, unknown>): void {
+  if (typeof body.model !== "string") return;
+
+  const originalModel = body.model;
+  const isOModel = isOpenAIReasoningOModel(originalModel);
+  const isGPT5Model = isOpenAIGPT5Model(originalModel);
+  if (!isOModel && !isGPT5Model) return;
+
+  if (
+    (body.max_completion_tokens === undefined ||
+      body.max_completion_tokens === null ||
+      body.max_completion_tokens === 0) &&
+    typeof body.max_tokens === "number" &&
+    body.max_tokens !== 0
+  ) {
+    body.max_completion_tokens = body.max_tokens;
+    delete body.max_tokens;
+  }
+
+  if (isOModel) {
+    delete body.temperature;
+  }
+
+  if (isGPT5Model) {
+    delete body.temperature;
+    delete body.top_p;
+    delete body.logprobs;
+  }
+
+  const parsed = parseOpenAIReasoningEffortFromModelSuffix(originalModel);
+  if (parsed) {
+    body.reasoning_effort = parsed.effort;
+    body.model = parsed.model;
+  }
+
+  if (shouldUseDeveloperRoleForOpenAIReasoningModel(String(body.model))) {
+    convertFirstSystemMessageToDeveloper(body);
+  }
+}
+
+function isOpenAIReasoningOModel(model: string): boolean {
+  return model.startsWith("o1") || model.startsWith("o3") || model.startsWith("o4");
+}
+
+function isOpenAIGPT5Model(model: string): boolean {
+  return model.startsWith("gpt-5");
+}
+
+function parseOpenAIReasoningEffortFromModelSuffix(
+  model: string,
+): { effort: string; model: string } | null {
+  const suffixes = ["-high", "-minimal", "-low", "-medium", "-none", "-xhigh"];
+  const suffix = suffixes.find((item) => model.endsWith(item));
+  if (!suffix) return null;
+
+  return {
+    effort: suffix.slice(1),
+    model: model.slice(0, -suffix.length),
+  };
+}
+
+function shouldUseDeveloperRoleForOpenAIReasoningModel(model: string): boolean {
+  if (model.startsWith("o1-mini") || model.startsWith("o1-preview")) return false;
+  return isOpenAIReasoningOModel(model) || isOpenAIGPT5Model(model);
+}
+
+function convertFirstSystemMessageToDeveloper(body: Record<string, unknown>): void {
+  if (!Array.isArray(body.messages)) return;
+
+  const [firstMessage, ...restMessages] = body.messages;
+  if (!firstMessage || typeof firstMessage !== "object") return;
+  if ((firstMessage as { role?: unknown }).role !== "system") return;
+
+  body.messages = [{ ...firstMessage, role: "developer" }, ...restMessages];
 }
 
 export function validateChatCompletionRequestShape(value: unknown): string | null {
@@ -213,51 +282,62 @@ export function validateChatCompletionRequestShape(value: unknown): string | nul
   if (typeof request.model !== "string" || request.model.length === 0) {
     return "request must include a model";
   }
-  if (!Array.isArray(request.messages) || request.messages.length === 0) {
-    return "request must include a non-empty messages array";
+  if (typeof request.max_tokens === "number" && request.max_tokens > maxOpenAICompatibleTokens) {
+    return "max_tokens is invalid";
+  }
+  if (request.messages !== undefined && !Array.isArray(request.messages)) {
+    return "messages must be an array";
+  }
+  const webSearchOptionsError = normalizeWebSearchOptions(request as Record<string, unknown>);
+  if (webSearchOptionsError) {
+    return webSearchOptionsError;
   }
 
-  for (const [index, message] of request.messages.entries()) {
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const hasFimInput = hasNonNilField(request, "prefix") || hasNonNilField(request, "suffix");
+
+  if (messages.length === 0 && !hasFimInput) {
+    return "request must include a non-empty messages array or prefix/suffix";
+  }
+
+  for (const [index, message] of messages.entries()) {
     if (!message || typeof message !== "object") {
       return `messages[${index}] must be an object`;
     }
-    if (!["system", "user", "assistant", "tool"].includes(message.role)) {
-      return `messages[${index}].role is invalid`;
-    }
-    if (message.role === "tool" && typeof message.tool_call_id !== "string") {
-      return `messages[${index}].tool_call_id is required for tool messages`;
-    }
-    if (message.tool_calls !== undefined && !isValidToolCalls(message.tool_calls)) {
-      return `messages[${index}].tool_calls is invalid`;
-    }
-    if (!isValidMessageContent(message)) {
-      return `messages[${index}].content is invalid`;
-    }
+  }
+
+  return null;
+}
+
+function hasNonNilField(
+  request: Partial<ChatCompletionRequest>,
+  key: "prefix" | "suffix",
+): boolean {
+  return Object.hasOwn(request, key) && request[key] !== null;
+}
+
+function normalizeWebSearchOptions(request: Record<string, unknown>): string | null {
+  if (request.web_search_options === undefined || request.web_search_options === null) {
+    return null;
+  }
+
+  if (typeof request.web_search_options !== "object" || Array.isArray(request.web_search_options)) {
+    return "web_search_options must be an object";
+  }
+
+  const webSearchOptions = request.web_search_options as Record<string, unknown>;
+  const searchContextSize = webSearchOptions.search_context_size;
+  if (searchContextSize === undefined || searchContextSize === "") {
+    webSearchOptions.search_context_size = "medium";
+    return null;
   }
 
   if (
-    request.tools !== undefined &&
-    (!Array.isArray(request.tools) ||
-      !request.tools.every(
-        (tool) => tool?.type === "function" && typeof tool.function?.name === "string",
-      ))
+    searchContextSize !== "high" &&
+    searchContextSize !== "medium" &&
+    searchContextSize !== "low"
   ) {
-    return "tools must be an array of function tools";
-  }
-
-  if (
-    request.response_format !== undefined &&
-    !["text", "json_object", "json_schema"].includes(request.response_format.type)
-  ) {
-    return "response_format.type is invalid";
-  }
-
-  if (
-    request.modalities !== undefined &&
-    (!Array.isArray(request.modalities) ||
-      !request.modalities.every((modality) => modality === "text" || modality === "audio"))
-  ) {
-    return "modalities must contain only text or audio";
+    return "invalid search_context_size, must be one of: high, medium, low";
   }
 
   return null;
@@ -268,40 +348,4 @@ function supportsInputPart(model: Model, part: ChatContentPart): boolean {
   if (part.type === "input_audio") return model.inputModalities.includes("audio");
   if (part.type === "file") return model.inputModalities.includes("pdf");
   return true;
-}
-
-function isValidToolCalls(
-  toolCalls: unknown,
-): toolCalls is NonNullable<ChatCompletionRequest["messages"][number]["tool_calls"]> {
-  return (
-    Array.isArray(toolCalls) &&
-    toolCalls.every(
-      (toolCall) =>
-        toolCall?.type === "function" &&
-        typeof toolCall.id === "string" &&
-        typeof toolCall.function?.name === "string" &&
-        typeof toolCall.function?.arguments === "string",
-    )
-  );
-}
-
-function isValidMessageContent(message: ChatCompletionRequest["messages"][number]): boolean {
-  const content = message.content;
-  if (content === undefined) {
-    return message.role === "assistant" && Boolean(message.tool_calls?.length);
-  }
-  if (typeof content === "string" || content === null) return true;
-  if (!Array.isArray(content)) return false;
-  return content.every((part) => {
-    if (!part || typeof part !== "object") return false;
-    if (part.type === "text") return typeof part.text === "string";
-    if (part.type === "refusal") return typeof part.refusal === "string";
-    if (part.type === "image_url") return typeof part.image_url?.url === "string";
-    if (part.type === "input_audio")
-      return (
-        typeof part.input_audio?.data === "string" && typeof part.input_audio?.format === "string"
-      );
-    if (part.type === "file") return Boolean(part.file?.file_id || part.file?.file_data);
-    return false;
-  });
 }

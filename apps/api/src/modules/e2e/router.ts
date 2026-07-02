@@ -16,6 +16,7 @@ const tables = [
   "DisabledModel",
   "CustomProviderModel",
   "CustomProvider",
+  "ProviderChannel",
   "ProviderKey",
   "InvitationRedemption",
   "ApiKey",
@@ -157,17 +158,36 @@ export const e2eRouter = new Hono()
     if (seed.syntheticProvider) {
       const updater = await findSeedAdmin();
       const apiKey = "synthetic-e2e-provider-key";
+      const ciphertext = encrypt(apiKey);
+      const four = lastFour(apiKey);
+      await prisma.providerChannel.upsert({
+        where: { id: "synthetic" },
+        create: {
+          id: "synthetic",
+          provider: "synthetic",
+          name: "synthetic",
+          keyCiphertext: ciphertext,
+          lastFour: four,
+          createdBy: updater.id,
+          updatedBy: updater.id,
+        },
+        update: {
+          keyCiphertext: ciphertext,
+          lastFour: four,
+          updatedBy: updater.id,
+        },
+      });
       const row = await prisma.providerKey.upsert({
         where: { provider: "synthetic" },
         create: {
           provider: "synthetic",
-          ciphertext: encrypt(apiKey),
-          lastFour: lastFour(apiKey),
+          ciphertext,
+          lastFour: four,
           updatedBy: updater.id,
         },
         update: {
-          ciphertext: encrypt(apiKey),
-          lastFour: lastFour(apiKey),
+          ciphertext,
+          lastFour: four,
           updatedBy: updater.id,
         },
       });
@@ -178,17 +198,36 @@ export const e2eRouter = new Hono()
     if (seed.e2eProvider) {
       const updater = await findSeedAdmin();
       const apiKey = "e2e-provider-key";
+      const ciphertext = encrypt(apiKey);
+      const four = lastFour(apiKey);
+      await prisma.providerChannel.upsert({
+        where: { id: "e2e" },
+        create: {
+          id: "e2e",
+          provider: "e2e",
+          name: "e2e",
+          keyCiphertext: ciphertext,
+          lastFour: four,
+          createdBy: updater.id,
+          updatedBy: updater.id,
+        },
+        update: {
+          keyCiphertext: ciphertext,
+          lastFour: four,
+          updatedBy: updater.id,
+        },
+      });
       const row = await prisma.providerKey.upsert({
         where: { provider: "e2e" },
         create: {
           provider: "e2e",
-          ciphertext: encrypt(apiKey),
-          lastFour: lastFour(apiKey),
+          ciphertext,
+          lastFour: four,
           updatedBy: updater.id,
         },
         update: {
-          ciphertext: encrypt(apiKey),
-          lastFour: lastFour(apiKey),
+          ciphertext,
+          lastFour: four,
           updatedBy: updater.id,
         },
       });

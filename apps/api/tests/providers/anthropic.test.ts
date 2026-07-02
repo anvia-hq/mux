@@ -50,6 +50,39 @@ describe("AnthropicAdapter", () => {
     expect(adapter.name).toBe("anthropic");
   });
 
+  it("merges request override headers after Anthropic defaults", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "msg-1",
+        model: "claude-test",
+        content: [{ type: "text", text: "hi" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    const adapter = new AnthropicAdapter("sk-test");
+    await adapter.chatCompletion(
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      {
+        headers: {
+          "x-api-key": "sk-channel",
+          "x-trace": "trace-123",
+        },
+      },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "Content-Type": "application/json",
+      "anthropic-version": "2023-06-01",
+      "x-api-key": "sk-channel",
+      "x-trace": "trace-123",
+    });
+  });
+
   it("maps streaming usage events into OpenAI-style usage", async () => {
     mockFetch.mockResolvedValueOnce(
       makeSSEStream([

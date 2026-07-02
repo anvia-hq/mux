@@ -6,6 +6,8 @@ const {
   mockEnqueueBackgroundPoll,
   mockEstimateCost,
   mockGetModelPricing,
+  mockGetProviderChannelRuntime,
+  mockGetProviderForChannel,
   mockGetProviderByName,
   mockIsResponsesCacheEnabled,
   mockLogRequest,
@@ -24,6 +26,8 @@ const {
   mockEnqueueBackgroundPoll: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockGetModelPricing: vi.fn(),
+  mockGetProviderChannelRuntime: vi.fn(),
+  mockGetProviderForChannel: vi.fn(),
   mockGetProviderByName: vi.fn(),
   mockIsResponsesCacheEnabled: vi.fn(),
   mockLogRequest: vi.fn(),
@@ -72,6 +76,8 @@ vi.mock("../../../src/middleware/logger", () => {
 vi.mock("../../../src/providers/registry", () => ({
   estimateCost: mockEstimateCost,
   getModelPricing: mockGetModelPricing,
+  getProviderChannelRuntime: mockGetProviderChannelRuntime,
+  getProviderForChannel: mockGetProviderForChannel,
   getProviderByName: mockGetProviderByName,
   resolveChatModel: mockResolveChatModel,
   resolveResponseTarget: mockResolveResponseTarget,
@@ -117,6 +123,10 @@ describe("responses services", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsResponsesCacheEnabled.mockReturnValue(false);
+    mockGetProviderChannelRuntime.mockReturnValue(null);
+    mockGetProviderForChannel.mockImplementation((provider: string) =>
+      mockGetProviderByName(provider),
+    );
     mockReadCachedResponse.mockResolvedValue(null);
     mockWriteCachedResponse.mockResolvedValue(undefined);
     mockGetResponsesCacheTtlSeconds.mockReturnValue(300);
@@ -209,6 +219,74 @@ describe("responses services", () => {
     );
   });
 
+  it("applies channel body and header overrides before creating a response", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-override",
+      model: "gpt-4o",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4o",
+      target: {
+        ...createResolvedModel("openai", "gpt-4o", createResponse),
+        apiKey: "sk-upstream",
+        headerOverride: {
+          "X-Key": "{api_key}",
+          "X-Trace": "{client_header:X-Trace}",
+        },
+        paramOverride: { metadata: { channel: "primary" } },
+      },
+    });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    await handleResponseCreate(createRequest(), "key-1", {
+      requestContext: { clientHeaders: new Headers({ "X-Trace": "trace-123" }) },
+    });
+
+    expect(createResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-4o",
+        metadata: { channel: "primary" },
+      }),
+      {
+        headers: {
+          "x-key": "sk-upstream",
+          "x-trace": "trace-123",
+        },
+      },
+    );
+  });
+
+  it("passes the original raw body for pass-through response channels", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-raw",
+      model: "gpt-4o",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hello"\n}';
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4o",
+      target: {
+        ...createResolvedModel("openai", "gpt-4o", createResponse),
+        settings: { passThroughBodyEnabled: true },
+        paramOverride: { metadata: { channel: "primary" } },
+      },
+    });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    await handleResponseCreate(createRequest({ unknown: true }), "key-1", { rawBody });
+
+    expect(createResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-4o",
+        input: "hello",
+      }),
+      { headers: {}, rawBody },
+    );
+  });
+
   it("forwards cached_tokens to estimateCost when upstream reports them", async () => {
     const createResponse = vi.fn().mockResolvedValueOnce({
       id: "resp-cached",
@@ -265,7 +343,7 @@ describe("responses services", () => {
     );
   });
 
-  it("forwards stream_options.include_obfuscation to the upstream body", async () => {
+  it("filters stream_options.include_obfuscation by default", async () => {
     const createResponse = vi.fn().mockResolvedValueOnce({
       id: "resp-stream-options",
       model: "gpt-4o",
@@ -289,9 +367,9 @@ describe("responses services", () => {
       expect.objectContaining({
         model: "gpt-4o",
         input: "hello",
-        stream_options: { include_obfuscation: true },
       }),
     );
+    expect(createResponse.mock.calls[0]?.[0]).not.toHaveProperty("stream_options");
   });
 
   it("forwards include array entries verbatim on Responses create", async () => {
@@ -1650,6 +1728,95 @@ describe("responses services", () => {
         capabilities: openAICompatibleCapabilities,
       };
     }
+
+    it("applies channel body and header overrides for resolved input-token targets", async () => {
+      const countResponseInputTokens = vi.fn().mockResolvedValueOnce({
+        object: "response.input_tokens",
+        input_tokens: 42,
+      });
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-4o",
+        target: {
+          provider: makeProvider("openai", countResponseInputTokens),
+          providerName: "openai",
+          modelId: "gpt-4o",
+          publicModelId: "openai:gpt-4o",
+          apiKey: "sk-upstream",
+          headerOverride: {
+            "X-Key": "{api_key}",
+            "X-Trace": "{client_header:X-Trace}",
+          },
+          paramOverride: { metadata: { channel: "primary" } },
+        },
+      });
+
+      const result = await handleResponseInputTokens(
+        { model: "openai:gpt-4o", input: "hi" },
+        "key-1",
+        { requestContext: { clientHeaders: new Headers({ "X-Trace": "trace-123" }) } },
+      );
+
+      expect(result).toMatchObject({
+        provider: "openai",
+        model: "openai:gpt-4o",
+        response: { object: "response.input_tokens", input_tokens: 42 },
+      });
+      expect(countResponseInputTokens).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-4o",
+          input: "hi",
+          metadata: { channel: "primary" },
+        }),
+        {
+          headers: {
+            "x-key": "sk-upstream",
+            "x-trace": "trace-123",
+          },
+        },
+      );
+      expect(mockGetProviderByName).not.toHaveBeenCalled();
+      expect(mockLogRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          endpoint: "/v1/responses/input_tokens",
+          provider: "openai",
+          model: "openai:gpt-4o",
+          statusCode: 200,
+        }),
+      );
+    });
+
+    it("passes raw body for pass-through resolved input-token targets", async () => {
+      const countResponseInputTokens = vi.fn().mockResolvedValueOnce({
+        object: "response.input_tokens",
+        input_tokens: 42,
+      });
+      const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hi"\n}';
+      mockResolveResponseTarget.mockResolvedValueOnce({
+        kind: "direct",
+        requestedModelId: "openai:gpt-4o",
+        target: {
+          provider: makeProvider("openai", countResponseInputTokens),
+          providerName: "openai",
+          modelId: "gpt-4o",
+          publicModelId: "openai:gpt-4o",
+          settings: { passThroughBodyEnabled: true },
+          paramOverride: { metadata: { channel: "primary" } },
+        },
+      });
+
+      await handleResponseInputTokens({ model: "openai:gpt-4o", input: "hi" }, "key-1", {
+        rawBody,
+      });
+
+      expect(countResponseInputTokens).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-4o",
+          input: "hi",
+        }),
+        { headers: {}, rawBody },
+      );
+    });
 
     it("returns the OpenAI input-token count and logs a 200 entry without billing", async () => {
       const countResponseInputTokens = vi.fn().mockResolvedValueOnce({

@@ -2,10 +2,12 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  ProviderRequestOptions,
   Model,
   ProviderAdapter,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { mergeProviderRequestHeaders } from "./types";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -24,11 +26,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
 
   readonly name: string;
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse> {
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: buildOpenAICompatibleRequestBody(request, false),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -40,11 +45,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as ChatCompletionResponse;
   }
 
-  async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
+  async *chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk> {
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: buildOpenAICompatibleRequestBody(request, true),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -91,11 +99,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return this.models;
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+  private buildHeaders(options?: ProviderRequestOptions): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      options,
+    );
   }
 
   private toChatCompletionsUrl(apiBase: string): string {

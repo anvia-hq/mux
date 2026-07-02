@@ -149,8 +149,16 @@ import { CustomOpenAICompatibleAdapter } from "./custom-openai-compatible";
 import { prisma } from "../utils/prisma";
 import { decrypt } from "../modules/providers/crypto";
 import { applyRuntimeCapabilities } from "./chat-compat";
+import {
+  normalizeChannelOtherSettings,
+  normalizeChannelSettings,
+  normalizeJsonObject,
+  normalizeStringMap,
+  type ChannelOtherSettings,
+  type ChannelSettings,
+} from "./channel-settings";
 
-const providers: Map<string, ProviderAdapter> = new Map();
+const providerChannels: Map<string, RuntimeProviderChannel> = new Map();
 export const FALLBACK_GROUP_PROVIDER = "mux";
 
 const adapterFactories: Record<string, (apiKey: string) => ProviderAdapter | null> = {
@@ -322,6 +330,36 @@ type CustomProviderWithModels = {
   }>;
 };
 
+type ProviderChannelRow = {
+  id: string;
+  provider: string;
+  name: string;
+  enabled: boolean;
+  priority: number;
+  weight: number;
+  keyCiphertext: string;
+  modelMapping?: unknown;
+  settings?: unknown;
+  otherSettings?: unknown;
+  paramOverride?: unknown;
+  headerOverride?: unknown;
+};
+
+export type RuntimeProviderChannel = {
+  id: string;
+  name: string;
+  providerName: string;
+  priority: number;
+  weight: number;
+  apiKey: string;
+  provider: ProviderAdapter;
+  modelMapping: Record<string, string>;
+  settings?: ChannelSettings;
+  otherSettings?: ChannelOtherSettings;
+  paramOverride?: Record<string, unknown>;
+  headerOverride?: Record<string, unknown>;
+};
+
 function buildCustomAdapter(row: CustomProviderWithModels, apiKey: string): ProviderAdapter {
   return new CustomOpenAICompatibleAdapter({
     name: row.id,
@@ -355,40 +393,138 @@ function buildAdapter(
   return customProvider ? buildCustomAdapter(customProvider, apiKey) : null;
 }
 
+function compareChannels(a: RuntimeProviderChannel, b: RuntimeProviderChannel): number {
+  if (a.priority !== b.priority) return b.priority - a.priority;
+  if (a.weight !== b.weight) return b.weight - a.weight;
+  return a.id.localeCompare(b.id);
+}
+
+function buildRuntimeChannel(
+  row: ProviderChannelRow,
+  customProvider?: CustomProviderWithModels,
+): RuntimeProviderChannel | null {
+  const apiKey = decrypt(row.keyCiphertext);
+  const adapter = buildAdapter(row.provider, apiKey, customProvider);
+  if (!adapter) return null;
+
+  return {
+    id: row.id,
+    name: row.name,
+    providerName: row.provider,
+    priority: row.priority,
+    weight: row.weight,
+    apiKey,
+    provider: adapter,
+    modelMapping: normalizeStringMap(row.modelMapping),
+    settings: normalizeChannelSettings(row.settings),
+    otherSettings: normalizeChannelOtherSettings(row.otherSettings),
+    paramOverride: normalizeJsonObject(row.paramOverride),
+    headerOverride: normalizeJsonObject(row.headerOverride),
+  };
+}
+
+async function loadCustomProvidersById(): Promise<Map<string, CustomProviderWithModels>> {
+  try {
+    const customProviders = await prisma.customProvider.findMany({
+      include: { models: { orderBy: { name: "asc" } } },
+    });
+    return new Map(customProviders.map((provider) => [provider.id, provider]));
+  } catch (error) {
+    console.warn(
+      "CustomProvider table not available yet:",
+      error instanceof Error ? error.message : error,
+    );
+    return new Map();
+  }
+}
+
+async function loadChannelRowsForProvider(provider?: string): Promise<ProviderChannelRow[]> {
+  const rows = await prisma.providerChannel.findMany({
+    where: { ...(provider ? { provider } : {}), enabled: true },
+    orderBy: [{ priority: "desc" }, { weight: "desc" }, { id: "asc" }],
+  });
+  return rows.map((row) => ({
+    id: row.id,
+    provider: row.provider,
+    name: row.name,
+    enabled: row.enabled,
+    priority: row.priority,
+    weight: row.weight,
+    keyCiphertext: row.keyCiphertext,
+    modelMapping: row.modelMapping,
+    settings: row.settings,
+    otherSettings: row.otherSettings,
+    paramOverride: row.paramOverride,
+    headerOverride: row.headerOverride,
+  }));
+}
+
+async function loadLegacyProviderKeyRows(provider?: string): Promise<ProviderChannelRow[]> {
+  const rows = provider
+    ? await prisma.providerKey.findMany({ where: { provider } })
+    : await prisma.providerKey.findMany();
+
+  return rows.map((row) => ({
+    id: row.provider,
+    provider: row.provider,
+    name: row.provider,
+    enabled: true,
+    priority: 0,
+    weight: 1,
+    keyCiphertext: row.ciphertext,
+  }));
+}
+
+function channelsForProvider(providerName: string): RuntimeProviderChannel[] {
+  return Array.from(providerChannels.values())
+    .filter((channel) => channel.providerName === providerName)
+    .sort(compareChannels);
+}
+
+function sourceModelForTarget(target: ResolvedProviderModel): Model | null {
+  const upstreamModelId = target.upstreamModelId ?? target.modelId;
+  return target.provider.listModels().find((model) => model.id === upstreamModelId) ?? null;
+}
+
 /**
  * Reads provider keys from the database and seeds the in-memory adapter cache.
  * Provider keys are NEVER read from environment variables — they are stored
  * encrypted at rest and managed exclusively via the dashboard / providers API.
  */
 export async function initProviders() {
+  providerChannels.clear();
+
   try {
-    const rows = await prisma.providerKey.findMany();
-    let customProvidersById = new Map<string, CustomProviderWithModels>();
-    try {
-      const customProviders = await prisma.customProvider.findMany({
-        include: { models: { orderBy: { name: "asc" } } },
-      });
-      customProvidersById = new Map(customProviders.map((provider) => [provider.id, provider]));
-    } catch (error) {
-      console.warn(
-        "CustomProvider table not available yet:",
-        error instanceof Error ? error.message : error,
-      );
-    }
+    const rows = await loadChannelRowsForProvider();
+    const customProvidersById = await loadCustomProvidersById();
 
     for (const row of rows) {
-      const apiKey = decrypt(row.ciphertext);
-      const adapter = buildAdapter(row.provider, apiKey, customProvidersById.get(row.provider));
-      if (adapter) providers.set(row.provider, adapter);
+      const channel = buildRuntimeChannel(row, customProvidersById.get(row.provider));
+      if (channel) providerChannels.set(channel.id, channel);
     }
   } catch (error) {
     console.warn(
-      "ProviderKey table not available yet:",
+      "ProviderChannel table not available yet:",
       error instanceof Error ? error.message : error,
     );
+    try {
+      const customProvidersById = await loadCustomProvidersById();
+      const rows = await loadLegacyProviderKeyRows();
+      for (const row of rows) {
+        const channel = buildRuntimeChannel(row, customProvidersById.get(row.provider));
+        if (channel) providerChannels.set(channel.id, channel);
+      }
+    } catch (legacyError) {
+      console.warn(
+        "ProviderKey table not available yet:",
+        legacyError instanceof Error ? legacyError.message : legacyError,
+      );
+    }
   }
 
-  console.log(`Initialized providers: ${Array.from(providers.keys()).join(", ") || "(none)"}`);
+  console.log(
+    `Initialized provider channels: ${Array.from(providerChannels.keys()).join(", ") || "(none)"}`,
+  );
 }
 
 /**
@@ -396,36 +532,98 @@ export async function initProviders() {
  * Called after PUT/DELETE on the providers API so changes apply immediately.
  */
 export async function reloadProvider(name: string): Promise<void> {
-  const row = await prisma.providerKey.findUnique({ where: { provider: name } });
-  if (!row) {
-    providers.delete(name);
-    return;
+  for (const [channelId, channel] of providerChannels) {
+    if (channel.providerName === name) {
+      providerChannels.delete(channelId);
+    }
   }
-  const apiKey = decrypt(row.ciphertext);
-  let customProvider: CustomProviderWithModels | null = null;
-  if (!adapterFactories[name]) {
-    customProvider = await prisma.customProvider.findUnique({
-      where: { id: name },
-      include: { models: { orderBy: { name: "asc" } } },
-    });
-  }
-  const adapter = buildAdapter(name, apiKey, customProvider ?? undefined);
-  if (adapter) {
-    providers.set(name, adapter);
-  } else {
-    providers.delete(name);
+
+  try {
+    const rows = await loadChannelRowsForProvider(name);
+    let customProvider: CustomProviderWithModels | null = null;
+    if (!adapterFactories[name]) {
+      customProvider = await prisma.customProvider.findUnique({
+        where: { id: name },
+        include: { models: { orderBy: { name: "asc" } } },
+      });
+    }
+    for (const row of rows) {
+      const channel = buildRuntimeChannel(row, customProvider ?? undefined);
+      if (channel) providerChannels.set(channel.id, channel);
+    }
+  } catch (error) {
+    console.warn(
+      "ProviderChannel table not available yet:",
+      error instanceof Error ? error.message : error,
+    );
+    const rows = await loadLegacyProviderKeyRows(name);
+    let customProvider: CustomProviderWithModels | null = null;
+    if (!adapterFactories[name]) {
+      customProvider = await prisma.customProvider.findUnique({
+        where: { id: name },
+        include: { models: { orderBy: { name: "asc" } } },
+      });
+    }
+    for (const row of rows) {
+      const channel = buildRuntimeChannel(row, customProvider ?? undefined);
+      if (channel) providerChannels.set(channel.id, channel);
+    }
   }
 }
 
+export async function reloadProviderChannel(channelId: string): Promise<void> {
+  providerChannels.delete(channelId);
+
+  const row = await prisma.providerChannel.findUnique({ where: { id: channelId } });
+  if (!row?.enabled) {
+    return;
+  }
+
+  let customProvider: CustomProviderWithModels | null = null;
+  if (!adapterFactories[row.provider]) {
+    customProvider = await prisma.customProvider.findUnique({
+      where: { id: row.provider },
+      include: { models: { orderBy: { name: "asc" } } },
+    });
+  }
+
+  const channel = buildRuntimeChannel(
+    {
+      id: row.id,
+      provider: row.provider,
+      name: row.name,
+      enabled: row.enabled,
+      priority: row.priority,
+      weight: row.weight,
+      keyCiphertext: row.keyCiphertext,
+      modelMapping: row.modelMapping,
+      settings: row.settings,
+      otherSettings: row.otherSettings,
+      paramOverride: row.paramOverride,
+      headerOverride: row.headerOverride,
+    },
+    customProvider ?? undefined,
+  );
+  if (channel) providerChannels.set(channel.id, channel);
+}
+
 export function clearProviderCacheForE2e(): void {
-  providers.clear();
+  providerChannels.clear();
 }
 
 export type ResolvedProviderModel = {
   provider: ProviderAdapter;
   providerName: string;
+  channelId: string;
+  channelName: string;
   modelId: string;
+  upstreamModelId: string;
   publicModelId: string;
+  settings?: ChannelSettings;
+  otherSettings?: ChannelOtherSettings;
+  paramOverride?: Record<string, unknown>;
+  headerOverride?: Record<string, unknown>;
+  apiKey?: string;
 };
 
 export type ResolvedFallbackGroup = {
@@ -440,7 +638,7 @@ export type ResolvedChatModel =
   | {
       kind: "direct";
       requestedModelId: string;
-      targets: [ResolvedProviderModel];
+      targets: ResolvedProviderModel[];
     }
   | {
       kind: "fallback-group";
@@ -500,42 +698,46 @@ function parseFallbackGroupModelId(model: string): string | null {
 }
 
 export function resolveProviderModel(model: string): ResolvedProviderModel | null {
+  return resolveProviderModelTargets(model)[0] ?? null;
+}
+
+function resolveProviderModelTargets(model: string): ResolvedProviderModel[] {
   const parsed = parsePublicModelId(model);
   if (!parsed) {
-    return null;
+    return [];
   }
 
-  const provider = providers.get(parsed.providerName);
-  if (!provider) {
-    return null;
+  const resolved: ResolvedProviderModel[] = [];
+  for (const channel of channelsForProvider(parsed.providerName)) {
+    const upstreamModelId = channel.modelMapping[parsed.modelId] ?? parsed.modelId;
+    if (!channel.provider.listModels().some((m) => m.id === upstreamModelId)) {
+      continue;
+    }
+    resolved.push({
+      provider: channel.provider,
+      providerName: parsed.providerName,
+      channelId: channel.id,
+      channelName: channel.name,
+      modelId: parsed.modelId,
+      upstreamModelId,
+      publicModelId: toPublicModelId(parsed.providerName, parsed.modelId),
+      settings: channel.settings,
+      otherSettings: channel.otherSettings,
+      paramOverride: channel.paramOverride,
+      headerOverride: channel.headerOverride,
+      apiKey: channel.apiKey,
+    });
   }
-
-  if (!provider.listModels().some((m) => m.id === parsed.modelId)) {
-    return null;
-  }
-
-  return {
-    provider,
-    providerName: parsed.providerName,
-    modelId: parsed.modelId,
-    publicModelId: toPublicModelId(parsed.providerName, parsed.modelId),
-  };
+  return resolved;
 }
 
 function resolveEnabledProviderModel(
   model: string,
   disabledModels: Set<string>,
-): ResolvedProviderModel | null {
-  const resolved = resolveProviderModel(model);
-  if (!resolved) {
-    return null;
-  }
-
-  if (isModelDisabled(disabledModels, resolved.providerName, resolved.modelId)) {
-    return null;
-  }
-
-  return resolved;
+): ResolvedProviderModel[] {
+  return resolveProviderModelTargets(model).filter(
+    (resolved) => !isModelDisabled(disabledModels, resolved.providerName, resolved.modelId),
+  );
 }
 
 export async function resolveFallbackGroupModel(
@@ -557,11 +759,9 @@ export async function resolveFallbackGroupModel(
     return null;
   }
 
-  const targets = group.targets
-    .map((target) =>
-      resolveEnabledProviderModel(toPublicModelId(target.provider, target.modelId), disabled),
-    )
-    .filter((target): target is ResolvedProviderModel => Boolean(target));
+  const targets = group.targets.flatMap((target) =>
+    resolveEnabledProviderModel(toPublicModelId(target.provider, target.modelId), disabled),
+  );
 
   if (targets.length === 0) {
     return null;
@@ -581,8 +781,8 @@ async function resolveBaseChatModel(
   disabledModels: Set<string>,
 ): Promise<ResolvedChatModel | null> {
   const direct = resolveEnabledProviderModel(model, disabledModels);
-  if (direct) {
-    return { kind: "direct", requestedModelId: direct.publicModelId, targets: [direct] };
+  if (direct.length > 0) {
+    return { kind: "direct", requestedModelId: direct[0].publicModelId, targets: direct };
   }
 
   const fallbackGroup = await resolveFallbackGroupModel(model, disabledModels);
@@ -644,7 +844,41 @@ export function getProvider(model: string): ProviderAdapter | null {
 }
 
 export function getProviderByName(name: string): ProviderAdapter | null {
-  return providers.get(name) ?? null;
+  return channelsForProvider(name)[0]?.provider ?? null;
+}
+
+export function getProviderByChannelId(channelId: string): ProviderAdapter | null {
+  return providerChannels.get(channelId)?.provider ?? null;
+}
+
+export function getProviderForChannel(
+  providerName: string,
+  channelId?: string | null,
+): ProviderAdapter | null {
+  if (channelId) {
+    const channel = providerChannels.get(channelId);
+    if (channel?.providerName === providerName) {
+      return channel.provider;
+    }
+  }
+  return getProviderByName(providerName);
+}
+
+export function getProviderChannelRuntime(
+  providerName: string,
+  channelId?: string | null,
+): RuntimeProviderChannel | null {
+  if (channelId) {
+    const channel = providerChannels.get(channelId);
+    if (channel?.providerName === providerName) {
+      return channel;
+    }
+  }
+  return channelsForProvider(providerName)[0] ?? null;
+}
+
+export function getProvidersByName(name: string): ProviderAdapter[] {
+  return channelsForProvider(name).map((channel) => channel.provider);
 }
 
 export type ResolvedResponseTarget = {
@@ -669,15 +903,16 @@ export async function resolveResponseTarget(model: string): Promise<ResolvedResp
   }
 
   if (resolved.kind === "direct") {
-    const target = resolved.targets[0];
-    if (target.provider.capabilities.responsesApi !== true) {
-      return null;
+    for (const target of resolved.targets) {
+      if (target.provider.capabilities.responsesApi === true) {
+        return {
+          kind: "direct",
+          requestedModelId: resolved.requestedModelId,
+          target,
+        };
+      }
     }
-    return {
-      kind: "direct",
-      requestedModelId: resolved.requestedModelId,
-      target,
-    };
+    return null;
   }
 
   for (const target of resolved.targets) {
@@ -693,15 +928,37 @@ export async function resolveResponseTarget(model: string): Promise<ResolvedResp
 }
 
 export function listAllModels(): Model[] {
-  const models: Model[] = [];
-  for (const provider of providers.values()) {
-    models.push(
-      ...provider
-        .listModels()
-        .map((model) => applyRuntimeCapabilities(model, provider.capabilities)),
-    );
+  const modelsByPublicId = new Map<string, Model>();
+  const channels = Array.from(providerChannels.values()).sort(compareChannels);
+
+  for (const channel of channels) {
+    const upstreamModels = new Map(channel.provider.listModels().map((model) => [model.id, model]));
+    const candidateModels = channel.provider.listModels().map((model) => ({
+      source: model,
+      publicModelId: model.id,
+    }));
+
+    for (const [publicModelId, upstreamModelId] of Object.entries(channel.modelMapping)) {
+      const source = upstreamModels.get(upstreamModelId);
+      if (source) {
+        candidateModels.push({ source, publicModelId });
+      }
+    }
+
+    for (const { source, publicModelId } of candidateModels) {
+      const publicId = toPublicModelId(channel.providerName, publicModelId);
+      if (modelsByPublicId.has(publicId)) continue;
+
+      const model = applyRuntimeCapabilities(source, channel.provider.capabilities);
+      modelsByPublicId.set(publicId, {
+        ...model,
+        id: publicModelId,
+        provider: channel.providerName,
+      });
+    }
   }
-  return models;
+
+  return Array.from(modelsByPublicId.values());
 }
 
 export async function listFallbackGroupModels(disabledModels?: Set<string>): Promise<Model[]> {
@@ -715,18 +972,29 @@ export async function listFallbackGroupModels(disabledModels?: Set<string>): Pro
   const models: Model[] = [];
   for (const group of groups) {
     const targets = group.targets
-      .map((target) => {
-        const resolved = resolveEnabledProviderModel(
+      .flatMap((target) => {
+        const resolvedTargets = resolveEnabledProviderModel(
           toPublicModelId(target.provider, target.modelId),
           disabled,
         );
-        if (!resolved) return null;
-        const sourceModel = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
-        const model = sourceModel
-          ? applyRuntimeCapabilities(sourceModel, resolved.provider.capabilities)
-          : null;
-        if (!model) return null;
-        return { resolved, model, position: target.position };
+        return resolvedTargets
+          .map((resolved) => {
+            const sourceModel = sourceModelForTarget(resolved);
+            const model = sourceModel
+              ? applyRuntimeCapabilities(sourceModel, resolved.provider.capabilities)
+              : null;
+            if (!model) return null;
+            return { resolved, model, position: target.position };
+          })
+          .filter(
+            (
+              resolved,
+            ): resolved is {
+              resolved: ResolvedProviderModel;
+              model: Model;
+              position: number;
+            } => Boolean(resolved),
+          );
       })
       .filter(
         (
@@ -816,7 +1084,9 @@ export async function listPublicModels(): Promise<Model[]> {
 }
 
 export function listConfiguredProviders(): string[] {
-  return Array.from(providers.keys());
+  return Array.from(
+    new Set(Array.from(providerChannels.values()).map((channel) => channel.providerName)),
+  );
 }
 
 /**
@@ -827,8 +1097,13 @@ export function listConfiguredProviders(): string[] {
 export function getModelPricing(modelId: string): Model | null {
   const resolved = resolveProviderModel(modelId);
   if (!resolved) return null;
-  const model = resolved.provider.listModels().find((m) => m.id === resolved.modelId);
-  return model ? applyRuntimeCapabilities(model, resolved.provider.capabilities) : null;
+  const model = sourceModelForTarget(resolved);
+  if (!model) return null;
+  return {
+    ...applyRuntimeCapabilities(model, resolved.provider.capabilities),
+    id: resolved.modelId,
+    provider: resolved.providerName,
+  };
 }
 
 /**

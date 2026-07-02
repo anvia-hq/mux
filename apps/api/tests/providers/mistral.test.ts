@@ -50,6 +50,44 @@ describe("MistralAdapter", () => {
     expect(adapter.name).toBe("mistral");
   });
 
+  it("merges request override headers after Mistral defaults", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chatcmpl-1",
+        model: "mistral-test",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "hi" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new MistralAdapter("sk-test");
+    await adapter.chatCompletion(
+      {
+        model: "mistral-test",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      {
+        headers: {
+          authorization: "Bearer channel-key",
+          "x-trace": "trace-123",
+        },
+      },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "Content-Type": "application/json",
+      authorization: "Bearer channel-key",
+      "x-trace": "trace-123",
+    });
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Authorization");
+  });
+
   it("requests usage in streaming chat completions", async () => {
     mockFetch.mockResolvedValueOnce(makeSSEStream(["data: [DONE]\n\n"]));
 

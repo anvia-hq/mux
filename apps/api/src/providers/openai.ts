@@ -7,8 +7,10 @@ import type {
   ResponseCompactRequest,
   ResponseCreateRequest,
   ResponseObject,
+  ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { mergeProviderRequestHeaders } from "./types";
 
 const MODELS: Model[] = [
   {
@@ -851,14 +853,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     this.apiKey = apiKey;
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse> {
     const response = await fetch(OPENAI_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: this.buildRequestBody(request, false),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? this.buildRequestBody(request, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -870,14 +872,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ChatCompletionResponse;
   }
 
-  async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
+  async *chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk> {
     const response = await fetch(OPENAI_API_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: this.buildRequestBody(request, true),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? this.buildRequestBody(request, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -916,14 +918,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     }
   }
 
-  async createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
+  async createResponse(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -935,14 +937,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
-  async *createResponseStream(request: ResponseCreateRequest): AsyncIterable<string> {
+  async *createResponseStream(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
     const response = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify({ ...request, stream: true }),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -966,12 +968,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     if (final) yield final;
   }
 
-  async getResponse(id: string, query?: UpstreamResponsesQuery): Promise<ResponseObject> {
+  async getResponse(
+    id: string,
+    query?: UpstreamResponsesQuery,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(buildResponsesUrl(id, query), {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -983,12 +987,10 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
-  async deleteResponse(id: string): Promise<ResponseObject> {
+  async deleteResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}`, {
       method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-      },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -1000,13 +1002,10 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
-  async cancelResponse(id: string): Promise<ResponseObject> {
+  async cancelResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
+      headers: this.buildHeaders(options, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -1018,14 +1017,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
-  async compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
+  async compactResponse(
+    request: ResponseCompactRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/compact`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -1037,14 +1036,14 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as ResponseObject;
   }
 
-  async countResponseInputTokens(request: ResponseCreateRequest): Promise<ResponseObject> {
+  async countResponseInputTokens(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/input_tokens`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options, true),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -1059,10 +1058,11 @@ export class OpenAIAdapter implements ProviderAdapter {
   async listResponseInputItems(
     id: string,
     query?: UpstreamResponsesQuery,
+    options?: ProviderRequestOptions,
   ): Promise<ResponseObject> {
     const response = await fetch(buildResponsesSubResourceUrl(id, "input_items", query), {
       method: "GET",
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -1076,6 +1076,19 @@ export class OpenAIAdapter implements ProviderAdapter {
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
     return buildOpenAICompatibleRequestBody(request, stream);
+  }
+
+  private buildHeaders(
+    options: ProviderRequestOptions | undefined,
+    includeContentType: boolean,
+  ): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        ...(includeContentType ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      options,
+    );
   }
 
   listModels(): Model[] {

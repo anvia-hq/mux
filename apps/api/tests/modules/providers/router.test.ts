@@ -3,6 +3,26 @@ import { Hono } from "hono";
 
 const { mockPrisma, mockListAllModels, mockReloadProvider } = vi.hoisted(() => ({
   mockPrisma: {
+    providerChannel: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findUnique: vi.fn().mockResolvedValue(null),
+      create: vi.fn().mockResolvedValue({
+        id: "custom-openai",
+        provider: "custom-openai",
+        lastFour: "abcd",
+        updatedAt: new Date(),
+      }),
+      upsert: vi.fn().mockResolvedValue({
+        id: "openai",
+        provider: "openai",
+        enabled: true,
+        lastFour: "abcd",
+        updatedAt: new Date(),
+      }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     providerKey: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -98,27 +118,34 @@ import { providersRouter } from "../../../src/modules/providers/router";
 describe("providers router", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    mockPrisma.providerChannel.findMany.mockResolvedValue([]);
+    mockPrisma.providerChannel.findFirst.mockResolvedValue(null);
+    mockPrisma.providerChannel.findUnique.mockResolvedValue(null);
     mockPrisma.customProvider.findMany.mockResolvedValue([]);
     mockPrisma.customProvider.findUnique.mockResolvedValue(null);
   });
 
   it("GET / returns provider list", async () => {
-    mockPrisma.providerKey.findMany.mockResolvedValueOnce([]);
+    mockPrisma.providerChannel.findMany.mockResolvedValueOnce([]);
     const app = new Hono().route("/providers", providersRouter);
     const res = await app.request("/providers");
     expect(res.status).toBe(200);
   });
 
   it("GET /catalog returns built-in and custom providers", async () => {
-    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+    mockPrisma.providerChannel.findMany.mockResolvedValueOnce([
       {
+        id: "openai",
         provider: "openai",
+        enabled: true,
         lastFour: "abcd",
         updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         updater: { email: "a@b.com" },
       },
       {
+        id: "custom-openai",
         provider: "custom-openai",
+        enabled: true,
         lastFour: "wxyz",
         updatedAt: new Date("2026-01-02T00:00:00.000Z"),
         updater: { email: "a@b.com" },
@@ -169,6 +196,7 @@ describe("providers router", () => {
 
   it("POST /custom creates a custom provider with models and key", async () => {
     mockPrisma.providerKey.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.providerChannel.findFirst.mockResolvedValueOnce(null);
     mockPrisma.customProvider.findUnique.mockResolvedValueOnce(null);
     const app = new Hono().route("/providers", providersRouter);
     const res = await app.request("/providers/custom", {
@@ -221,11 +249,17 @@ describe("providers router", () => {
         data: expect.objectContaining({ provider: "custom-openai" }),
       }),
     );
+    expect(mockPrisma.providerChannel.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ id: "custom-openai", provider: "custom-openai" }),
+      }),
+    );
     expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
   });
 
   it("POST /custom defaults custom model capabilities when omitted", async () => {
     mockPrisma.providerKey.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.providerChannel.findFirst.mockResolvedValueOnce(null);
     mockPrisma.customProvider.findUnique.mockResolvedValueOnce(null);
     const app = new Hono().route("/providers", providersRouter);
     const res = await app.request("/providers/custom", {

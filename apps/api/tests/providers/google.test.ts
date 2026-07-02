@@ -49,6 +49,35 @@ describe("GoogleAdapter", () => {
     expect(adapter.name).toBe("google");
   });
 
+  it("merges request override headers after Google defaults", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "hi" }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      }),
+    );
+
+    const adapter = new GoogleAdapter("sk-test");
+    await adapter.chatCompletion(
+      {
+        model: "gemini-test",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      {
+        headers: {
+          "content-type": "application/custom+json",
+          "x-goog-user-project": "project-1",
+        },
+      },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).toMatchObject({
+      "content-type": "application/custom+json",
+      "x-goog-user-project": "project-1",
+    });
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Content-Type");
+  });
+
   it("maps streaming usage metadata into OpenAI-style usage", async () => {
     mockFetch.mockResolvedValueOnce(
       makeJsonStream([

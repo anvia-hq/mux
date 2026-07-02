@@ -25,11 +25,12 @@ export type ToolCallDelta = {
 };
 
 export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
+  role: string;
   content?: string | ChatContentPart[] | null;
   name?: string;
   tool_call_id?: string;
   tool_calls?: ToolCall[];
+  [key: string]: unknown;
 }
 
 export type ChatTool = {
@@ -71,11 +72,15 @@ export type ChatAudioOptions = {
 
 export type ChatStreamOptions = {
   include_usage?: boolean;
+  [key: string]: unknown;
 };
 
 export interface ChatCompletionRequest {
+  [key: string]: unknown;
   model: string;
   messages: ChatMessage[];
+  prefix?: unknown;
+  suffix?: unknown;
   temperature?: number;
   max_tokens?: number;
   max_completion_tokens?: number;
@@ -94,7 +99,7 @@ export interface ChatCompletionRequest {
   logprobs?: boolean;
   top_logprobs?: number;
   user?: string;
-  metadata?: Record<string, string>;
+  metadata?: Record<string, unknown>;
   store?: boolean;
   service_tier?: "auto" | "default" | "flex";
   reasoning_effort?: "minimal" | "low" | "medium" | "high";
@@ -201,6 +206,31 @@ export interface ProviderCapabilities {
   responsesApi?: boolean;
 }
 
+export type ProviderRequestOptions = {
+  headers?: Record<string, string>;
+  rawBody?: string;
+};
+
+export function mergeProviderRequestHeaders(
+  baseHeaders: Record<string, string>,
+  options?: ProviderRequestOptions,
+): Record<string, string> {
+  const headers = { ...baseHeaders };
+  for (const [key, value] of Object.entries(options?.headers ?? {})) {
+    const trimmedKey = key.trim();
+    const trimmedValue = value.trim();
+    if (!trimmedKey || !trimmedValue) continue;
+
+    for (const existingKey of Object.keys(headers)) {
+      if (existingKey.toLowerCase() === trimmedKey.toLowerCase()) {
+        delete headers[existingKey];
+      }
+    }
+    headers[trimmedKey] = trimmedValue;
+  }
+  return headers;
+}
+
 export interface Model {
   id: string;
   name: string;
@@ -249,18 +279,41 @@ export const textOnly = { inputModalities: ["text"], outputModalities: ["text"] 
 export interface ProviderAdapter {
   name: string;
   capabilities: ProviderCapabilities;
-  chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
-  chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk>;
-  createResponse?(request: ResponseCreateRequest): Promise<ResponseObject>;
-  createResponseStream?(request: ResponseCreateRequest): AsyncIterable<string>;
-  getResponse?(id: string, query?: Record<string, string | string[]>): Promise<ResponseObject>;
-  deleteResponse?(id: string): Promise<ResponseObject>;
-  cancelResponse?(id: string): Promise<ResponseObject>;
-  compactResponse?(request: ResponseCompactRequest): Promise<ResponseObject>;
-  countResponseInputTokens?(request: ResponseCreateRequest): Promise<ResponseObject>;
+  chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse>;
+  chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk>;
+  createResponse?(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject>;
+  createResponseStream?(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string>;
+  getResponse?(
+    id: string,
+    query?: Record<string, string | string[]>,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject>;
+  deleteResponse?(id: string, options?: ProviderRequestOptions): Promise<ResponseObject>;
+  cancelResponse?(id: string, options?: ProviderRequestOptions): Promise<ResponseObject>;
+  compactResponse?(
+    request: ResponseCompactRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject>;
+  countResponseInputTokens?(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject>;
   listResponseInputItems?(
     id: string,
     query?: Record<string, string | string[]>,
+    options?: ProviderRequestOptions,
   ): Promise<ResponseObject>;
   listModels(): Model[];
 }

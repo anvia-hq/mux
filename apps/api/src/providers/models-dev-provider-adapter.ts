@@ -4,8 +4,10 @@ import type {
   ChatCompletionResponse,
   Model,
   ProviderAdapter,
+  ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { mergeProviderRequestHeaders } from "./types";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -46,15 +48,18 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     this.models = input.models;
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse> {
     if (!this.chatCompletionsUrl) {
       throw new Error(`${this.name} does not expose a chat completions URL in models.dev`);
     }
 
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: this.buildRequestBody(request, false),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? this.buildRequestBody(request, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -66,15 +71,18 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     return (await response.json()) as ChatCompletionResponse;
   }
 
-  async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
+  async *chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk> {
     if (!this.chatCompletionsUrl) {
       throw new Error(`${this.name} does not expose a chat completions URL in models.dev`);
     }
 
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: this.buildRequestBody(request, true),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? this.buildRequestBody(request, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -119,11 +127,14 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     return this.models;
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+  private buildHeaders(options?: ProviderRequestOptions): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      options,
+    );
   }
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {

@@ -176,6 +176,74 @@ export const setProviderKeySchema = z.object({
   apiKey: z.string().min(8),
 });
 
+export const providerChannelIdSchema = providerNameSchema;
+
+const channelSettingsSchema = z
+  .object({
+    passThroughBodyEnabled: z.boolean().optional(),
+    systemPrompt: z.string().min(1).optional(),
+    systemPromptOverride: z.boolean().optional(),
+  })
+  .passthrough();
+
+const channelOtherSettingsSchema = z
+  .object({
+    allowServiceTier: z.boolean().optional(),
+    allowSafetyIdentifier: z.boolean().optional(),
+    disableStore: z.boolean().optional(),
+    allowIncludeObfuscation: z.boolean().optional(),
+  })
+  .passthrough();
+
+const channelModelMappingSchema = z.record(z.string().min(1), z.string().min(1));
+const channelParamOverrideSchema = z.record(z.string().min(1), z.unknown());
+const channelHeaderOverrideSchema = z.record(z.string().min(1), z.unknown());
+
+export const createProviderChannelSchema = z.object({
+  id: providerChannelIdSchema,
+  provider: providerNameSchema,
+  name: z.string().trim().min(1).max(120),
+  apiKey: z.string().min(8),
+  enabled: z.boolean().default(true),
+  priority: z.number().int().default(0),
+  weight: z.number().int().positive().default(1),
+  modelMapping: channelModelMappingSchema.optional(),
+  settings: channelSettingsSchema.optional(),
+  otherSettings: channelOtherSettingsSchema.optional(),
+  paramOverride: channelParamOverrideSchema.optional(),
+  headerOverride: channelHeaderOverrideSchema.optional(),
+});
+
+export const updateProviderChannelSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    apiKey: z.string().min(8).optional(),
+    enabled: z.boolean().optional(),
+    priority: z.number().int().optional(),
+    weight: z.number().int().positive().optional(),
+    modelMapping: channelModelMappingSchema.nullable().optional(),
+    settings: channelSettingsSchema.nullable().optional(),
+    otherSettings: channelOtherSettingsSchema.nullable().optional(),
+    paramOverride: channelParamOverrideSchema.nullable().optional(),
+    headerOverride: channelHeaderOverrideSchema.nullable().optional(),
+  })
+  .refine(
+    (input) =>
+      input.name !== undefined ||
+      input.apiKey !== undefined ||
+      input.enabled !== undefined ||
+      input.priority !== undefined ||
+      input.weight !== undefined ||
+      input.modelMapping !== undefined ||
+      input.settings !== undefined ||
+      input.otherSettings !== undefined ||
+      input.paramOverride !== undefined ||
+      input.headerOverride !== undefined,
+    {
+      message: "at least one field must be provided",
+    },
+  );
+
 const modelIdSchema = z.string().trim().min(1).max(256);
 
 export const customProviderModelSchema = z.object({

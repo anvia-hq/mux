@@ -11,10 +11,23 @@ import {
   estimateCost,
   getModelPricing,
   getProviderByName,
+  getProviderChannelRuntime,
+  getProviderForChannel,
   resolveChatModel,
   resolveResponseTarget,
   type ResolvedProviderModel,
 } from "../../providers/registry";
+import {
+  prepareChannelCompactRequestSettings,
+  prepareChannelResponseRequestSettings,
+  type PreparedChannelRequest,
+} from "../../providers/channel-settings";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+  resolveChannelHeaders,
+  type ChannelOverrideRequestContext,
+} from "../../providers/channel-overrides";
 import type {
   ProviderAdapter,
   ResponseCompactRequest,
@@ -76,13 +89,19 @@ export type ResponseStreamResult = {
   stream: AsyncIterable<string>;
   provider: string;
   model: string;
+  channelId?: string;
+  channelName?: string;
   startTime: number;
 };
 
 export async function handleResponseCreate(
   request: ResponseCreateRequest,
   apiKeyId: string,
-  options: { requireBillableUsage?: boolean } = {},
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<ResponseObject> {
   if (request.stream === true) {
     throw new UnsupportedResponseFeatureError("Responses streaming is not supported yet");
@@ -109,9 +128,14 @@ export async function handleResponseCreate(
   const startTime = Date.now();
 
   try {
-    const response = await target.provider.createResponse(
-      buildOpenAIResponseCreateRequest(request, target),
+    const prepared = buildOpenAIResponseCreateRequest(request, target, options.requestContext);
+    const providerOptions = providerRequestOptions(
+      prepared.headers,
+      rawPassThroughBody(target, options.rawBody),
     );
+    const response = providerOptions
+      ? await target.provider.createResponse(prepared.body, providerOptions)
+      : await target.provider.createResponse(prepared.body);
     const latencyMs = Date.now() - startTime;
     const usage = response.usage;
     const cachedTokens = readCachedTokens(usage);
@@ -126,8 +150,10 @@ export async function handleResponseCreate(
     if (options.requireBillableUsage && estimatedCost === undefined) {
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/responses",
         latencyMs,
         promptTokens: usage?.input_tokens,
@@ -146,8 +172,10 @@ export async function handleResponseCreate(
 
     await logRequest({
       apiKeyId,
-      provider: target.provider.name,
+      provider: target.providerName,
       model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
       endpoint: "/v1/responses",
       latencyMs,
       promptTokens: usage?.input_tokens,
@@ -160,6 +188,10 @@ export async function handleResponseCreate(
 
     return withPublicModelId(response, requestedModelId);
   } catch (error) {
+    if (error instanceof ChannelParamOverrideError || error instanceof ChannelHeaderOverrideError) {
+      throw error;
+    }
+
     if (error instanceof RequestLoggingUnavailableError) {
       throw error;
     }
@@ -177,8 +209,10 @@ export async function handleResponseCreate(
 
     await logRequest({
       apiKeyId,
-      provider: target.provider.name,
+      provider: target.providerName,
       model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
       endpoint: "/v1/responses",
       latencyMs,
       statusCode: 500,
@@ -191,6 +225,7 @@ export async function handleResponseCreate(
 
 export async function handleResponseCreateStream(
   request: ResponseCreateRequest,
+  options: { requestContext?: ChannelOverrideRequestContext; rawBody?: string } = {},
 ): Promise<ResponseStreamResult> {
   if (request.background === true) {
     throw new UnsupportedResponseFeatureError(
@@ -206,14 +241,25 @@ export async function handleResponseCreateStream(
   }
 
   const startTime = Date.now();
-  const stream = target.provider.createResponseStream(
-    buildOpenAIResponseCreateRequest({ ...request, stream: true }, target),
+  const prepared = buildOpenAIResponseCreateRequest(
+    { ...request, stream: true },
+    target,
+    options.requestContext,
   );
+  const providerOptions = providerRequestOptions(
+    prepared.headers,
+    rawPassThroughBody(target, options.rawBody),
+  );
+  const stream = providerOptions
+    ? target.provider.createResponseStream(prepared.body, providerOptions)
+    : target.provider.createResponseStream(prepared.body);
 
   return {
     stream: await prefetchFirstResponseStreamChunk(stream),
-    provider: target.provider.name,
+    provider: target.providerName,
     model: target.publicModelId,
+    channelId: target.channelId,
+    channelName: target.channelName,
     startTime,
   };
 }
@@ -221,7 +267,11 @@ export async function handleResponseCreateStream(
 export async function submitBackgroundResponse(
   request: ResponseCreateRequest,
   apiKeyId: string,
-  options: { requireBillableUsage?: boolean } = {},
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<{ id: string; response: ResponseObject }> {
   const { requestedModelId, target } = await resolveOpenAIResponseTarget(request);
 
@@ -240,17 +290,28 @@ export async function submitBackgroundResponse(
   let response: ResponseObject;
 
   try {
-    response = await target.provider.createResponse(
-      buildOpenAIResponseCreateRequest(request, target),
+    const prepared = buildOpenAIResponseCreateRequest(request, target, options.requestContext);
+    const providerOptions = providerRequestOptions(
+      prepared.headers,
+      rawPassThroughBody(target, options.rawBody),
     );
+    response = providerOptions
+      ? await target.provider.createResponse(prepared.body, providerOptions)
+      : await target.provider.createResponse(prepared.body);
   } catch (error) {
+    if (error instanceof ChannelParamOverrideError || error instanceof ChannelHeaderOverrideError) {
+      throw error;
+    }
+
     const latencyMs = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
     await logRequest({
       apiKeyId,
-      provider: target.provider.name,
+      provider: target.providerName,
       model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
       endpoint: "/v1/responses",
       latencyMs,
       statusCode: 500,
@@ -281,8 +342,10 @@ export async function submitBackgroundResponse(
     if (estimatedCost === undefined) {
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/responses",
         latencyMs,
         promptTokens: usage?.input_tokens,
@@ -301,8 +364,10 @@ export async function submitBackgroundResponse(
     data: {
       id: upstreamId,
       apiKeyId,
-      provider: target.provider.name,
+      provider: target.providerName,
       model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
       request: request as object,
       status: upstreamStatus,
       response: response as object,
@@ -319,8 +384,10 @@ export async function submitBackgroundResponse(
 
   await logRequest({
     apiKeyId,
-    provider: target.provider.name,
+    provider: target.providerName,
     model: target.publicModelId,
+    channelId: target.channelId,
+    channelName: target.channelName,
     endpoint: "/v1/responses",
     latencyMs,
     promptTokens: usage?.input_tokens,
@@ -385,6 +452,8 @@ export async function handleResponseRetrieve(
       apiKeyId,
       provider: localRow.provider,
       model: localRow.model,
+      channelId: localRow.channelId ?? undefined,
+      channelName: localRow.channelName ?? undefined,
       endpoint: "/v1/responses/:id",
       latencyMs,
       statusCode: pending ? 202 : 200,
@@ -622,7 +691,55 @@ export async function handleResponseInputItems(
 export async function handleResponseInputTokens(
   body: ResponseCreateRequest,
   apiKeyId: string,
+  options: { requestContext?: ChannelOverrideRequestContext; rawBody?: string } = {},
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
+  const resolved = await resolveResponseTarget(body.model);
+  if (resolved?.target.provider.countResponseInputTokens) {
+    const startTime = Date.now();
+    try {
+      const prepared = buildOpenAIResponseCreateRequest(
+        body,
+        resolved.target,
+        options.requestContext,
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(resolved.target, options.rawBody),
+      );
+      const response = providerOptions
+        ? await resolved.target.provider.countResponseInputTokens(prepared.body, providerOptions)
+        : await resolved.target.provider.countResponseInputTokens(prepared.body);
+      const latencyMs = Date.now() - startTime;
+
+      await logRequest({
+        apiKeyId,
+        provider: resolved.target.providerName,
+        model: resolved.target.publicModelId,
+        channelId: resolved.target.channelId,
+        channelName: resolved.target.channelName,
+        endpoint: "/v1/responses/input_tokens",
+        latencyMs,
+        statusCode: 200,
+      });
+
+      return {
+        provider: resolved.target.providerName,
+        model: resolved.requestedModelId,
+        response,
+      };
+    } catch (error) {
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
+      if (!(error instanceof UpstreamResponsesApiError && error.status === 404)) {
+        throw error;
+      }
+    }
+  }
+
   const candidates = responseUtilityProviderCandidates(
     ["openai", "azure-cognitive-services"],
     "countResponseInputTokens",
@@ -699,7 +816,8 @@ async function resolveOpenAIResponseTarget(
 function buildOpenAIResponseCreateRequest(
   request: ResponseCreateRequest,
   target: ResolvedProviderModel,
-): ResponseCreateRequest {
+  context?: ChannelOverrideRequestContext,
+): PreparedChannelRequest<ResponseCreateRequest> {
   const body: Record<string, unknown> = {};
 
   for (const field of RESPONSE_CREATE_FIELDS) {
@@ -708,8 +826,32 @@ function buildOpenAIResponseCreateRequest(
     }
   }
 
-  body.model = target.modelId;
-  return body as ResponseCreateRequest;
+  body.model = target.upstreamModelId ?? target.modelId;
+  return prepareChannelResponseRequestSettings(
+    body as ResponseCreateRequest,
+    target,
+    targetRequestContext(request, target, context),
+  );
+}
+
+function targetRequestContext(
+  request: { model: string },
+  target: ResolvedProviderModel,
+  context: ChannelOverrideRequestContext | undefined,
+): ChannelOverrideRequestContext {
+  const upstreamModel = target.upstreamModelId ?? target.modelId;
+  return {
+    ...context,
+    apiKey: context?.apiKey ?? target.apiKey,
+    originalModel: context?.originalModel ?? request.model,
+    upstreamModel: context?.upstreamModel ?? upstreamModel,
+  };
+}
+
+function providerRequestOptions(headers: Record<string, string>, rawBody?: string) {
+  return Object.keys(headers).length > 0 || rawBody !== undefined
+    ? { headers, ...(rawBody !== undefined ? { rawBody } : {}) }
+    : undefined;
 }
 
 function readCachedTokens(usage: unknown): number | undefined {
@@ -821,6 +963,8 @@ type LocalBackgroundRow = {
   apiKeyId: string;
   provider: string;
   model: string;
+  channelId?: string | null;
+  channelName?: string | null;
   request?: unknown;
   status: string;
   response: unknown;
@@ -862,13 +1006,16 @@ async function cancelLocalBackgroundJob(
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
   const startTime = Date.now();
 
-  const provider = getProviderByName(row.provider);
+  const provider = getProviderForChannel(row.provider, row.channelId);
   let upstreamResponse: ResponseObject | null = null;
   let upstreamNotFound = false;
 
   if (provider?.cancelResponse) {
     try {
-      upstreamResponse = await provider.cancelResponse(id);
+      const providerOptions = staticChannelProviderOptions(row.provider, row.channelId);
+      upstreamResponse = providerOptions
+        ? await provider.cancelResponse(id, providerOptions)
+        : await provider.cancelResponse(id);
     } catch (error) {
       if (isUpstreamNotFoundError(error)) {
         upstreamNotFound = true;
@@ -902,6 +1049,8 @@ async function cancelLocalBackgroundJob(
     apiKeyId,
     provider: row.provider,
     model: row.model,
+    channelId: row.channelId ?? undefined,
+    channelName: row.channelName ?? undefined,
     endpoint: "/v1/responses/:id/cancel",
     latencyMs,
     statusCode: 200,
@@ -917,10 +1066,15 @@ async function deleteLocalBackgroundJob(
 ): Promise<ResponseObject> {
   const startTime = Date.now();
 
-  const provider = getProviderByName(row.provider);
+  const provider = getProviderForChannel(row.provider, row.channelId);
   if (provider?.deleteResponse) {
     try {
-      await provider.deleteResponse(id);
+      const providerOptions = staticChannelProviderOptions(row.provider, row.channelId);
+      if (providerOptions) {
+        await provider.deleteResponse(id, providerOptions);
+      } else {
+        await provider.deleteResponse(id);
+      }
     } catch (error) {
       if (!isUpstreamNotFoundError(error)) {
         throw error;
@@ -937,6 +1091,8 @@ async function deleteLocalBackgroundJob(
     apiKeyId,
     provider: row.provider,
     model: row.model,
+    channelId: row.channelId ?? undefined,
+    channelName: row.channelName ?? undefined,
     endpoint: "/v1/responses/:id",
     latencyMs,
     statusCode: 200,
@@ -949,10 +1105,24 @@ async function deleteLocalBackgroundJob(
   } as ResponseObject;
 }
 
+function staticChannelProviderOptions(
+  providerName: string,
+  channelId?: string | null,
+): { headers: Record<string, string> } | undefined {
+  const runtime = getProviderChannelRuntime(providerName, channelId);
+  if (!runtime) return undefined;
+  const headers = resolveChannelHeaders(runtime, { apiKey: runtime.apiKey });
+  return { headers };
+}
+
 export async function handleResponseCompact(
   request: ResponseCompactRequest,
   apiKeyId: string,
-  options: { requireBillableUsage?: boolean } = {},
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
   const resolved = await resolveResponseTarget(request.model);
   if (!resolved) {
@@ -966,8 +1136,20 @@ export async function handleResponseCompact(
 
   const primary = resolved.target;
   const primaryProvider = primary.providerName === "openai" ? "openai" : primary.providerName;
-  const candidates: Array<{ provider: typeof primary.provider; providerName: string }> = [
-    { provider: primary.provider, providerName: primaryProvider },
+  const candidates: Array<{
+    provider: typeof primary.provider;
+    providerName: string;
+    channelId?: string;
+    channelName?: string;
+    target?: ResolvedProviderModel;
+  }> = [
+    {
+      provider: primary.provider,
+      providerName: primaryProvider,
+      channelId: primary.channelId,
+      channelName: primary.channelName,
+      target: primary,
+    },
   ];
 
   const azure =
@@ -988,9 +1170,19 @@ export async function handleResponseCompact(
   for (const candidate of candidates) {
     if (!candidate.provider.compactResponse) continue;
     try {
-      const response = await candidate.provider.compactResponse(
-        buildProviderCompactRequest(request, primary),
+      const prepared = candidate.target
+        ? buildProviderCompactRequest(request, candidate.target, options.requestContext)
+        : {
+            body: { ...request, model: primary.upstreamModelId ?? primary.modelId },
+            headers: {},
+          };
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        candidate.target ? rawPassThroughBody(candidate.target, options.rawBody) : undefined,
       );
+      const response = providerOptions
+        ? await candidate.provider.compactResponse(prepared.body, providerOptions)
+        : await candidate.provider.compactResponse(prepared.body);
       const latencyMs = Date.now() - startTime;
       const usage = response.usage;
       const cachedTokens = readCachedTokens(usage);
@@ -1007,6 +1199,8 @@ export async function handleResponseCompact(
           apiKeyId,
           provider: candidate.providerName,
           model: primary.publicModelId,
+          channelId: candidate.channelId,
+          channelName: candidate.channelName,
           endpoint: "/v1/responses/compact",
           latencyMs,
           promptTokens: usage?.input_tokens,
@@ -1027,6 +1221,8 @@ export async function handleResponseCompact(
         apiKeyId,
         provider: candidate.providerName,
         model: primary.publicModelId,
+        channelId: candidate.channelId,
+        channelName: candidate.channelName,
         endpoint: "/v1/responses/compact",
         latencyMs,
         promptTokens: usage?.input_tokens,
@@ -1044,6 +1240,12 @@ export async function handleResponseCompact(
       };
     } catch (error) {
       lastError = error;
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
       if (error instanceof ApiKeyUnbillableResponseUsageError) throw error;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
@@ -1068,6 +1270,15 @@ export async function handleResponseCompact(
 function buildProviderCompactRequest(
   request: ResponseCompactRequest,
   target: ResolvedProviderModel,
-): ResponseCompactRequest {
-  return { ...request, model: target.modelId };
+  context?: ChannelOverrideRequestContext,
+): PreparedChannelRequest<ResponseCompactRequest> {
+  return prepareChannelCompactRequestSettings(
+    { ...request, model: target.upstreamModelId ?? target.modelId },
+    target,
+    targetRequestContext(request, target, context),
+  );
+}
+
+function rawPassThroughBody(target: ResolvedProviderModel, rawBody: string | undefined) {
+  return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }

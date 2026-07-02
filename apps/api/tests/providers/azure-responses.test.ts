@@ -57,6 +57,30 @@ describe("AzureResponsesClient", () => {
     expect(result).toMatchObject(body);
   });
 
+  it("merges request override headers after Azure default headers", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_1", object: "response" }));
+    const client = makeClient("https://example.openai.azure.com");
+
+    await client.createResponse(
+      { model: "gpt-4o", input: "hi" },
+      {
+        headers: {
+          authorization: "Bearer channel-key",
+          "x-ms-client-request-id": "trace-123",
+        },
+      },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({
+      headers: {
+        "Content-Type": "application/json",
+        authorization: "Bearer channel-key",
+        "x-ms-client-request-id": "trace-123",
+      },
+    });
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).not.toHaveProperty("Authorization");
+  });
+
   it("propagates upstream errors from createResponse with status and body", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response("internal error", { status: 500, headers: { "Content-Type": "text/plain" } }),
