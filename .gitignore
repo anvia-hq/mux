@@ -1,6 +1,7 @@
 node_modules
 dist
 build
+.output
 .turbo
 .DS_Store
 .env

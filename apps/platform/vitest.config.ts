@@ -14,7 +14,9 @@ export default defineConfig({
       exclude: [
         "tests/**/*.test.{ts,tsx}",
         "src/routeTree.gen.ts",
-        "src/main.tsx",
+        "src/client.tsx",
+        "src/server.ts",
+        "src/router.tsx",
         "src/styles.css",
         // 1-line route files
         "src/routes/__root.tsx",

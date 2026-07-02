@@ -95,14 +95,18 @@ services:
     expose:
       - "3000"
     environment:
+      NODE_ENV: "production"
+      HOST: "0.0.0.0"
+      PORT: "3000"
       # Docker/Caddy serves the API from the same public origin under /api.
       # Keep this literal so host-mode .env values like http://localhost:8000
       # do not get baked into the browser client inside Compose.
       VITE_API_URL: "/api"
+      SERVER_API_URL: "http://gateway:8000"
     depends_on:
       gateway:
         condition: service_started
-    command: pnpm --filter @repo/platform dev
+    command: pnpm --filter @repo/platform start
     networks:
       - internal
 

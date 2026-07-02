@@ -5,6 +5,10 @@ import { onboardingStatusQueryOptions } from "../modules/auth/hooks/use-auth";
 
 export const Route = createFileRoute("/login")({
   beforeLoad: async ({ context }) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     try {
       const status = await context.queryClient.ensureQueryData(onboardingStatusQueryOptions);
       if (status.needsOnboarding) {

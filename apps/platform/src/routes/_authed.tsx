@@ -5,6 +5,10 @@ import { ApiError, UnauthorizedError } from "../lib/api-client";
 
 export const Route = createFileRoute("/_authed")({
   beforeLoad: async ({ context, location }) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     try {
       await context.queryClient.ensureQueryData(meQueryOptions);
     } catch (error) {

@@ -32,8 +32,23 @@ if (!apiBaseUrl) {
   throw new Error("VITE_API_URL must be configured for apps/platform");
 }
 
-export const apiBase =
-  apiBaseUrl === "/" ? "" : apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+function normalizeApiBase(baseUrl: string) {
+  return baseUrl === "/" ? "" : baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+}
+
+function isAbsoluteUrl(url: string) {
+  return /^https?:\/\//i.test(url);
+}
+
+function getApiBase() {
+  if (typeof window === "undefined" && !isAbsoluteUrl(apiBaseUrl)) {
+    return normalizeApiBase(process.env.SERVER_API_URL?.trim() || "http://localhost:8000");
+  }
+
+  return normalizeApiBase(apiBaseUrl);
+}
+
+export const apiBase = getApiBase();
 
 type RequestOptions = Omit<RequestInit, "body"> & { body?: unknown };
 
