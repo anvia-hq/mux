@@ -196,6 +196,26 @@ export const e2eRouter = new Hono()
       providerKeys.push({ provider: row.provider, lastFour: row.lastFour });
     }
 
+    const fallbackGroups = [];
+    for (const input of seed.fallbackGroups ?? []) {
+      const group = await prisma.fallbackGroup.create({
+        data: {
+          id: input.id,
+          name: input.name,
+          description: input.description ?? null,
+          enabled: input.enabled,
+          targets: {
+            create: input.targets.map((target, index) => ({
+              provider: target.provider,
+              modelId: target.modelId,
+              position: index + 1,
+            })),
+          },
+        },
+      });
+      fallbackGroups.push({ id: group.id, name: group.name, enabled: group.enabled });
+    }
+
     const apiKeys = [];
     const apiKeyIdsByName = new Map<string, string>();
     for (const input of seed.apiKeys ?? []) {
@@ -239,26 +259,6 @@ export const e2eRouter = new Hono()
         },
       });
       requestLogs.push({ id: row.id, provider: row.provider, model: row.model });
-    }
-
-    const fallbackGroups = [];
-    for (const input of seed.fallbackGroups ?? []) {
-      const group = await prisma.fallbackGroup.create({
-        data: {
-          id: input.id,
-          name: input.name,
-          description: input.description ?? null,
-          enabled: input.enabled,
-          targets: {
-            create: input.targets.map((target, index) => ({
-              provider: target.provider,
-              modelId: target.modelId,
-              position: index + 1,
-            })),
-          },
-        },
-      });
-      fallbackGroups.push({ id: group.id, name: group.name, enabled: group.enabled });
     }
 
     return c.json({ users, apiKeys, providerKeys, requestLogs, fallbackGroups });

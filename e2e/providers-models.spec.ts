@@ -2,6 +2,7 @@ import {
   configureSyntheticProviderViaUi,
   createAndLoginAdmin,
   expect,
+  providerSearchPlaceholder,
   removeSyntheticProviderViaUi,
   syntheticDeepSeekModelId,
   syntheticProviderKey,
@@ -40,7 +41,7 @@ test("filters providers, replaces a key, and persists a per-model toggle", async
   await configureSyntheticProviderViaUi(page);
 
   await page.goto("/providers");
-  await page.getByPlaceholder("Search provider name or id...").fill("synthetic");
+  await page.getByPlaceholder(providerSearchPlaceholder).fill("synthetic");
   await page.getByRole("button", { name: "Configured" }).click();
   let row = page.getByRole("row").filter({ hasText: "Synthetic" }).filter({ hasText: "synthetic" });
   await expect(row.getByText("Configured")).toBeVisible();
