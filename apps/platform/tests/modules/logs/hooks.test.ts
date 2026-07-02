@@ -24,11 +24,21 @@ describe("logs hooks", () => {
     it("fetches /logs with query params", async () => {
       vi.mocked(apiFetch).mockResolvedValueOnce({ logs: [], total: 0 });
       const { result } = renderHook(
-        () => useLogsQuery({ provider: "openai", model: "gpt-4", limit: 10, offset: 0 }),
+        () =>
+          useLogsQuery({
+            userId: "user-1",
+            apiKeyId: "key-1",
+            provider: "openai",
+            model: "gpt-4",
+            limit: 10,
+            offset: 0,
+          }),
         { wrapper },
       );
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("/logs?"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("userId=user-1"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("apiKeyId=key-1"));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("provider=openai"));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("model=gpt-4"));
     });
@@ -39,18 +49,29 @@ describe("logs hooks", () => {
       vi.mocked(apiFetch).mockResolvedValueOnce({
         totalRequests: 100,
         totalTokens: 5000,
+        totalPromptTokens: 3000,
+        totalCompletionTokens: 2000,
         totalCost: 2.5,
         byProvider: [],
         byModel: [],
         daily: [],
       });
       const { result } = renderHook(
-        () => useLogsStatsQuery({ days: 30, provider: "openai", model: "gpt-4" }),
+        () =>
+          useLogsStatsQuery({
+            days: 30,
+            userId: "user-1",
+            apiKeyId: "key-1",
+            provider: "openai",
+            model: "gpt-4",
+          }),
         { wrapper },
       );
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("/logs/stats?"));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("days=30"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("userId=user-1"));
+      expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("apiKeyId=key-1"));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("provider=openai"));
       expect(apiFetch).toHaveBeenCalledWith(expect.stringContaining("model=gpt-4"));
     });

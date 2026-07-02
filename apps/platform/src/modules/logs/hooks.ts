@@ -20,15 +20,40 @@ export type RequestLog = {
 export type LogsStats = {
   totalRequests: number;
   totalTokens: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
   totalCost: number;
-  byProvider: Array<{ provider: string; requests: number; tokens: number; cost: number }>;
-  byModel: Array<{ model: string; requests: number; tokens: number; cost: number }>;
-  daily: Array<{ date: string; requests: number; tokens: number; cost: number }>;
+  byProvider: Array<{
+    provider: string;
+    requests: number;
+    tokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    cost: number;
+  }>;
+  byModel: Array<{
+    model: string;
+    requests: number;
+    tokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    cost: number;
+  }>;
+  daily: Array<{
+    date: string;
+    requests: number;
+    tokens: number;
+    promptTokens: number;
+    completionTokens: number;
+    cost: number;
+  }>;
 };
 
 const queryKey = ["logs"] as const;
 
 export type LogFilters = {
+  userId?: string;
+  apiKeyId?: string;
   provider?: string;
   model?: string;
   limit: number;
@@ -37,6 +62,8 @@ export type LogFilters = {
 
 export function useLogsQuery(filters: LogFilters) {
   const params = new URLSearchParams();
+  if (filters.userId) params.set("userId", filters.userId);
+  if (filters.apiKeyId) params.set("apiKeyId", filters.apiKeyId);
   if (filters.provider) params.set("provider", filters.provider);
   if (filters.model) params.set("model", filters.model);
   params.set("limit", String(filters.limit));
@@ -51,6 +78,8 @@ export type StatsRangeDays = 7 | 30 | 90;
 
 export type StatsFilters = {
   days?: StatsRangeDays;
+  userId?: string;
+  apiKeyId?: string;
   provider?: string;
   model?: string;
 };
@@ -58,6 +87,8 @@ export type StatsFilters = {
 export function useLogsStatsQuery(filters: StatsFilters = {}) {
   const params = new URLSearchParams();
   if (filters.days) params.set("days", String(filters.days));
+  if (filters.userId) params.set("userId", filters.userId);
+  if (filters.apiKeyId) params.set("apiKeyId", filters.apiKeyId);
   if (filters.provider) params.set("provider", filters.provider);
   if (filters.model) params.set("model", filters.model);
   const query = params.toString();

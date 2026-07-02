@@ -32,10 +32,11 @@ export function OverviewPage() {
             {stats.data?.byProvider.length ? (
               <ul className="grid gap-2 text-sm">
                 {stats.data.byProvider.map((row) => (
-                  <li key={row.provider} className="flex items-center justify-between">
+                  <li key={row.provider} className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_auto]">
                     <span className="font-medium">{row.provider}</span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {row.requests} req · {row.tokens.toLocaleString()} tok · $
+                    <span className="text-muted-foreground tabular-nums sm:text-right">
+                      {row.requests} req ·{" "}
+                      {formatTokenSplit(row.promptTokens, row.completionTokens)} · $
                       {row.cost.toFixed(4)}
                     </span>
                   </li>
@@ -56,10 +57,12 @@ export function OverviewPage() {
             {stats.data?.byModel.length ? (
               <ul className="grid gap-2 text-sm">
                 {stats.data.byModel.slice(0, 5).map((row) => (
-                  <li key={row.model} className="flex items-center justify-between">
-                    <span className="font-medium">{row.model}</span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {row.requests} req · ${row.cost.toFixed(4)}
+                  <li key={row.model} className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_auto]">
+                    <span className="min-w-0 truncate font-medium">{row.model}</span>
+                    <span className="text-muted-foreground tabular-nums sm:text-right">
+                      {row.requests} req ·{" "}
+                      {formatTokenSplit(row.promptTokens, row.completionTokens)} · $
+                      {row.cost.toFixed(4)}
                     </span>
                   </li>
                 ))}
@@ -72,4 +75,8 @@ export function OverviewPage() {
       </div>
     </div>
   );
+}
+
+function formatTokenSplit(promptTokens: number, completionTokens: number) {
+  return `${promptTokens.toLocaleString()} input · ${completionTokens.toLocaleString()} output`;
 }

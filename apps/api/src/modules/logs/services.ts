@@ -17,12 +17,14 @@ export type LogFilters = {
 };
 
 /**
- * Aggregation bucket returned for {@link getStats}. `tokens` and `cost` are
+ * Aggregation bucket returned for {@link getStats}. Token and cost fields are
  * summed across the matching logs and are zero (not null) when no logs match.
  */
 export type GroupedStat = {
   requests: number;
   tokens: number;
+  promptTokens: number;
+  completionTokens: number;
   cost: number;
 };
 
@@ -30,6 +32,8 @@ export type DailyStat = {
   date: string;
   requests: number;
   tokens: number;
+  promptTokens: number;
+  completionTokens: number;
   cost: number;
 };
 
@@ -40,6 +44,8 @@ export type DailyStat = {
 export type Stats = {
   totalRequests: number;
   totalTokens: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
   totalCost: number;
   byProvider: Array<{ provider: string } & GroupedStat>;
   byModel: Array<{ model: string } & GroupedStat>;
@@ -119,6 +125,7 @@ export async function getLogs(filters: LogFilters) {
 export type StatsFilters = {
   startDate?: Date;
   endDate?: Date;
+  apiKeyId?: string;
   provider?: string;
   model?: string;
   days?: number;
@@ -159,6 +166,7 @@ function buildStatsWhere(filters: StatsFilters, startDate: Date, endDate: Date) 
     },
   };
 
+  if (filters.apiKeyId) where.apiKeyId = filters.apiKeyId;
   if (filters.provider) where.provider = filters.provider;
   if (filters.model) where.model = filters.model;
   if (filters.ownerUserId) where.apiKey = { createdBy: filters.ownerUserId };
@@ -170,6 +178,8 @@ type DailyRow = {
   date: string | Date;
   requests: number | bigint;
   tokens: number | bigint | null;
+  promptTokens: number | bigint | null;
+  completionTokens: number | bigint | null;
   cost: number | null;
 };
 
@@ -190,6 +200,8 @@ function buildDailySeries(rows: DailyRow[], days: number, startDate: Date): Dail
           date,
           requests: toNumber(row.requests),
           tokens: toNumber(row.tokens),
+          promptTokens: toNumber(row.promptTokens),
+          completionTokens: toNumber(row.completionTokens),
           cost: row.cost ?? 0,
         },
       ] as const;
@@ -199,7 +211,16 @@ function buildDailySeries(rows: DailyRow[], days: number, startDate: Date): Dail
   return Array.from({ length: days }, (_, index) => {
     const date = new Date(startDate.getTime() + index * 24 * 60 * 60 * 1000);
     const dateKey = formatDateKey(date);
-    return byDate.get(dateKey) ?? { date: dateKey, requests: 0, tokens: 0, cost: 0 };
+    return (
+      byDate.get(dateKey) ?? {
+        date: dateKey,
+        requests: 0,
+        tokens: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        cost: 0,
+      }
+    );
   });
 }
 
@@ -217,6 +238,9 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
     ? Prisma.sql`AND "provider" = ${filters.provider}`
     : Prisma.empty;
   const modelFilter = filters.model ? Prisma.sql`AND "model" = ${filters.model}` : Prisma.empty;
+  const apiKeyFilter = filters.apiKeyId
+    ? Prisma.sql`AND "apiKeyId" = ${filters.apiKeyId}`
+    : Prisma.empty;
   const ownerFilter = filters.ownerUserId
     ? Prisma.sql`AND EXISTS (
         SELECT 1
@@ -231,7 +255,7 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
       prisma.requestLog.count({ where }),
       prisma.requestLog.aggregate({
         where,
-        _sum: { totalTokens: true },
+        _sum: { totalTokens: true, promptTokens: true, completionTokens: true },
       }),
       prisma.requestLog.aggregate({
         where,
@@ -241,25 +265,38 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
         by: ["provider"],
         where,
         _count: { _all: true },
-        _sum: { totalTokens: true, estimatedCost: true },
+        _sum: {
+          totalTokens: true,
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCost: true,
+        },
       }),
       prisma.requestLog.groupBy({
         by: ["model"],
         where,
         _count: { _all: true },
-        _sum: { totalTokens: true, estimatedCost: true },
+        _sum: {
+          totalTokens: true,
+          promptTokens: true,
+          completionTokens: true,
+          estimatedCost: true,
+        },
       }),
       prisma.$queryRaw<DailyRow[]>`
         SELECT
           DATE("createdAt")::text AS "date",
           COUNT(*)::int AS "requests",
           COALESCE(SUM("totalTokens"), 0)::int AS "tokens",
+          COALESCE(SUM("promptTokens"), 0)::int AS "promptTokens",
+          COALESCE(SUM("completionTokens"), 0)::int AS "completionTokens",
           COALESCE(SUM("estimatedCost"), 0)::float8 AS "cost"
         FROM "RequestLog"
         WHERE "createdAt" >= ${startDate}
           AND "createdAt" <= ${endDate}
           ${providerFilter}
           ${modelFilter}
+          ${apiKeyFilter}
           ${ownerFilter}
         GROUP BY DATE("createdAt")
         ORDER BY DATE("createdAt") ASC
@@ -269,17 +306,23 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
   return {
     totalRequests,
     totalTokens: totalTokensAgg._sum.totalTokens ?? 0,
+    totalPromptTokens: totalTokensAgg._sum.promptTokens ?? 0,
+    totalCompletionTokens: totalTokensAgg._sum.completionTokens ?? 0,
     totalCost: totalCostAgg._sum.estimatedCost ?? 0,
     byProvider: byProvider.map((p) => ({
       provider: p.provider,
       requests: p._count._all,
       tokens: p._sum.totalTokens ?? 0,
+      promptTokens: p._sum.promptTokens ?? 0,
+      completionTokens: p._sum.completionTokens ?? 0,
       cost: p._sum.estimatedCost ?? 0,
     })),
     byModel: byModel.map((m) => ({
       model: m.model,
       requests: m._count._all,
       tokens: m._sum.totalTokens ?? 0,
+      promptTokens: m._sum.promptTokens ?? 0,
+      completionTokens: m._sum.completionTokens ?? 0,
       cost: m._sum.estimatedCost ?? 0,
     })),
     daily: buildDailySeries(dailyRows, days, startDate),

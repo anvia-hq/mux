@@ -4,6 +4,7 @@ import { apiFetch, ApiError } from "../../lib/api-client";
 export type ApiKey = {
   id: string;
   name: string;
+  createdBy: string;
   isActive: boolean;
   spendLimitUsd: number | null;
   spentUsd: number;
@@ -41,10 +42,11 @@ export type UpdateApiKeyModelAccessVariables = UpdateApiKeyModelAccessInput & {
 
 const queryKey = ["api-keys"] as const;
 
-export function useApiKeysQuery() {
+export function useApiKeysQuery(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey,
     queryFn: () => apiFetch<{ keys: ApiKey[] }>("/api-keys"),
+    enabled: options.enabled,
   });
 }
 

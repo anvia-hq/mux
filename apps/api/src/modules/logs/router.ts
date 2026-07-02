@@ -46,7 +46,7 @@ function parseDate(value: string | undefined): Date | undefined {
  *
  * Endpoints:
  * - `GET /`        - Paginated request log entries with optional filters
- * - `GET /stats`   - Aggregate counts, tokens, and cost broken down by provider/model
+ * - `GET /stats`   - Aggregate counts, split tokens, and cost broken down by provider/model
  */
 export const logsRouter = new Hono<LogsRouterEnv>();
 
@@ -65,20 +65,24 @@ logsRouter.use("*", async (c, next) => {
 /**
  * GET /
  *
- * Lists request log entries newest-first with optional filters for API key,
- * provider, model, and date range. Supports pagination via `limit` and
- * `offset` query parameters.
+ * Lists request log entries newest-first with optional filters for user/API
+ * key, provider, model, and date range. User/API key filters are admin-only.
+ * Supports pagination via `limit` and `offset` query parameters.
  *
  * Returns `{ logs, total, limit, offset }` so the client can render
  * pagination controls without an additional count call.
  */
 logsRouter.get("/", async (c) => {
   const user = c.get("user");
-  const { apiKeyId, provider, model, startDate, endDate, limit, offset } = c.req.query();
+  const { apiKeyId, userId, provider, model, startDate, endDate, limit, offset } = c.req.query();
 
   const filters: LogFilters = {};
-  if (user.role !== "ADMIN") filters.ownerUserId = user.id;
-  if (apiKeyId) filters.apiKeyId = apiKeyId;
+  if (user.role === "ADMIN") {
+    if (apiKeyId) filters.apiKeyId = apiKeyId;
+    if (userId) filters.ownerUserId = userId;
+  } else {
+    filters.ownerUserId = user.id;
+  }
   if (provider) filters.provider = provider;
   if (model) filters.model = model;
 
@@ -107,16 +111,21 @@ logsRouter.get("/", async (c) => {
  * GET /stats
  *
  * Returns aggregate request statistics over the filtered log set, including
- * total requests, total tokens, total estimated cost, and per-provider and
- * per-model breakdowns. Accepts optional `startDate` and `endDate` ISO-8601
- * query parameters to scope the window.
+ * total requests, input/output tokens, total estimated cost, and per-provider
+ * and per-model breakdowns. Accepts optional `startDate` and `endDate`
+ * ISO-8601 query parameters to scope the window.
  */
 logsRouter.get("/stats", async (c) => {
   const user = c.get("user");
-  const { startDate, endDate, groupBy, days, provider, model } = c.req.query();
+  const { startDate, endDate, groupBy, days, apiKeyId, userId, provider, model } = c.req.query();
 
   const filters: StatsFilters = {};
-  if (user.role !== "ADMIN") filters.ownerUserId = user.id;
+  if (user.role === "ADMIN") {
+    if (apiKeyId) filters.apiKeyId = apiKeyId;
+    if (userId) filters.ownerUserId = userId;
+  } else {
+    filters.ownerUserId = user.id;
+  }
   if (provider) filters.provider = provider;
   if (model) filters.model = model;
 

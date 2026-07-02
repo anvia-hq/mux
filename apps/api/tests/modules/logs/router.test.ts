@@ -88,13 +88,13 @@ describe("logs router", () => {
     expect(res.status).toBe(401);
   });
 
-  it("GET / forwards parsed filters and ignores invalid numbers and dates", async () => {
+  it("GET / forwards parsed filters and ignores admin-only filters for regular users", async () => {
     mockPrisma.requestLog.findMany.mockResolvedValueOnce([]);
     mockPrisma.requestLog.count.mockResolvedValueOnce(0);
 
     const app = new Hono().route("/logs", logsRouter);
     const res = await app.request(
-      "/logs?apiKeyId=key-1&provider=openai&model=gpt-4&startDate=2026-01-01&endDate=bad&limit=25&offset=-1",
+      "/logs?apiKeyId=key-1&userId=user-2&provider=openai&model=gpt-4&startDate=2026-01-01&endDate=bad&limit=25&offset=-1",
     );
 
     expect(res.status).toBe(200);
@@ -103,11 +103,42 @@ describe("logs router", () => {
         skip: 0,
         take: 25,
         where: expect.objectContaining({
-          apiKeyId: "key-1",
           apiKey: { createdBy: "user-1" },
           provider: "openai",
           model: "gpt-4",
           createdAt: expect.objectContaining({ gte: new Date("2026-01-01") }),
+        }),
+      }),
+    );
+    expect(mockPrisma.requestLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.not.objectContaining({ apiKeyId: "key-1" }),
+      }),
+    );
+  });
+
+  it("GET / forwards user and API key filters for admins", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce({
+      id: "admin-1",
+      email: "admin@test.com",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: "hash",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.requestLog.findMany.mockResolvedValueOnce([]);
+    mockPrisma.requestLog.count.mockResolvedValueOnce(0);
+
+    const app = new Hono().route("/logs", logsRouter);
+    const res = await app.request("/logs?apiKeyId=key-1&userId=user-2");
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.requestLog.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          apiKeyId: "key-1",
+          apiKey: { createdBy: "user-2" },
         }),
       }),
     );
@@ -150,7 +181,9 @@ describe("logs router", () => {
   it("GET /stats returns aggregate stats", async () => {
     mockPrisma.requestLog.count.mockResolvedValueOnce(0);
     mockPrisma.requestLog.aggregate
-      .mockResolvedValueOnce({ _sum: { totalTokens: null } })
+      .mockResolvedValueOnce({
+        _sum: { totalTokens: null, promptTokens: null, completionTokens: null },
+      })
       .mockResolvedValueOnce({ _sum: { estimatedCost: null } });
     mockPrisma.requestLog.groupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     mockPrisma.$queryRaw.mockResolvedValueOnce([]);
@@ -166,10 +199,43 @@ describe("logs router", () => {
     });
   });
 
+  it("GET /stats forwards user and API key filters for admins", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce({
+      id: "admin-1",
+      email: "admin@test.com",
+      name: "Admin",
+      role: "ADMIN",
+      passwordHash: "hash",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    mockPrisma.requestLog.count.mockResolvedValueOnce(0);
+    mockPrisma.requestLog.aggregate
+      .mockResolvedValueOnce({
+        _sum: { totalTokens: null, promptTokens: null, completionTokens: null },
+      })
+      .mockResolvedValueOnce({ _sum: { estimatedCost: null } });
+    mockPrisma.requestLog.groupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mockPrisma.$queryRaw.mockResolvedValueOnce([]);
+
+    const app = new Hono().route("/logs", logsRouter);
+    const res = await app.request("/logs/stats?apiKeyId=key-1&userId=user-2");
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        apiKeyId: "key-1",
+        apiKey: { createdBy: "user-2" },
+      }),
+    });
+  });
+
   it("GET /stats forwards dates, days, and valid groupBy", async () => {
     mockPrisma.requestLog.count.mockResolvedValueOnce(0);
     mockPrisma.requestLog.aggregate
-      .mockResolvedValueOnce({ _sum: { totalTokens: null } })
+      .mockResolvedValueOnce({
+        _sum: { totalTokens: null, promptTokens: null, completionTokens: null },
+      })
       .mockResolvedValueOnce({ _sum: { estimatedCost: null } });
     mockPrisma.requestLog.groupBy.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     mockPrisma.$queryRaw.mockResolvedValueOnce([]);

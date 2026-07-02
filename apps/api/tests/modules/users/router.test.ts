@@ -14,6 +14,7 @@ const { mockPrisma } = vi.hoisted(() => ({
         updatedAt: new Date(),
       }),
       findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn(),
     },
   },
 }));
@@ -44,7 +45,7 @@ describe("users router", () => {
     const app = new Hono().route("/users", usersRouter);
     const res = await app.request("/users");
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { user: Record<string, unknown> };
     expect(body).toHaveProperty("users");
   });
 
@@ -64,5 +65,125 @@ describe("users router", () => {
 
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("POST /:id/promote promotes users for admins", async () => {
+    const date = new Date();
+    mockPrisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        createdAt: date,
+        updatedAt: date,
+      })
+      .mockResolvedValueOnce({
+        id: "user-1",
+        email: "user@test.com",
+        name: "User",
+        role: "USER",
+        passwordHash: "hash",
+        spendLimitUsd: null,
+        createdAt: date,
+        updatedAt: date,
+      });
+    mockPrisma.user.update.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "ADMIN",
+      passwordHash: "hash",
+      spendLimitUsd: null,
+      createdAt: date,
+      updatedAt: date,
+    });
+
+    const app = new Hono().route("/users", usersRouter);
+    const res = await app.request("/users/user-1/promote", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user: Record<string, unknown> };
+    expect(body.user).toMatchObject({ id: "user-1", role: "ADMIN" });
+    expect(body.user).not.toHaveProperty("passwordHash");
+    expect(mockPrisma.user.update).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      data: { role: "ADMIN" },
+    });
+  });
+
+  it("POST /:id/promote returns 403 for non-admin users", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "hash",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    const app = new Hono().route("/users", usersRouter);
+    const res = await app.request("/users/user-2/promote", { method: "POST" });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden" });
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("POST /:id/promote returns 404 for missing users", async () => {
+    const date = new Date();
+    mockPrisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        createdAt: date,
+        updatedAt: date,
+      })
+      .mockResolvedValueOnce(null);
+
+    const app = new Hono().route("/users", usersRouter);
+    const res = await app.request("/users/missing-user/promote", { method: "POST" });
+
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "user not found" });
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it("POST /:id/promote is idempotent for existing admins", async () => {
+    const date = new Date();
+    mockPrisma.user.findUnique
+      .mockResolvedValueOnce({
+        id: "admin-1",
+        email: "admin@test.com",
+        name: "Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        createdAt: date,
+        updatedAt: date,
+      })
+      .mockResolvedValueOnce({
+        id: "admin-2",
+        email: "other-admin@test.com",
+        name: "Other Admin",
+        role: "ADMIN",
+        passwordHash: "hash",
+        spendLimitUsd: null,
+        createdAt: date,
+        updatedAt: date,
+      });
+
+    const app = new Hono().route("/users", usersRouter);
+    const res = await app.request("/users/admin-2/promote", { method: "POST" });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { user: Record<string, unknown> };
+    expect(body.user).toMatchObject({ id: "admin-2", role: "ADMIN" });
+    expect(body.user).not.toHaveProperty("passwordHash");
+    expect(mockPrisma.user.update).not.toHaveBeenCalled();
   });
 });

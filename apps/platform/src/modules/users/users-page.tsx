@@ -39,7 +39,12 @@ import {
   useUpdateInvitationSettingsMutation,
   type Invitation,
 } from "../invitations/hooks";
-import { isForbiddenError, useUsersQuery, type DashboardUser } from "./hooks";
+import {
+  isForbiddenError,
+  usePromoteUserMutation,
+  useUsersQuery,
+  type DashboardUser,
+} from "./hooks";
 
 export function UsersPage() {
   const query = useUsersQuery();
@@ -48,10 +53,12 @@ export function UsersPage() {
   const createInvitation = useCreateInvitationMutation();
   const revokeInvitation = useRevokeInvitationMutation();
   const updateInvitationSettings = useUpdateInvitationSettingsMutation();
+  const promoteUser = usePromoteUserMutation();
   const { copiedId, copy } = useCopyFeedback();
   const [balanceUsd, setBalanceUsd] = useState("");
   const [maxRedemptions, setMaxRedemptions] = useState("1");
   const [revealedCode, setRevealedCode] = useState<string | null>(null);
+  const [promotionTarget, setPromotionTarget] = useState<DashboardUser | null>(null);
 
   if (isForbiddenError(query.error)) {
     return (
@@ -73,6 +80,25 @@ export function UsersPage() {
     setMaxRedemptions("1");
     setRevealedCode(null);
     createInvitation.reset();
+  }
+
+  function openPromotionDialog(user: DashboardUser) {
+    promoteUser.reset();
+    setPromotionTarget(user);
+  }
+
+  function closePromotionDialog() {
+    if (!promoteUser.isPending) {
+      setPromotionTarget(null);
+    }
+  }
+
+  function confirmPromotion() {
+    if (!promotionTarget) return;
+
+    promoteUser.mutate(promotionTarget.id, {
+      onSuccess: () => setPromotionTarget(null),
+    });
   }
 
   return (
@@ -245,6 +271,7 @@ export function UsersPage() {
                   <TableHead>User credit</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Updated</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -266,6 +293,20 @@ export function UsersPage() {
                     <TableCell className="text-muted-foreground">
                       {new Date(user.updatedAt).toLocaleString()}
                     </TableCell>
+                    <TableCell className="text-right">
+                      {user.role === "ADMIN" ? (
+                        <span className="text-xs text-muted-foreground">Already admin</span>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={promoteUser.isPending && promotionTarget?.id === user.id}
+                          onClick={() => openPromotionDialog(user)}
+                        >
+                          Promote
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -273,6 +314,39 @@ export function UsersPage() {
           </Card>
         )}
       </section>
+
+      <Dialog
+        open={Boolean(promotionTarget)}
+        onOpenChange={(open) => !open && closePromotionDialog()}
+      >
+        {promotionTarget ? (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Promote user to admin?</DialogTitle>
+              <DialogDescription>
+                {promotionTarget.email} will be able to manage users, API keys, providers, and
+                gateway settings.
+              </DialogDescription>
+            </DialogHeader>
+            {promoteUser.error ? (
+              <p className="text-sm text-destructive">{promoteUser.error.message}</p>
+            ) : null}
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={promoteUser.isPending}
+                onClick={closePromotionDialog}
+              >
+                Cancel
+              </Button>
+              <Button type="button" disabled={promoteUser.isPending} onClick={confirmPromotion}>
+                {promoteUser.isPending ? "Promoting..." : "Promote to admin"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
 
       <section className="grid min-w-0 gap-3">
         <h2 className="text-sm font-medium">{formatInvitationCount(invitations.length)}</h2>

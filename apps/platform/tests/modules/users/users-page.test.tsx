@@ -7,6 +7,7 @@ const {
   mockInvitationSettingsQuery,
   mockInvitationsQuery,
   mockRevokeInvitation,
+  mockPromoteUser,
   mockUpdateInvitationSettings,
   mockToast,
   mockUsersQuery,
@@ -28,6 +29,12 @@ const {
   },
   mockRevokeInvitation: {
     mutate: vi.fn(),
+    isPending: false,
+  },
+  mockPromoteUser: {
+    mutate: vi.fn(),
+    reset: vi.fn(),
+    error: null as Error | null,
     isPending: false,
   },
   mockUpdateInvitationSettings: {
@@ -136,6 +143,7 @@ vi.mock("../../../src/modules/invitations/hooks", () => ({
 }));
 vi.mock("../../../src/modules/users/hooks", () => ({
   useUsersQuery: () => mockUsersQuery,
+  usePromoteUserMutation: () => mockPromoteUser,
   isForbiddenError: (error: unknown) =>
     typeof error === "object" && error !== null && "status" in error && error.status === 403,
 }));
@@ -179,6 +187,10 @@ describe("UsersPage", () => {
     mockInvitationsQuery.isLoading = false;
     mockRevokeInvitation.isPending = false;
     mockRevokeInvitation.mutate.mockReset();
+    mockPromoteUser.error = null;
+    mockPromoteUser.isPending = false;
+    mockPromoteUser.mutate.mockReset();
+    mockPromoteUser.reset.mockReset();
     mockUpdateInvitationSettings.error = null;
     mockUpdateInvitationSettings.isPending = false;
     mockUpdateInvitationSettings.mutate.mockReset();
@@ -207,6 +219,37 @@ describe("UsersPage", () => {
     expect(screen.getByText("Not set")).toBeDefined();
     expect(screen.getByText("Admin")).toBeDefined();
     expect(screen.getByText("User")).toBeDefined();
+    expect(screen.getByText("Already admin")).toBeDefined();
+    expect(screen.getByRole("button", { name: "Promote" })).toBeDefined();
+  });
+
+  it("promotes users after confirmation", () => {
+    mockUsersQuery.data = { users };
+    render(React.createElement(UsersPage));
+
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }));
+
+    expect(mockPromoteUser.reset).toHaveBeenCalled();
+    expect(screen.getByText("Promote user to admin?")).toBeDefined();
+    expect(screen.getByText(/user@test.com will be able to manage users/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Promote to admin" }));
+
+    expect(mockPromoteUser.mutate).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+  });
+
+  it("disables promotion confirmation while pending", () => {
+    mockUsersQuery.data = { users };
+    mockPromoteUser.isPending = true;
+    render(React.createElement(UsersPage));
+
+    fireEvent.click(screen.getByRole("button", { name: "Promote" }));
+
+    const confirmButton = screen.getByRole("button", { name: "Promoting..." }) as HTMLButtonElement;
+    expect(confirmButton.disabled).toBe(true);
   });
 
   it("renders invitation states", () => {

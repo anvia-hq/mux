@@ -310,6 +310,7 @@ export async function listApiKeys(filters: { ownerUserId?: string } = {}) {
       id: true,
       name: true,
       keyCiphertext: true,
+      createdBy: true,
       isActive: true,
       spendLimitUsd: true,
       allowAllModels: true,

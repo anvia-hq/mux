@@ -43,10 +43,11 @@ vi.mock("@repo/ui/components/toggle-group", () => {
   };
 });
 vi.mock("recharts", () => ({
-  Area: () => React.createElement("path", { "data-testid": "area" }),
-  AreaChart: ({ children }: { children: React.ReactNode }) =>
-    React.createElement("svg", { "data-testid": "area-chart" }, children),
+  Bar: () => React.createElement("rect", { "data-testid": "bar" }),
+  BarChart: ({ children }: { children: React.ReactNode }) =>
+    React.createElement("svg", { "data-testid": "bar-chart" }, children),
   CartesianGrid: () => React.createElement("g", { "data-testid": "grid" }),
+  ReferenceLine: () => React.createElement("line", { "data-testid": "reference-line" }),
   XAxis: ({ tickFormatter }: { tickFormatter: (value: string) => string }) =>
     React.createElement("text", null, tickFormatter("2026-06-24")),
   YAxis: ({ tickFormatter }: { tickFormatter: (value: number) => string }) =>
@@ -59,12 +60,28 @@ import type { LogsStats } from "../../../src/modules/logs/hooks";
 const stats: LogsStats = {
   totalRequests: 1234,
   totalTokens: 98765,
+  totalPromptTokens: 12345,
+  totalCompletionTokens: 86420,
   totalCost: 12.3456,
   byProvider: [],
   byModel: [],
   daily: [
-    { date: "2026-06-23", requests: 10, tokens: 1000, cost: 0.5 },
-    { date: "2026-06-24", requests: 20, tokens: 2000, cost: 1 },
+    {
+      date: "2026-06-23",
+      requests: 10,
+      tokens: 1000,
+      promptTokens: 400,
+      completionTokens: 600,
+      cost: 0.5,
+    },
+    {
+      date: "2026-06-24",
+      requests: 20,
+      tokens: 2000,
+      promptTokens: 800,
+      completionTokens: 1200,
+      cost: 1,
+    },
   ],
 };
 
@@ -77,7 +94,7 @@ describe("RequestTrendChart", () => {
     expect(screen.getByText("Request trend")).toBeDefined();
     expect(screen.getByText("Daily gateway traffic")).toBeDefined();
     expect(screen.getByText("No requests in this range.")).toBeDefined();
-    expect(screen.getAllByText("—")).toHaveLength(4);
+    expect(screen.getAllByText("—")).toHaveLength(7);
   });
 
   it("renders formatted stats and chart formatters", () => {
@@ -94,11 +111,16 @@ describe("RequestTrendChart", () => {
     expect(screen.getByText("Gateway usage")).toBeDefined();
     expect(screen.getByText("Recent traffic")).toBeDefined();
     expect(screen.getByText("1,234")).toBeDefined();
-    expect(screen.getByText("98,765")).toBeDefined();
-    expect(screen.getByText("$12.3456")).toBeDefined();
-    expect(screen.getByText("176")).toBeDefined();
-    expect(screen.getByText("Jun 24")).toBeDefined();
-    expect(screen.getByText("1.5K")).toBeDefined();
+    expect(screen.getByText("12.3K")).toBeDefined();
+    expect(screen.getByText("86.4K")).toBeDefined();
+    expect(screen.getByText("12,345")).toBeDefined();
+    expect(screen.getByText("86,420")).toBeDefined();
+    expect(screen.getAllByText("$12.3456")).toHaveLength(2);
+    expect(screen.getByText("176 avg/day")).toBeDefined();
+    expect(screen.getAllByTestId("chart-container")).toHaveLength(1);
+    expect(screen.getAllByTestId("bar")).toHaveLength(4);
+    expect(screen.getAllByText("Jun 24")).toHaveLength(1);
+    expect(screen.getAllByText("1.5K")).toHaveLength(1);
   });
 
   it("emits range changes and ignores empty toggle values", () => {
