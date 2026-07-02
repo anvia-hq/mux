@@ -2,6 +2,8 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
   Model,
   ProviderAdapter,
 } from "./types";
@@ -22,6 +24,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   capabilities = openAICompatibleCapabilities;
   private apiKey: string;
   private chatCompletionsUrl?: string;
+  private embeddingsUrl?: string;
   /**
    * Base URL the adapter posts to for Responses API calls, if the
    * upstream exposes the OpenAI Responses surface. Set via the
@@ -42,6 +45,9 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     this.name = input.name;
     this.apiKey = input.apiKey;
     this.chatCompletionsUrl = input.apiBase ? this.toChatCompletionsUrl(input.apiBase) : undefined;
+    this.embeddingsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "embeddings")
+      : undefined;
     this.responsesEndpoint = input.responsesEndpoint;
     this.models = input.models;
   }
@@ -115,6 +121,26 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     }
   }
 
+  async createEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    if (!this.embeddingsUrl) {
+      throw new Error(`${this.name} does not expose an embeddings URL in models.dev`);
+    }
+
+    const response = await fetch(this.embeddingsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as EmbeddingResponse;
+  }
+
   listModels(): Model[] {
     return this.models;
   }
@@ -131,7 +157,17 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   }
 
   private toChatCompletionsUrl(apiBase: string): string {
+    return this.toEndpointUrl(apiBase, "chat/completions");
+  }
+
+  private toEndpointUrl(apiBase: string, endpoint: string): string {
     const normalized = apiBase.replace(/\/$/, "");
-    return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+    if (normalized.endsWith(`/${endpoint}`)) {
+      return normalized;
+    }
+    if (normalized.endsWith("/chat/completions")) {
+      return normalized.replace(/\/chat\/completions$/, `/${endpoint}`);
+    }
+    return `${normalized}/${endpoint}`;
   }
 }

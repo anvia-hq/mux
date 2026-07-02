@@ -139,6 +139,31 @@ export interface ChatCompletionChunk {
   };
 }
 
+export type EmbeddingInput = string | string[] | number[] | number[][];
+
+export interface EmbeddingRequest {
+  model: string;
+  input: EmbeddingInput;
+  encoding_format?: "float" | "base64";
+  dimensions?: number;
+  user?: string;
+  [key: string]: unknown;
+}
+
+export interface EmbeddingResponse {
+  object: "list";
+  data: {
+    object: "embedding";
+    embedding: number[] | string;
+    index: number;
+  }[];
+  model: string;
+  usage: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+
 export type ResponseCreateRequest = {
   model: string;
   input?: unknown;
@@ -199,6 +224,11 @@ export interface ProviderCapabilities {
    * Defaults to `false`; opt in per adapter.
    */
   responsesApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible embeddings through
+   * `/v1/embeddings`.
+   */
+  embeddingsApi?: boolean;
 }
 
 export interface Model {
@@ -251,6 +281,7 @@ export interface ProviderAdapter {
   capabilities: ProviderCapabilities;
   chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse>;
   chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk>;
+  createEmbedding?(request: EmbeddingRequest): Promise<EmbeddingResponse>;
   createResponse?(request: ResponseCreateRequest): Promise<ResponseObject>;
   createResponseStream?(request: ResponseCreateRequest): AsyncIterable<string>;
   getResponse?(id: string, query?: Record<string, string | string[]>): Promise<ResponseObject>;

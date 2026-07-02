@@ -2,6 +2,8 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatCompletionChunk,
+  EmbeddingRequest,
+  EmbeddingResponse,
   ProviderAdapter,
   Model,
   ResponseCompactRequest,
@@ -780,6 +782,7 @@ const MODELS: Model[] = [
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export class UpstreamResponsesApiError extends Error {
@@ -914,6 +917,25 @@ export class OpenAIAdapter implements ProviderAdapter {
         }
       }
     }
+  }
+
+  async createEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const response = await fetch(OPENAI_EMBEDDINGS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as EmbeddingResponse;
   }
 
   async createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {

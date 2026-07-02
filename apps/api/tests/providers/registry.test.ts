@@ -20,6 +20,7 @@ import {
   initProviders,
   listPublicModels,
   resolveChatModel,
+  resolveEmbeddingModel,
   resolveResponseTarget,
 } from "../../src/providers/registry";
 
@@ -62,6 +63,45 @@ describe("resolveResponseTarget", () => {
       targets: [{ provider: "anthropic", modelId: "claude", position: 0 }],
     });
     expect(await resolveResponseTarget("mux:anthropic-only")).toBeNull();
+  });
+});
+
+describe("resolveEmbeddingModel", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    clearProviderCacheForE2e();
+    mockPrisma.customProvider.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
+  });
+
+  it("returns only embedding-capable targets from fallback groups", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "openai", ciphertext: "enc-openai" },
+      { provider: "anthropic", ciphertext: "enc-anthropic" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "embed",
+      name: "Embed",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "text-embedding-3-small", position: 1 },
+      ],
+    });
+
+    await expect(resolveEmbeddingModel("mux:embed")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:embed",
+      targets: [{ providerName: "openai", modelId: "text-embedding-3-small" }],
+    });
   });
 });
 
@@ -116,6 +156,11 @@ describe("custom providers", () => {
       }),
     ]);
     await expect(resolveResponseTarget("custom-openai:custom-chat")).resolves.toBeNull();
+    await expect(resolveEmbeddingModel("custom-openai:custom-chat")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "custom-openai:custom-chat",
+      targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],
+    });
   });
 });
 
