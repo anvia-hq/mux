@@ -41,6 +41,9 @@ describe("CustomOpenAICompatibleAdapter", () => {
     });
 
     expect(adapter.capabilities.embeddingsApi).toBe(true);
+    expect(adapter.capabilities.moderationsApi).toBe(true);
+    expect(adapter.capabilities.imageGenerationsApi).toBe(true);
+    expect(adapter.capabilities.completionsApi).toBe(true);
     expect(adapter.capabilities.responsesApi).toBe(false);
   });
 
@@ -69,6 +72,40 @@ describe("CustomOpenAICompatibleAdapter", () => {
     expect(response.data[0]?.embedding).toBe("base64-data");
     expect(mockFetch).toHaveBeenCalledWith(
       "https://custom.example/v1/embeddings",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
+    );
+  });
+
+  it("creates completions through the derived OpenAI-compatible endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "cmpl-1",
+        model: "embed",
+        choices: [{ text: "hi", index: 0 }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1/chat/completions",
+      models,
+    });
+    const response = await adapter.createCompletion({
+      model: "embed",
+      prompt: "hello",
+    });
+
+    expect(response.choices?.[0]?.text).toBe("hi");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://custom.example/v1/completions",
       expect.objectContaining({
         method: "POST",
         headers: {

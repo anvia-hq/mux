@@ -1,4 +1,15 @@
-import type { EmbeddingRequest, EmbeddingResponse, ProviderAdapter, Model } from "./types";
+import type {
+  CompletionRequest,
+  CompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
+  Model,
+  ModerationRequest,
+  ModerationResponse,
+  ProviderAdapter,
+} from "./types";
 import { RequestyAdapter } from "./requesty";
 import { QiniuAiAdapter } from "./qiniu-ai";
 import { AlibabaCnAdapter } from "./alibaba-cn";
@@ -659,11 +670,11 @@ export type ResolvedEmbeddingProviderModel = ResolvedProviderModel & {
   };
 };
 
-export type ResolvedEmbeddingModel =
+type ResolvedEndpointModel<TTarget extends ResolvedProviderModel> =
   | {
       kind: "direct";
       requestedModelId: string;
-      targets: [ResolvedEmbeddingProviderModel];
+      targets: [TTarget];
     }
   | {
       kind: "fallback-group";
@@ -671,8 +682,10 @@ export type ResolvedEmbeddingModel =
       name: string;
       description: string | null;
       requestedModelId: string;
-      targets: ResolvedEmbeddingProviderModel[];
+      targets: TTarget[];
     };
+
+export type ResolvedEmbeddingModel = ResolvedEndpointModel<ResolvedEmbeddingProviderModel>;
 
 function isEmbeddingCapableTarget(
   target: ResolvedProviderModel,
@@ -714,6 +727,118 @@ export async function resolveEmbeddingModel(model: string): Promise<ResolvedEmbe
     requestedModelId: resolved.requestedModelId,
     targets,
   };
+}
+
+export type ResolvedModerationProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createModeration: (request: ModerationRequest) => Promise<ModerationResponse>;
+  };
+};
+
+export type ResolvedModerationModel = ResolvedEndpointModel<ResolvedModerationProviderModel>;
+
+export type ResolvedImageGenerationProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createImageGeneration: (request: ImageGenerationRequest) => Promise<ImageGenerationResponse>;
+    createImageGenerationStream?: (request: ImageGenerationRequest) => AsyncIterable<string>;
+  };
+};
+
+export type ResolvedImageGenerationModel =
+  ResolvedEndpointModel<ResolvedImageGenerationProviderModel>;
+
+export type ResolvedCompletionProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createCompletion: (request: CompletionRequest) => Promise<CompletionResponse>;
+    createCompletionStream?: (request: CompletionRequest) => AsyncIterable<string>;
+  };
+};
+
+export type ResolvedCompletionModel = ResolvedEndpointModel<ResolvedCompletionProviderModel>;
+
+type EndpointCapability = "moderationsApi" | "imageGenerationsApi" | "completionsApi";
+
+function isEndpointCapableTarget<TMethod extends keyof ProviderAdapter>(
+  target: ResolvedProviderModel,
+  capability: EndpointCapability,
+  method: TMethod,
+): boolean {
+  return (
+    target.provider.capabilities[capability] === true &&
+    typeof target.provider[method] === "function"
+  );
+}
+
+function isModerationCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedModerationProviderModel {
+  return isEndpointCapableTarget(target, "moderationsApi", "createModeration");
+}
+
+function isImageGenerationCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedImageGenerationProviderModel {
+  return isEndpointCapableTarget(target, "imageGenerationsApi", "createImageGeneration");
+}
+
+function isCompletionCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedCompletionProviderModel {
+  return isEndpointCapableTarget(target, "completionsApi", "createCompletion");
+}
+
+async function resolveEndpointModel<TTarget extends ResolvedProviderModel>(
+  model: string,
+  isCapableTarget: (target: ResolvedProviderModel) => target is TTarget,
+): Promise<ResolvedEndpointModel<TTarget> | null> {
+  const resolved = await resolveChatModel(model);
+  if (!resolved) {
+    return null;
+  }
+
+  if (resolved.kind === "direct") {
+    const target = resolved.targets[0];
+    if (!isCapableTarget(target)) {
+      return null;
+    }
+    return {
+      kind: "direct",
+      requestedModelId: resolved.requestedModelId,
+      targets: [target],
+    };
+  }
+
+  const targets = resolved.targets.filter(isCapableTarget);
+  if (targets.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: "fallback-group",
+    groupId: resolved.groupId,
+    name: resolved.name,
+    description: resolved.description,
+    requestedModelId: resolved.requestedModelId,
+    targets,
+  };
+}
+
+export async function resolveModerationModel(
+  model: string,
+): Promise<ResolvedModerationModel | null> {
+  return resolveEndpointModel(model, isModerationCapableTarget);
+}
+
+export async function resolveImageGenerationModel(
+  model: string,
+): Promise<ResolvedImageGenerationModel | null> {
+  return resolveEndpointModel(model, isImageGenerationCapableTarget);
+}
+
+export async function resolveCompletionModel(
+  model: string,
+): Promise<ResolvedCompletionModel | null> {
+  return resolveEndpointModel(model, isCompletionCapableTarget);
 }
 
 /**

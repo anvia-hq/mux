@@ -2,15 +2,25 @@ import type {
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatCompletionChunk,
+  CompletionRequest,
+  CompletionResponse,
   EmbeddingRequest,
   EmbeddingResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
   ProviderAdapter,
   Model,
+  ModerationRequest,
+  ModerationResponse,
   ResponseCompactRequest,
   ResponseCreateRequest,
   ResponseObject,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import {
+  streamImageGenerationResponseBody,
+  streamTextResponseBody,
+} from "./openai-compatible-stream";
 
 const MODELS: Model[] = [
   {
@@ -36,6 +46,96 @@ const MODELS: Model[] = [
     outputPricePer1M: 0,
     contextWindow: 8191,
     maxOutputTokens: 3072,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "text-moderation-latest",
+    name: "text-moderation-latest",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["moderation"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "text-moderation-stable",
+    name: "text-moderation-stable",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["moderation"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "omni-moderation-latest",
+    name: "omni-moderation-latest",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 32768,
+    maxOutputTokens: 0,
+    inputModalities: ["text", "image"],
+    outputModalities: ["moderation"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-3.5-turbo-instruct",
+    name: "GPT-3.5 Turbo Instruct",
+    provider: "openai",
+    inputPricePer1M: 1.5,
+    outputPricePer1M: 2,
+    contextWindow: 4096,
+    maxOutputTokens: 4096,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "davinci-002",
+    name: "davinci-002",
+    provider: "openai",
+    inputPricePer1M: 2,
+    outputPricePer1M: 2,
+    contextWindow: 16384,
+    maxOutputTokens: 4096,
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "babbage-002",
+    name: "babbage-002",
+    provider: "openai",
+    inputPricePer1M: 0.4,
+    outputPricePer1M: 0.4,
+    contextWindow: 16384,
+    maxOutputTokens: 4096,
     inputModalities: ["text"],
     outputModalities: ["text"],
     reasoning: false,
@@ -783,6 +883,9 @@ const MODELS: Model[] = [
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+const OPENAI_MODERATIONS_URL = "https://api.openai.com/v1/moderations";
+const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
+const OPENAI_COMPLETIONS_URL = "https://api.openai.com/v1/completions";
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export class UpstreamResponsesApiError extends Error {
@@ -938,6 +1041,86 @@ export class OpenAIAdapter implements ProviderAdapter {
     return (await response.json()) as EmbeddingResponse;
   }
 
+  async createModeration(request: ModerationRequest): Promise<ModerationResponse> {
+    const response = await fetch(OPENAI_MODERATIONS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ModerationResponse;
+  }
+
+  async createImageGeneration(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
+    const response = await fetch(OPENAI_IMAGE_GENERATIONS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ImageGenerationResponse;
+  }
+
+  async *createImageGenerationStream(request: ImageGenerationRequest): AsyncIterable<string> {
+    const response = await fetch(OPENAI_IMAGE_GENERATIONS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({ ...request, stream: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamImageGenerationResponseBody(response);
+  }
+
+  async createCompletion(request: CompletionRequest): Promise<CompletionResponse> {
+    const response = await fetch(OPENAI_COMPLETIONS_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as CompletionResponse;
+  }
+
+  async *createCompletionStream(request: CompletionRequest): AsyncIterable<string> {
+    yield* this.createRawStream(OPENAI_COMPLETIONS_URL, { ...request, stream: true });
+  }
+
   async createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
     const response = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
@@ -973,19 +1156,7 @@ export class OpenAIAdapter implements ProviderAdapter {
       throw new UpstreamResponsesApiError(response.status, error);
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
-
-    const decoder = new TextDecoder();
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      yield decoder.decode(value, { stream: true });
-    }
-
-    const final = decoder.decode();
-    if (final) yield final;
+    yield* streamTextResponseBody(response);
   }
 
   async getResponse(id: string, query?: UpstreamResponsesQuery): Promise<ResponseObject> {
@@ -1098,6 +1269,28 @@ export class OpenAIAdapter implements ProviderAdapter {
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
     return buildOpenAICompatibleRequestBody(request, stream);
+  }
+
+  private async *createRawStream(
+    url: string,
+    request: Record<string, unknown>,
+  ): AsyncIterable<string> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamTextResponseBody(response);
   }
 
   listModels(): Model[] {

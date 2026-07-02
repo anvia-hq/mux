@@ -20,7 +20,10 @@ import {
   initProviders,
   listPublicModels,
   resolveChatModel,
+  resolveCompletionModel,
   resolveEmbeddingModel,
+  resolveImageGenerationModel,
+  resolveModerationModel,
   resolveResponseTarget,
 } from "../../src/providers/registry";
 
@@ -105,6 +108,74 @@ describe("resolveEmbeddingModel", () => {
   });
 });
 
+describe("OpenAI-compatible endpoint resolvers", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    clearProviderCacheForE2e();
+    mockPrisma.customProvider.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
+  });
+
+  it("returns only moderation-capable targets from fallback groups", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "openai", ciphertext: "enc-openai" },
+      { provider: "anthropic", ciphertext: "enc-anthropic" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "moderate",
+      name: "Moderate",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "text-moderation-latest", position: 1 },
+      ],
+    });
+
+    await expect(resolveModerationModel("mux:moderate")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:moderate",
+      targets: [{ providerName: "openai", modelId: "text-moderation-latest" }],
+    });
+  });
+
+  it("skips models.dev targets without apiBase for new passthrough endpoints", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "xai", ciphertext: "enc-xai" },
+      { provider: "openai", ciphertext: "enc-openai" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "legacy-completions",
+      name: "Legacy completions",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "xai", modelId: "grok-4.3", position: 0 },
+        { provider: "openai", modelId: "gpt-3.5-turbo-instruct", position: 1 },
+      ],
+    });
+
+    await expect(resolveCompletionModel("mux:legacy-completions")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:legacy-completions",
+      targets: [{ providerName: "openai", modelId: "gpt-3.5-turbo-instruct" }],
+    });
+  });
+});
+
 describe("custom providers", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -157,6 +228,16 @@ describe("custom providers", () => {
     ]);
     await expect(resolveResponseTarget("custom-openai:custom-chat")).resolves.toBeNull();
     await expect(resolveEmbeddingModel("custom-openai:custom-chat")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "custom-openai:custom-chat",
+      targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],
+    });
+    await expect(resolveCompletionModel("custom-openai:custom-chat")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "custom-openai:custom-chat",
+      targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],
+    });
+    await expect(resolveImageGenerationModel("custom-openai:custom-chat")).resolves.toMatchObject({
       kind: "direct",
       requestedModelId: "custom-openai:custom-chat",
       targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],

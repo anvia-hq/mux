@@ -3,15 +3,18 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authRouter } from "./modules/auth/router";
 import { chatRouter } from "./modules/chat/router";
+import { completionsRouter } from "./modules/completions/router";
 import { e2eRouter } from "./modules/e2e/router";
 import { embeddingsRouter } from "./modules/embeddings/router";
 import { fallbackGroupsRouter } from "./modules/fallback-groups/router";
+import { imageGenerationsRouter } from "./modules/images/router";
 import { invitationsRouter } from "./modules/invitations/router";
 import { keysRouter } from "./modules/keys/router";
 import { freezeLegacyApiKeyModelAccess } from "./modules/keys/services";
 import { logsRouter } from "./modules/logs/router";
 import { modelAliasesRouter } from "./modules/model-aliases/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
+import { moderationsRouter } from "./modules/moderations/router";
 import { playgroundRouter } from "./modules/playground/router";
 import { providersRouter } from "./modules/providers/router";
 import { responsesRouter } from "./modules/responses/router";
@@ -42,8 +45,11 @@ const app = new Hono()
   .route("/auth", authRouter)
   .route("/users", usersRouter)
   .route("/v1/chat", chatRouter)
+  .route("/v1/completions", completionsRouter)
   .route("/v1/embeddings", embeddingsRouter)
   .route("/v1/engines/:model/embeddings", embeddingsRouter)
+  .route("/v1/images/generations", imageGenerationsRouter)
+  .route("/v1/moderations", moderationsRouter)
   .route("/v1/models", modelsRouter)
   .route("/v1/responses", responsesRouter)
   .route("/dashboard/models", modelsDashboardRouter)
