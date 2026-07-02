@@ -1,4 +1,8 @@
 import type {
+  AnthropicMessageCountTokensRequest,
+  AnthropicMessageCreateRequest,
+  AnthropicMessageObject,
+  AnthropicMessageTokenCountObject,
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatCompletionChunk,
@@ -393,6 +397,20 @@ const MODELS: Model[] = [
 const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages";
 const REQUEST_TIMEOUT_MS = 60_000;
 
+export class UpstreamAnthropicMessagesApiError extends Error {
+  readonly status: number;
+  readonly body: string;
+  readonly contentType: string | null;
+
+  constructor(status: number, body: string, contentType: string | null) {
+    super(`Anthropic Messages API error: ${status} - ${body}`);
+    this.name = "UpstreamAnthropicMessagesApiError";
+    this.status = status;
+    this.body = body;
+    this.contentType = contentType;
+  }
+}
+
 export class AnthropicAdapter implements ProviderAdapter {
   name = "anthropic";
   capabilities = anthropicCapabilities;
@@ -758,9 +776,88 @@ export class AnthropicAdapter implements ProviderAdapter {
     buffer += decoder.decode();
   }
 
+  async createAnthropicMessage(
+    request: AnthropicMessageCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<AnthropicMessageObject> {
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      throw await upstreamAnthropicMessagesError(response);
+    }
+
+    return (await response.json()) as AnthropicMessageObject;
+  }
+
+  async *createAnthropicMessageStream(
+    request: AnthropicMessageCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    const response = await fetch(ANTHROPIC_API_URL, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      throw await upstreamAnthropicMessagesError(response);
+    }
+
+    yield* streamRawResponseBody(response);
+  }
+
+  async countAnthropicMessageTokens(
+    request: AnthropicMessageCountTokensRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<AnthropicMessageTokenCountObject> {
+    const response = await fetch(`${ANTHROPIC_API_URL}/count_tokens`, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      throw await upstreamAnthropicMessagesError(response);
+    }
+
+    return (await response.json()) as AnthropicMessageTokenCountObject;
+  }
+
   listModels(): Model[] {
     return MODELS;
   }
+}
+
+async function upstreamAnthropicMessagesError(
+  response: Response,
+): Promise<UpstreamAnthropicMessagesApiError> {
+  const body = await response.text();
+  return new UpstreamAnthropicMessagesApiError(
+    response.status,
+    body,
+    response.headers.get("Content-Type"),
+  );
+}
+
+async function* streamRawResponseBody(response: Response): AsyncIterable<string> {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    yield decoder.decode(value, { stream: true });
+  }
+  const remaining = decoder.decode();
+  if (remaining) yield remaining;
 }
 
 function contentToText(content: ChatMessage["content"]): string {

@@ -16,7 +16,7 @@ vi.mock("../../src/models-dev-provider-adapter", () => ({
   },
 }));
 
-import { AnthropicAdapter } from "../../src/providers/anthropic";
+import { AnthropicAdapter, UpstreamAnthropicMessagesApiError } from "../../src/providers/anthropic";
 
 vi.stubGlobal("fetch", mockFetch);
 
@@ -154,5 +154,134 @@ describe("AnthropicAdapter", () => {
       function: { name: "lookup", arguments: '{"q":"hi"}' },
     });
     expect(response.choices[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  it("proxies native Anthropic Messages requests without OpenAI conversion", async () => {
+    const upstream = {
+      id: "msg-1",
+      type: "message",
+      role: "assistant",
+      model: "claude-test",
+      content: [{ type: "text", text: "hi" }],
+      usage: { input_tokens: 2, output_tokens: 3 },
+    };
+    mockFetch.mockResolvedValueOnce(Response.json(upstream));
+
+    const adapter = new AnthropicAdapter("sk-upstream");
+    const response = await adapter.createAnthropicMessage(
+      {
+        model: "claude-test",
+        max_tokens: 99,
+        messages: [{ role: "user", content: "hello" }],
+      },
+      {
+        headers: {
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-04-04",
+        },
+      },
+    );
+
+    expect(response).toEqual(upstream);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.anthropic.com/v1/messages",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-api-key": "sk-upstream",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-04-04",
+        }),
+      }),
+    );
+    expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: "claude-test",
+      max_tokens: 99,
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("streams native Anthropic Messages SSE without parsing", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'event: message_start\ndata: {"type":"message_start"}\n\n',
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+      ]),
+    );
+
+    const adapter = new AnthropicAdapter("sk-test");
+    const chunks = [];
+    for await (const chunk of adapter.createAnthropicMessageStream({
+      model: "claude-test",
+      messages: [{ role: "user", content: "hi" }],
+      stream: true,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe(
+      'event: message_start\ndata: {"type":"message_start"}\n\n' +
+        'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+    );
+    expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: "claude-test",
+      stream: true,
+    });
+  });
+
+  it("proxies native Anthropic Messages token counting", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ input_tokens: 42 }));
+
+    const adapter = new AnthropicAdapter("sk-upstream");
+    const response = await adapter.countAnthropicMessageTokens(
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hello" }],
+      },
+      {
+        headers: {
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-04-04",
+        },
+      },
+    );
+
+    expect(response).toEqual({ input_tokens: 42 });
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.anthropic.com/v1/messages/count_tokens",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "x-api-key": "sk-upstream",
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "tools-2024-04-04",
+        }),
+      }),
+    );
+    expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toEqual({
+      model: "claude-test",
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("preserves native Anthropic Messages upstream errors", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response('{"type":"error","error":{"message":"bad"}}', {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const adapter = new AnthropicAdapter("sk-test");
+    await expect(
+      adapter.createAnthropicMessage({
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    ).rejects.toMatchObject({
+      name: "UpstreamAnthropicMessagesApiError",
+      status: 400,
+      body: '{"type":"error","error":{"message":"bad"}}',
+    } satisfies Partial<UpstreamAnthropicMessagesApiError>);
   });
 });
