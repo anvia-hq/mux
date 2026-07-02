@@ -17,6 +17,7 @@ import { logsRouter } from "./modules/logs/router";
 import { modelAliasesRouter } from "./modules/model-aliases/router";
 import { modelsDashboardRouter, modelsRouter } from "./modules/models/router";
 import { moderationsRouter } from "./modules/moderations/router";
+import { messagesRouter } from "./modules/messages/router";
 import { playgroundRouter } from "./modules/playground/router";
 import { providersRouter } from "./modules/providers/router";
 import { responsesRouter } from "./modules/responses/router";
@@ -52,6 +53,7 @@ const app = new Hono()
   .route("/v1/embeddings", embeddingsRouter)
   .route("/v1/engines/:model/embeddings", embeddingsRouter)
   .route("/v1/images/generations", imageGenerationsRouter)
+  .route("/v1/messages", messagesRouter)
   .route("/v1/moderations", moderationsRouter)
   .route("/v1/models", modelsRouter)
   .route("/v1/responses", responsesRouter)

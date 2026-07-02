@@ -62,14 +62,7 @@ async function validatePlaygroundApiKeyToken(rawToken: string) {
   }
 }
 
-export async function apiKeyAuth(c: Context, next: Next) {
-  const authHeader = c.req.header("Authorization");
-
-  if (!authHeader?.startsWith("Bearer ")) {
-    return c.json({ error: "missing or invalid Authorization header" }, 401);
-  }
-
-  const key = authHeader.slice(7);
+async function authenticateApiKey(c: Context, next: Next, key: string) {
   const apiKey = key.startsWith(playgroundTokenPrefix)
     ? await validatePlaygroundApiKeyToken(key)
     : await validateApiKey(key);
@@ -87,4 +80,34 @@ export async function apiKeyAuth(c: Context, next: Next) {
   c.set("apiKeyAllowedModelIds", apiKey.allowedModelIds);
 
   await next();
+}
+
+function readBearerApiKey(c: Context): string | null {
+  const authHeader = c.req.header("Authorization");
+
+  if (!authHeader?.startsWith("Bearer ")) {
+    return null;
+  }
+
+  return authHeader.slice(7);
+}
+
+export async function apiKeyAuth(c: Context, next: Next) {
+  const key = readBearerApiKey(c);
+
+  if (!key) {
+    return c.json({ error: "missing or invalid Authorization header" }, 401);
+  }
+
+  return authenticateApiKey(c, next, key);
+}
+
+export async function apiKeyAuthWithAnthropicHeader(c: Context, next: Next) {
+  const key = readBearerApiKey(c) ?? c.req.header("x-api-key");
+
+  if (!key) {
+    return c.json({ error: "missing or invalid API key header" }, 401);
+  }
+
+  return authenticateApiKey(c, next, key);
 }

@@ -1,4 +1,8 @@
 import type {
+  AnthropicMessageCountTokensRequest,
+  AnthropicMessageCreateRequest,
+  AnthropicMessageObject,
+  AnthropicMessageTokenCountObject,
   AudioMultipartRequest,
   AudioProxyResponse,
   AudioSpeechRequest,
@@ -1038,13 +1042,43 @@ export type ResolvedAudioSpeechProviderModel = ResolvedProviderModel & {
 
 export type ResolvedAudioSpeechModel = ResolvedEndpointModel<ResolvedAudioSpeechProviderModel>;
 
+export type ResolvedAnthropicMessagesProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAnthropicMessage: (
+      request: AnthropicMessageCreateRequest,
+      options?: ProviderRequestOptions,
+    ) => Promise<AnthropicMessageObject>;
+    createAnthropicMessageStream?: (
+      request: AnthropicMessageCreateRequest,
+      options?: ProviderRequestOptions,
+    ) => AsyncIterable<string>;
+  };
+};
+
+export type ResolvedAnthropicMessagesModel =
+  ResolvedEndpointModel<ResolvedAnthropicMessagesProviderModel>;
+
+export type ResolvedAnthropicMessageTokenCountProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    countAnthropicMessageTokens: (
+      request: AnthropicMessageCountTokensRequest,
+      options?: ProviderRequestOptions,
+    ) => Promise<AnthropicMessageTokenCountObject>;
+  };
+};
+
+export type ResolvedAnthropicMessageTokenCountModel =
+  ResolvedEndpointModel<ResolvedAnthropicMessageTokenCountProviderModel>;
+
 type EndpointCapability =
   | "moderationsApi"
   | "imageGenerationsApi"
   | "completionsApi"
   | "audioTranscriptionsApi"
   | "audioTranslationsApi"
-  | "audioSpeechApi";
+  | "audioSpeechApi"
+  | "anthropicMessagesApi"
+  | "anthropicMessageTokenCountingApi";
 
 function isEndpointCapableTarget<TMethod extends keyof ProviderAdapter>(
   target: ResolvedProviderModel,
@@ -1091,6 +1125,22 @@ function isAudioSpeechCapableTarget(
   target: ResolvedProviderModel,
 ): target is ResolvedAudioSpeechProviderModel {
   return isEndpointCapableTarget(target, "audioSpeechApi", "createAudioSpeech");
+}
+
+function isAnthropicMessagesCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAnthropicMessagesProviderModel {
+  return isEndpointCapableTarget(target, "anthropicMessagesApi", "createAnthropicMessage");
+}
+
+function isAnthropicMessageTokenCountCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAnthropicMessageTokenCountProviderModel {
+  return isEndpointCapableTarget(
+    target,
+    "anthropicMessageTokenCountingApi",
+    "countAnthropicMessageTokens",
+  );
 }
 
 async function resolveEndpointModel<TTarget extends ResolvedProviderModel>(
@@ -1163,6 +1213,60 @@ export async function resolveAudioSpeechModel(
   model: string,
 ): Promise<ResolvedAudioSpeechModel | null> {
   return resolveEndpointModel(model, isAudioSpeechCapableTarget);
+}
+
+export async function resolveAnthropicMessagesModel(
+  model: string,
+): Promise<ResolvedAnthropicMessagesModel | null> {
+  if (model.includes(":")) {
+    return resolveEndpointModel(model, isAnthropicMessagesCapableTarget);
+  }
+
+  const directAnthropic = await resolveEndpointModel(
+    toPublicModelId("anthropic", model),
+    isAnthropicMessagesCapableTarget,
+  );
+  if (directAnthropic) {
+    return directAnthropic;
+  }
+
+  return resolveEndpointModel(model, isAnthropicMessagesCapableTarget);
+}
+
+export async function resolveAnthropicMessagesAccessModelId(model: string): Promise<string> {
+  const resolved = await resolveAnthropicMessagesModel(model);
+  if (resolved) {
+    return resolved.requestedModelId;
+  }
+  return model.includes(":") ? model : toPublicModelId("anthropic", model);
+}
+
+export async function resolveAnthropicMessageTokenCountModel(
+  model: string,
+): Promise<ResolvedAnthropicMessageTokenCountModel | null> {
+  if (model.includes(":")) {
+    return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget);
+  }
+
+  const directAnthropic = await resolveEndpointModel(
+    toPublicModelId("anthropic", model),
+    isAnthropicMessageTokenCountCapableTarget,
+  );
+  if (directAnthropic) {
+    return directAnthropic;
+  }
+
+  return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget);
+}
+
+export async function resolveAnthropicMessageTokenCountAccessModelId(
+  model: string,
+): Promise<string> {
+  const resolved = await resolveAnthropicMessageTokenCountModel(model);
+  if (resolved) {
+    return resolved.requestedModelId;
+  }
+  return model.includes(":") ? model : toPublicModelId("anthropic", model);
 }
 
 /**

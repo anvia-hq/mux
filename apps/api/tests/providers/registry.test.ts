@@ -20,6 +20,10 @@ import {
   estimateCost,
   initProviders,
   listPublicModels,
+  resolveAnthropicMessageTokenCountAccessModelId,
+  resolveAnthropicMessageTokenCountModel,
+  resolveAnthropicMessagesAccessModelId,
+  resolveAnthropicMessagesModel,
   resolveAudioSpeechModel,
   resolveAudioTranscriptionModel,
   resolveChatModel,
@@ -46,7 +50,7 @@ describe("resolveResponseTarget", () => {
   });
 
   it("returns null when the provider is not configured", async () => {
-    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
     expect(await resolveResponseTarget("openai:gpt-4o")).toBeNull();
   });
 
@@ -223,6 +227,84 @@ describe("OpenAI-compatible endpoint resolvers", () => {
       kind: "fallback-group",
       requestedModelId: "mux:speech",
       targets: [{ providerName: "openai", modelId: "tts-1" }],
+    });
+  });
+});
+
+describe("resolveAnthropicMessagesModel", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    clearProviderCacheForE2e();
+    mockPrisma.providerChannel.findMany.mockRejectedValue(new Error("ProviderChannel missing"));
+    mockPrisma.customProvider.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
+  });
+
+  it("maps bare Claude model ids to the native Anthropic provider", async () => {
+    mockPrisma.providerChannel.findMany.mockRejectedValueOnce(new Error("ProviderChannel missing"));
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "anthropic", ciphertext: "enc-anthropic" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+
+    await expect(resolveAnthropicMessagesModel("claude-opus-4-5")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "anthropic:claude-opus-4-5",
+      targets: [{ providerName: "anthropic", modelId: "claude-opus-4-5" }],
+    });
+    await expect(resolveAnthropicMessagesAccessModelId("claude-opus-4-5")).resolves.toBe(
+      "anthropic:claude-opus-4-5",
+    );
+    await expect(resolveAnthropicMessageTokenCountModel("claude-opus-4-5")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "anthropic:claude-opus-4-5",
+      targets: [{ providerName: "anthropic", modelId: "claude-opus-4-5" }],
+    });
+    await expect(resolveAnthropicMessageTokenCountAccessModelId("claude-opus-4-5")).resolves.toBe(
+      "anthropic:claude-opus-4-5",
+    );
+  });
+
+  it("filters fallback groups to native Anthropic Messages-capable targets", async () => {
+    mockPrisma.providerChannel.findMany.mockRejectedValueOnce(new Error("ProviderChannel missing"));
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "openai", ciphertext: "enc-openai" },
+      { provider: "anthropic", ciphertext: "enc-anthropic" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValue({
+      id: "claude-native",
+      name: "Claude Native",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "openai", modelId: "gpt-4o", position: 0 },
+        { provider: "anthropic", modelId: "claude-opus-4-5", position: 1 },
+      ],
+    });
+
+    await expect(resolveAnthropicMessagesModel("mux:claude-native")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:claude-native",
+      targets: [{ providerName: "anthropic", modelId: "claude-opus-4-5" }],
+    });
+    await expect(
+      resolveAnthropicMessageTokenCountModel("mux:claude-native"),
+    ).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:claude-native",
+      targets: [{ providerName: "anthropic", modelId: "claude-opus-4-5" }],
     });
   });
 });

@@ -331,6 +331,36 @@ export type ResponseObject = {
   [key: string]: unknown;
 };
 
+export type AnthropicMessageCreateRequest = {
+  model: string;
+  messages: unknown[];
+  max_tokens?: number;
+  stream?: boolean;
+  [key: string]: unknown;
+};
+
+export type AnthropicMessageCountTokensRequest = {
+  model: string;
+  messages: unknown[];
+  [key: string]: unknown;
+};
+
+export type AnthropicMessageObject = {
+  id?: string;
+  model?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
+export type AnthropicMessageTokenCountObject = {
+  input_tokens?: number;
+  [key: string]: unknown;
+};
+
 export {
   type ResponseInputItem,
   type ResponseInputMessage,
@@ -397,6 +427,16 @@ export interface ProviderCapabilities {
    * through `/v1/audio/speech`.
    */
   audioSpeechApi?: boolean;
+  /**
+   * Whether this adapter can proxy Anthropic-compatible native Messages API
+   * requests through `/v1/messages`.
+   */
+  anthropicMessagesApi?: boolean;
+  /**
+   * Whether this adapter can proxy Anthropic-compatible token counting
+   * requests through `/v1/messages/count_tokens`.
+   */
+  anthropicMessageTokenCountingApi?: boolean;
 }
 
 export type ProviderRequestOptions = {
@@ -535,5 +575,17 @@ export interface ProviderAdapter {
     query?: Record<string, string | string[]>,
     options?: ProviderRequestOptions,
   ): Promise<ResponseObject>;
+  createAnthropicMessage?(
+    request: AnthropicMessageCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<AnthropicMessageObject>;
+  createAnthropicMessageStream?(
+    request: AnthropicMessageCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string>;
+  countAnthropicMessageTokens?(
+    request: AnthropicMessageCountTokensRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<AnthropicMessageTokenCountObject>;
   listModels(): Model[];
 }

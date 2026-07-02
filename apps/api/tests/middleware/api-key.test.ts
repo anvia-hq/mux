@@ -13,6 +13,7 @@ vi.mock("../../src/modules/keys/services", () => ({
 
 import {
   apiKeyAuth,
+  apiKeyAuthWithAnthropicHeader,
   createPlaygroundApiKeyToken,
   readApiKeyModelAccess,
 } from "../../src/middleware/api-key";
@@ -97,5 +98,27 @@ describe("api-key middleware", () => {
       includeFutureModels: false,
       allowedModelIds: ["openai:gpt-4o"],
     });
+  });
+
+  it("accepts x-api-key for Anthropic-compatible routes", async () => {
+    mockValidateApiKey.mockResolvedValueOnce({
+      id: "key-1",
+      name: "anthropic-client-key",
+      spendLimitUsd: null,
+      allowAllModels: true,
+      includeFutureModels: true,
+      allowedModelIds: [],
+    });
+    const app = new Hono();
+    app.use("*", apiKeyAuthWithAnthropicHeader);
+    app.get("/test", (c) => c.json({ apiKeyId: c.get("apiKeyId" as never) }));
+
+    const res = await app.request("/test", {
+      headers: { "x-api-key": "mux_live_test" },
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ apiKeyId: "key-1" });
+    expect(mockValidateApiKey).toHaveBeenCalledWith("mux_live_test");
   });
 });

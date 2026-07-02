@@ -36,6 +36,8 @@ export const anthropicCapabilities: ProviderCapabilities = {
   reasoning: false,
   logprobs: false,
   openAICompatiblePassthrough: false,
+  anthropicMessagesApi: true,
+  anthropicMessageTokenCountingApi: true,
 };
 
 export const googleCapabilities: ProviderCapabilities = {
