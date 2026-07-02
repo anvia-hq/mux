@@ -7,6 +7,7 @@ import {
   RequestLoggingUnavailableError,
 } from "../../middleware/logger";
 import { estimateCost } from "../../providers/registry";
+import { upstreamOpenAICompatibleErrorResponse } from "../../providers/openai-compatible-error";
 import type { ImageGenerationRequest } from "../../providers/types";
 import {
   addApiKeySpendUsd,
@@ -166,6 +167,9 @@ imageGenerationsRouter.post("/", async (c) => {
 
     return c.json(result.response);
   } catch (error) {
+    const upstream = upstreamOpenAICompatibleErrorResponse(error);
+    if (upstream) return upstream;
+
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     if (errorMessage.startsWith("No provider found")) {

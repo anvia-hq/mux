@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
 import { RequestLoggingUnavailableError } from "../../middleware/logger";
+import { upstreamOpenAICompatibleErrorResponse } from "../../providers/openai-compatible-error";
 import type { ModerationRequest } from "../../providers/types";
 import {
   ApiKeyModelAccessDeniedError,
@@ -68,6 +69,9 @@ moderationsRouter.post("/", async (c) => {
     });
     return c.json(response);
   } catch (error) {
+    const upstream = upstreamOpenAICompatibleErrorResponse(error);
+    if (upstream) return upstream;
+
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     if (errorMessage.startsWith("No provider found")) {

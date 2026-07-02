@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { audioRouter } from "./modules/audio/router";
 import { authRouter } from "./modules/auth/router";
 import { channelsRouter } from "./modules/channels/router";
 import { chatRouter } from "./modules/chat/router";
@@ -46,6 +47,7 @@ const app = new Hono()
   .route("/auth", authRouter)
   .route("/users", usersRouter)
   .route("/v1/chat", chatRouter)
+  .route("/v1/audio", audioRouter)
   .route("/v1/completions", completionsRouter)
   .route("/v1/embeddings", embeddingsRouter)
   .route("/v1/engines/:model/embeddings", embeddingsRouter)

@@ -67,6 +67,7 @@ vi.mock("../../../src/modules/keys/services", () => {
 import { Hono } from "hono";
 import { moderationsRouter } from "../../../src/modules/moderations/router";
 import { ApiKeySpendLimitExceededError } from "../../../src/modules/keys/services";
+import { UpstreamOpenAICompatibleError } from "../../../src/providers/openai-compatible-error";
 
 describe("moderations router", () => {
   beforeEach(() => {
@@ -136,6 +137,28 @@ describe("moderations router", () => {
         rawBody: JSON.stringify({ model: "omni-moderation-latest", input: "hello" }),
       }),
     );
+  });
+
+  it("POST / returns upstream OpenAI-compatible errors verbatim", async () => {
+    mockHandleModeration.mockRejectedValueOnce(
+      new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 400,
+        body: '{"error":{"message":"bad input"}}',
+        contentType: "application/json",
+      }),
+    );
+
+    const app = new Hono().route("/v1/moderations", moderationsRouter);
+    const res = await app.request("/v1/moderations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: "hello" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    await expect(res.text()).resolves.toBe('{"error":{"message":"bad input"}}');
   });
 
   it("POST / 429 when spend limit is exhausted", async () => {

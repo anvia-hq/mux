@@ -415,6 +415,75 @@ describe("OpenAIAdapter", () => {
     });
   });
 
+  it("creates audio transcriptions through the OpenAI Audio API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({ text: "hello" }, { headers: { "Content-Type": "application/json" } }),
+    );
+
+    const formData = new FormData();
+    const file = new File(["audio"], "speech.wav", { type: "audio/wav" });
+    formData.append("model", "client-model");
+    formData.append("file", file);
+    formData.append("temperature", "0.2");
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createAudioTranscription({
+      model: "whisper-1",
+      formData,
+    });
+
+    expect(new TextDecoder().decode(response.body)).toBe('{"text":"hello"}');
+    expect(response.contentType).toContain("application/json");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer sk-test" },
+      }),
+    );
+
+    const requestBody = mockFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(requestBody.get("model")).toBe("whisper-1");
+    expect(requestBody.get("file")).toBe(file);
+    expect(requestBody.get("temperature")).toBe("0.2");
+  });
+
+  it("creates audio speech and returns upstream audio bytes", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "Content-Type": "audio/mpeg" },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createAudioSpeech({
+      model: "tts-1",
+      input: "hello",
+      voice: "alloy",
+      response_format: "mp3",
+    });
+
+    expect(response.contentType).toBe("audio/mpeg");
+    expect(Array.from(new Uint8Array(response.body))).toEqual([1, 2, 3]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/speech",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "tts-1",
+      input: "hello",
+      voice: "alloy",
+      response_format: "mp3",
+    });
+  });
+
   it("creates responses through the OpenAI Responses API", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({

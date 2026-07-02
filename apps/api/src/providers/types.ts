@@ -280,6 +280,28 @@ export interface CompletionResponse {
   [key: string]: unknown;
 }
 
+export interface AudioMultipartRequest {
+  model: string;
+  formData: FormData;
+}
+
+export interface AudioSpeechRequest {
+  model: string;
+  input: string;
+  voice: string | { id: string };
+  instructions?: string;
+  response_format?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+  speed?: number;
+  stream_format?: "audio" | "sse";
+  [key: string]: unknown;
+}
+
+export interface AudioProxyResponse {
+  body: ArrayBuffer;
+  contentType?: string;
+  usage?: Record<string, unknown>;
+}
+
 export type ResponseCreateRequest = {
   model: string;
   input?: unknown;
@@ -360,6 +382,21 @@ export interface ProviderCapabilities {
    * API through `/v1/completions`.
    */
   completionsApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible audio transcriptions
+   * through `/v1/audio/transcriptions`.
+   */
+  audioTranscriptionsApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible audio translations
+   * through `/v1/audio/translations`.
+   */
+  audioTranslationsApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible speech generation
+   * through `/v1/audio/speech`.
+   */
+  audioSpeechApi?: boolean;
 }
 
 export type ProviderRequestOptions = {
@@ -467,6 +504,9 @@ export interface ProviderAdapter {
     request: CompletionRequest,
     options?: ProviderRequestOptions,
   ): AsyncIterable<string>;
+  createAudioTranscription?(request: AudioMultipartRequest): Promise<AudioProxyResponse>;
+  createAudioTranslation?(request: AudioMultipartRequest): Promise<AudioProxyResponse>;
+  createAudioSpeech?(request: AudioSpeechRequest): Promise<AudioProxyResponse>;
   createResponse?(
     request: ResponseCreateRequest,
     options?: ProviderRequestOptions,

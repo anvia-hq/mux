@@ -1,4 +1,7 @@
 import type {
+  AudioMultipartRequest,
+  AudioProxyResponse,
+  AudioSpeechRequest,
   CompletionRequest,
   CompletionResponse,
   EmbeddingRequest,
@@ -1009,7 +1012,39 @@ export type ResolvedCompletionProviderModel = ResolvedProviderModel & {
 
 export type ResolvedCompletionModel = ResolvedEndpointModel<ResolvedCompletionProviderModel>;
 
-type EndpointCapability = "moderationsApi" | "imageGenerationsApi" | "completionsApi";
+export type ResolvedAudioTranscriptionProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAudioTranscription: (request: AudioMultipartRequest) => Promise<AudioProxyResponse>;
+  };
+};
+
+export type ResolvedAudioTranscriptionModel =
+  ResolvedEndpointModel<ResolvedAudioTranscriptionProviderModel>;
+
+export type ResolvedAudioTranslationProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAudioTranslation: (request: AudioMultipartRequest) => Promise<AudioProxyResponse>;
+  };
+};
+
+export type ResolvedAudioTranslationModel =
+  ResolvedEndpointModel<ResolvedAudioTranslationProviderModel>;
+
+export type ResolvedAudioSpeechProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAudioSpeech: (request: AudioSpeechRequest) => Promise<AudioProxyResponse>;
+  };
+};
+
+export type ResolvedAudioSpeechModel = ResolvedEndpointModel<ResolvedAudioSpeechProviderModel>;
+
+type EndpointCapability =
+  | "moderationsApi"
+  | "imageGenerationsApi"
+  | "completionsApi"
+  | "audioTranscriptionsApi"
+  | "audioTranslationsApi"
+  | "audioSpeechApi";
 
 function isEndpointCapableTarget<TMethod extends keyof ProviderAdapter>(
   target: ResolvedProviderModel,
@@ -1038,6 +1073,24 @@ function isCompletionCapableTarget(
   target: ResolvedProviderModel,
 ): target is ResolvedCompletionProviderModel {
   return isEndpointCapableTarget(target, "completionsApi", "createCompletion");
+}
+
+function isAudioTranscriptionCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAudioTranscriptionProviderModel {
+  return isEndpointCapableTarget(target, "audioTranscriptionsApi", "createAudioTranscription");
+}
+
+function isAudioTranslationCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAudioTranslationProviderModel {
+  return isEndpointCapableTarget(target, "audioTranslationsApi", "createAudioTranslation");
+}
+
+function isAudioSpeechCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAudioSpeechProviderModel {
+  return isEndpointCapableTarget(target, "audioSpeechApi", "createAudioSpeech");
 }
 
 async function resolveEndpointModel<TTarget extends ResolvedProviderModel>(
@@ -1092,6 +1145,24 @@ export async function resolveCompletionModel(
   model: string,
 ): Promise<ResolvedCompletionModel | null> {
   return resolveEndpointModel(model, isCompletionCapableTarget);
+}
+
+export async function resolveAudioTranscriptionModel(
+  model: string,
+): Promise<ResolvedAudioTranscriptionModel | null> {
+  return resolveEndpointModel(model, isAudioTranscriptionCapableTarget);
+}
+
+export async function resolveAudioTranslationModel(
+  model: string,
+): Promise<ResolvedAudioTranslationModel | null> {
+  return resolveEndpointModel(model, isAudioTranslationCapableTarget);
+}
+
+export async function resolveAudioSpeechModel(
+  model: string,
+): Promise<ResolvedAudioSpeechModel | null> {
+  return resolveEndpointModel(model, isAudioSpeechCapableTarget);
 }
 
 /**

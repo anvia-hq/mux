@@ -1,4 +1,5 @@
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
+import { upstreamOpenAICompatibleStatusCode } from "../../providers/openai-compatible-error";
 import type { CompletionRequest, CompletionResponse } from "../../providers/types";
 import { prepareChannelOpenAICompatibleRequestSettings } from "../../providers/channel-settings";
 import {
@@ -194,7 +195,7 @@ async function createCompletionWithFallback(
         channelName: target.channelName,
         endpoint: "/v1/completions",
         latencyMs,
-        statusCode: 500,
+        statusCode: upstreamOpenAICompatibleStatusCode(error),
         errorMessage,
       });
     }
@@ -251,7 +252,7 @@ async function resolveStreamingTarget(
         channelName: target.channelName,
         endpoint: "/v1/completions",
         latencyMs,
-        statusCode: 500,
+        statusCode: upstreamOpenAICompatibleStatusCode(error),
         errorMessage,
       });
     }

@@ -23,6 +23,9 @@ export const openAICompatibleCapabilities: ProviderCapabilities = {
   moderationsApi: true,
   imageGenerationsApi: true,
   completionsApi: true,
+  audioTranscriptionsApi: true,
+  audioTranslationsApi: true,
+  audioSpeechApi: true,
 };
 
 export const anthropicCapabilities: ProviderCapabilities = {
