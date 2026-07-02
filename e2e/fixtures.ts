@@ -33,6 +33,7 @@ export const regularUser = {
 export const syntheticProviderKey = "synthetic-e2e-provider-key";
 export const syntheticProviderLastFour = syntheticProviderKey.slice(-4);
 export const syntheticDeepSeekModelId = "hf:deepseek-ai/DeepSeek-R1";
+export const providerSearchPlaceholder = "Search provider name, id, or URL...";
 export const e2eProviderKey = "e2e-provider-key";
 export const e2eProviderLastFour = e2eProviderKey.slice(-4);
 export const e2eChatModel = "e2e:e2e-chat";
@@ -284,7 +285,7 @@ export async function configureSyntheticProviderViaUi(page: Page): Promise<void>
   await page.goto("/providers");
   await expect(page.getByRole("heading", { name: "Providers" }).last()).toBeVisible();
 
-  await page.getByPlaceholder("Search provider name or id...").fill("synthetic");
+  await page.getByPlaceholder(providerSearchPlaceholder).fill("synthetic");
   const row = syntheticProviderRow(page);
   await expect(row).toBeVisible();
 
@@ -302,7 +303,7 @@ export async function removeSyntheticProviderViaUi(page: Page): Promise<void> {
   await page.goto("/providers");
   await expect(page.getByRole("heading", { name: "Providers" }).last()).toBeVisible();
 
-  await page.getByPlaceholder("Search provider name or id...").fill("synthetic");
+  await page.getByPlaceholder(providerSearchPlaceholder).fill("synthetic");
   const row = syntheticProviderRow(page);
   await expect(row.getByText("Configured")).toBeVisible();
 

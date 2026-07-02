@@ -5,9 +5,13 @@ import {
 } from "../../src/providers/responses-schema";
 
 describe("responseCreateRequestSchema", () => {
-  it("accepts a model only", () => {
+  it("rejects a model without input", () => {
     const result = responseCreateRequestSchema.safeParse({ model: "openai:gpt-4o" });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issuePaths = result.error.issues.map((issue) => issue.path.join("."));
+      expect(issuePaths).toContain("input");
+    }
   });
 
   it("accepts model + string input", () => {
@@ -44,38 +48,64 @@ describe("responseCreateRequestSchema", () => {
     }
   });
 
-  it("rejects empty input string", () => {
+  it("accepts empty input string as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({ model: "x", input: "" });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects empty input array", () => {
+  it("accepts empty input array as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({ model: "x", input: [] });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects input array with empty content", () => {
+  it("accepts input array with empty content as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
       input: [{ type: "message", role: "user", content: [] }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects input message with invalid role", () => {
+  it("accepts input message with invalid role as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
       input: [{ type: "message", role: "tool", content: [{ type: "input_text", text: "hi" }] }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects input message with wrong content shape", () => {
+  it("accepts input message with string content", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
-      input: [{ type: "message", role: "user", content: [{ type: "input_image", url: "x" }] }],
+      input: [{ type: "message", role: "user", content: "hi" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts multimodal input content parts", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "describe this" },
+            { type: "input_image", image_url: "https://example.test/image.png", detail: "low" },
+            { type: "input_file", file_id: "file_1", filename: "notes.txt" },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts non-message input items", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: [{ type: "item_reference", id: "msg_1" }],
+    });
+    expect(result.success).toBe(true);
   });
 });
 
@@ -83,6 +113,7 @@ describe("responseCreateRequestSchema — extended fields", () => {
   it("accepts instructions, stream, background as booleans / strings", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       instructions: "be brief",
       stream: true,
       background: false,
@@ -90,88 +121,215 @@ describe("responseCreateRequestSchema — extended fields", () => {
     expect(result.success).toBe(true);
   });
 
+  it("preserves Responses create passthrough fields", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      include: ["file_search_call.results", "reasoning.encrypted_content"],
+      conversation: { id: "conv_1" },
+      context_management: { truncation: "auto" },
+      enable_thinking: false,
+      instructions: { text: "be brief" },
+      max_tool_calls: 0,
+      parallel_tool_calls: false,
+      previous_response_id: "resp_prev",
+      prompt_cache_key: "cache-key",
+      prompt_cache_retention: { type: "ephemeral" },
+      preset: "sonar",
+      stream_options: { include_usage: true, include_obfuscation: true },
+      top_logprobs: 0,
+      top_p: 0,
+      user: { id: "user-1" },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    expect(result.data).toMatchObject({
+      include: ["file_search_call.results", "reasoning.encrypted_content"],
+      conversation: { id: "conv_1" },
+      context_management: { truncation: "auto" },
+      enable_thinking: false,
+      instructions: { text: "be brief" },
+      max_tool_calls: 0,
+      parallel_tool_calls: false,
+      previous_response_id: "resp_prev",
+      prompt_cache_key: "cache-key",
+      prompt_cache_retention: { type: "ephemeral" },
+      preset: "sonar",
+      stream_options: { include_usage: true, include_obfuscation: true },
+      top_logprobs: 0,
+      top_p: 0,
+      user: { id: "user-1" },
+    });
+  });
+
+  it("strips null optional typed fields like Go pointer and string decoding", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      background: null,
+      max_output_tokens: null,
+      max_tool_calls: null,
+      previous_response_id: null,
+      reasoning: null,
+      service_tier: null,
+      stream: null,
+      stream_options: null,
+      temperature: null,
+      top_logprobs: null,
+      top_p: null,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    expect(result.data).toEqual({ model: "x", input: "hi" });
+  });
+
+  it("preserves null raw JSON fields", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: null,
+      instructions: null,
+      metadata: null,
+      tools: null,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    expect(result.data).toEqual({
+      model: "x",
+      input: null,
+      instructions: null,
+      metadata: null,
+      tools: null,
+    });
+  });
+
   it("rejects stream as non-boolean", () => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x", stream: "yes" });
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      stream: "yes",
+    });
     expect(result.success).toBe(false);
   });
 
   it("accepts tools as opaque array (P1.2 tightens)", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "function", name: "lookup" }],
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects tool_choice when name is missing", () => {
+  it("accepts tool_choice when name is missing as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tool_choice: { type: "function", function: {} },
     });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts tool_choice = 'auto'", () => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x", tool_choice: "auto" });
     expect(result.success).toBe(true);
   });
 
-  it("rejects max_output_tokens when not positive", () => {
+  it("accepts tool_choice = 'auto'", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      tool_choice: "auto",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts explicit zero max_output_tokens and rejects negative values", () => {
     expect(
-      responseCreateRequestSchema.safeParse({ model: "x", max_output_tokens: 0 }).success,
-    ).toBe(false);
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", max_output_tokens: 0 })
+        .success,
+    ).toBe(true);
     expect(
-      responseCreateRequestSchema.safeParse({ model: "x", max_output_tokens: -1 }).success,
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", max_output_tokens: -1 })
+        .success,
     ).toBe(false);
   });
 
-  it("rejects temperature out of [0, 2]", () => {
-    expect(responseCreateRequestSchema.safeParse({ model: "x", temperature: -0.1 }).success).toBe(
-      false,
-    );
-    expect(responseCreateRequestSchema.safeParse({ model: "x", temperature: 2.5 }).success).toBe(
-      false,
-    );
+  it("accepts any numeric temperature", () => {
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", temperature: -0.1 }).success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", temperature: 2.5 }).success,
+    ).toBe(true);
+  });
+
+  it("matches Go typed scalar validation", () => {
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", max_tool_calls: -1 })
+        .success,
+    ).toBe(false);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", previous_response_id: "" })
+        .success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", top_logprobs: -1 }).success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", top_p: 1.1 }).success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({
+        model: "x",
+        input: "hi",
+        stream_options: { include_obfuscation: "yes" },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts metadata as string record", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       metadata: { trace: "t1", user: "u1" },
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects metadata with non-string values", () => {
+  it("accepts metadata with non-string values as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       metadata: { trace: 1 },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("accepts truncation 'auto' / 'disabled'", () => {
-    expect(responseCreateRequestSchema.safeParse({ model: "x", truncation: "auto" }).success).toBe(
-      true,
-    );
     expect(
-      responseCreateRequestSchema.safeParse({ model: "x", truncation: "disabled" }).success,
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", truncation: "auto" })
+        .success,
+    ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", truncation: "disabled" })
+        .success,
     ).toBe(true);
   });
 
-  it("rejects truncation with unknown value", () => {
-    expect(responseCreateRequestSchema.safeParse({ model: "x", truncation: "maybe" }).success).toBe(
-      false,
-    );
+  it("accepts truncation with unknown value as raw JSON", () => {
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", truncation: "maybe" })
+        .success,
+    ).toBe(true);
   });
 
   it("accepts prompt as string or structured object", () => {
-    expect(responseCreateRequestSchema.safeParse({ model: "x", prompt: "summarize" }).success).toBe(
-      true,
-    );
+    expect(
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", prompt: "summarize" })
+        .success,
+    ).toBe(true);
     expect(
       responseCreateRequestSchema.safeParse({
         model: "x",
+        input: "hi",
         prompt: { id: "summarizer", variables: { topic: "x" } },
       }).success,
     ).toBe(true);
@@ -180,18 +338,20 @@ describe("responseCreateRequestSchema — extended fields", () => {
   it("accepts reasoning effort levels", () => {
     for (const effort of ["minimal", "low", "medium", "high", "xhigh"] as const) {
       expect(
-        responseCreateRequestSchema.safeParse({ model: "x", reasoning: { effort } }).success,
+        responseCreateRequestSchema.safeParse({ model: "x", input: "hi", reasoning: { effort } })
+          .success,
       ).toBe(true);
     }
   });
 
-  it("rejects unknown reasoning effort", () => {
+  it("accepts unknown reasoning effort as a typed string field", () => {
     expect(
       responseCreateRequestSchema.safeParse({
         model: "x",
+        input: "hi",
         reasoning: { effort: "ultra" },
       }).success,
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
@@ -199,6 +359,7 @@ describe("responseCreateRequestSchema — tools", () => {
   it("accepts a function tool", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [
         {
           type: "function",
@@ -215,6 +376,7 @@ describe("responseCreateRequestSchema — tools", () => {
   it("accepts a web_search tool with filters", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [
         {
           type: "web_search",
@@ -229,22 +391,25 @@ describe("responseCreateRequestSchema — tools", () => {
   it("accepts a file_search tool with vector store ids", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "file_search", vector_store_ids: ["vs_1"] }],
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects file_search without vector_store_ids", () => {
+  it("accepts file_search without vector_store_ids as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "file_search" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("accepts a code_interpreter tool", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "code_interpreter", container: { type: "auto" } }],
     });
     expect(result.success).toBe(true);
@@ -253,6 +418,7 @@ describe("responseCreateRequestSchema — tools", () => {
   it("accepts an mcp tool with required server fields", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [
         {
           type: "mcp",
@@ -265,25 +431,28 @@ describe("responseCreateRequestSchema — tools", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects mcp without server_url", () => {
+  it("accepts mcp without server_url as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "mcp", server_label: "github" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects mcp with malformed server_url", () => {
+  it("accepts mcp with malformed server_url as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "mcp", server_label: "github", server_url: "not-a-url" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("accepts a custom tool", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "custom", name: "render", description: "render a chart" }],
     });
     expect(result.success).toBe(true);
@@ -292,22 +461,25 @@ describe("responseCreateRequestSchema — tools", () => {
   it("accepts an apply_patch tool", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "apply_patch" }],
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects unknown tool type via discriminator", () => {
+  it("accepts unknown tool type as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [{ type: "bogus" }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
   it("accepts a mixed list of tool types", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tools: [
         { type: "function", name: "lookup" },
         { type: "web_search" },
@@ -329,6 +501,7 @@ describe("responseCreateRequestSchema — tool_choice hosted form", () => {
   ] as const)("accepts hosted tool_choice type=%s", (type) => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tool_choice: { type },
     });
     expect(result.success).toBe(true);
@@ -337,25 +510,28 @@ describe("responseCreateRequestSchema — tool_choice hosted form", () => {
   it("accepts hosted tool_choice with name", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tool_choice: { type: "custom", name: "render" },
     });
     expect(result.success).toBe(true);
   });
 
-  it("rejects hosted tool_choice with unknown type", () => {
+  it("accepts hosted tool_choice with unknown type as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tool_choice: { type: "bogus" },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects function tool_choice when name is missing", () => {
+  it("accepts function tool_choice when name is missing as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       tool_choice: { type: "function", function: {} },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
 
@@ -363,6 +539,7 @@ describe("responseCreateRequestSchema — text.format", () => {
   it("accepts text format", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: { format: { type: "text" } },
     });
     expect(result.success).toBe(true);
@@ -371,6 +548,7 @@ describe("responseCreateRequestSchema — text.format", () => {
   it("accepts json_object format", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: { format: { type: "json_object" } },
     });
     expect(result.success).toBe(true);
@@ -379,6 +557,7 @@ describe("responseCreateRequestSchema — text.format", () => {
   it("accepts json_schema format with name, schema, strict", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: {
         format: {
           type: "json_schema",
@@ -392,71 +571,92 @@ describe("responseCreateRequestSchema — text.format", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects json_schema without name", () => {
+  it("accepts json_schema without name as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: { format: { type: "json_schema", schema: { type: "object" } } },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects json_schema without schema", () => {
+  it("accepts json_schema without schema as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: { format: { type: "json_schema", name: "answer" } },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects unknown format type", () => {
+  it("accepts unknown format type as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: { format: { type: "yaml" } },
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects text as a free-form string", () => {
+  it("accepts text as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       text: "free-form",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
 
 describe("responseCreateRequestSchema — service_tier and safety_identifier", () => {
   it.each(["auto", "default", "flex", "priority"] as const)("accepts service_tier=%s", (tier) => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: tier });
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      service_tier: tier,
+    });
     expect(result.success).toBe(true);
   });
 
-  it("rejects unknown service_tier", () => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x", service_tier: "pro" });
-    expect(result.success).toBe(false);
+  it("accepts unknown service_tier string", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      service_tier: "pro",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("accepts a 1–64 char safety_identifier", () => {
     expect(
-      responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "u1" }).success,
-    ).toBe(true);
-    expect(
-      responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "u".repeat(64) })
+      responseCreateRequestSchema.safeParse({ model: "x", input: "hi", safety_identifier: "u1" })
         .success,
     ).toBe(true);
+    expect(
+      responseCreateRequestSchema.safeParse({
+        model: "x",
+        input: "hi",
+        safety_identifier: "u".repeat(64),
+      }).success,
+    ).toBe(true);
   });
 
-  it("rejects empty safety_identifier", () => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x", safety_identifier: "" });
-    expect(result.success).toBe(false);
-  });
-
-  it("rejects safety_identifier over 64 chars", () => {
+  it("accepts empty safety_identifier as raw JSON", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
+      safety_identifier: "",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts safety_identifier over 64 chars as raw JSON", () => {
+    const result = responseCreateRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
       safety_identifier: "u".repeat(65),
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });
 
@@ -464,6 +664,7 @@ describe("responseCreateRequestSchema — stream + background conflict", () => {
   it("rejects stream=true and background=true with param=background", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       stream: true,
       background: true,
     });
@@ -478,6 +679,7 @@ describe("responseCreateRequestSchema — stream + background conflict", () => {
   it("accepts stream=true with background=false", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       stream: true,
       background: false,
     });
@@ -487,6 +689,7 @@ describe("responseCreateRequestSchema — stream + background conflict", () => {
   it("accepts stream=false with background=true (handler returns 422)", () => {
     const result = responseCreateRequestSchema.safeParse({
       model: "x",
+      input: "hi",
       stream: false,
       background: true,
     });
@@ -494,7 +697,7 @@ describe("responseCreateRequestSchema — stream + background conflict", () => {
   });
 
   it("accepts neither stream nor background set", () => {
-    const result = responseCreateRequestSchema.safeParse({ model: "x" });
+    const result = responseCreateRequestSchema.safeParse({ model: "x", input: "hi" });
     expect(result.success).toBe(true);
   });
 });
@@ -524,6 +727,16 @@ describe("responseCompactRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts instructions and previous_response_id", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "gpt-5",
+      input: "hello",
+      instructions: { text: "preserve tool state" },
+      previous_response_id: "resp_prev",
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects empty model", () => {
     const result = responseCompactRequestSchema.safeParse({ model: "" });
     expect(result.success).toBe(false);
@@ -534,21 +747,50 @@ describe("responseCompactRequestSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects empty string input", () => {
+  it("accepts empty string input as raw JSON", () => {
     const result = responseCompactRequestSchema.safeParse({ model: "x", input: "" });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects empty array input", () => {
+  it("accepts empty array input as raw JSON", () => {
     const result = responseCompactRequestSchema.safeParse({ model: "x", input: [] });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 
-  it("rejects unknown fields (strict)", () => {
+  it("accepts empty previous_response_id", () => {
     const result = responseCompactRequestSchema.safeParse({
       model: "x",
-      instructions: "nope",
+      input: "hi",
+      previous_response_id: "",
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+  });
+
+  it("strips unknown fields like Go struct decoding", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "x",
+      input: "hi",
+      unknown: "nope",
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    expect(result.data).not.toHaveProperty("unknown");
+  });
+
+  it("strips null previous_response_id while preserving raw null fields", () => {
+    const result = responseCompactRequestSchema.safeParse({
+      model: "x",
+      input: null,
+      instructions: null,
+      previous_response_id: null,
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    expect(result.data).toEqual({
+      model: "x",
+      input: null,
+      instructions: null,
+    });
   });
 });
