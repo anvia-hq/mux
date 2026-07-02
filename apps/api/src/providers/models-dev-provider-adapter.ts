@@ -1,4 +1,7 @@
 import type {
+  AudioMultipartRequest,
+  AudioProxyResponse,
+  AudioSpeechRequest,
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -16,6 +19,8 @@ import type {
   ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { cloneFormDataWithModel, toAudioProxyResponse } from "./openai-compatible-audio";
+import { throwOpenAICompatibleError } from "./openai-compatible-error";
 import { mergeProviderRequestHeaders } from "./types";
 import {
   streamImageGenerationResponseBody,
@@ -31,6 +36,9 @@ const nonHttpEndpointCapabilities: ProviderCapabilities = {
   moderationsApi: false,
   imageGenerationsApi: false,
   completionsApi: false,
+  audioTranscriptionsApi: false,
+  audioTranslationsApi: false,
+  audioSpeechApi: false,
 };
 
 /**
@@ -50,6 +58,9 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   private moderationsUrl?: string;
   private imageGenerationsUrl?: string;
   private completionsUrl?: string;
+  private audioTranscriptionsUrl?: string;
+  private audioTranslationsUrl?: string;
+  private audioSpeechUrl?: string;
   /**
    * Base URL the adapter posts to for Responses API calls, if the
    * upstream exposes the OpenAI Responses surface. Set via the
@@ -82,6 +93,15 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
       : undefined;
     this.completionsUrl = input.apiBase
       ? this.toEndpointUrl(input.apiBase, "completions")
+      : undefined;
+    this.audioTranscriptionsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "audio/transcriptions")
+      : undefined;
+    this.audioTranslationsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "audio/translations")
+      : undefined;
+    this.audioSpeechUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "audio/speech")
       : undefined;
     this.responsesEndpoint = input.responsesEndpoint;
     this.models = input.models;
@@ -201,8 +221,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     return (await response.json()) as ModerationResponse;
@@ -224,8 +243,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     return (await response.json()) as ImageGenerationResponse;
@@ -247,8 +265,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     yield* streamImageGenerationResponseBody(response);
@@ -270,8 +287,7 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     return (await response.json()) as CompletionResponse;
@@ -286,6 +302,41 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     }
 
     yield* this.createRawStream(this.completionsUrl, { ...request, stream: true }, options);
+  }
+
+  async createAudioTranscription(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
+    if (!this.audioTranscriptionsUrl) {
+      throw new Error(`${this.name} does not expose an audio transcriptions URL in models.dev`);
+    }
+
+    return this.createAudioMultipart(this.audioTranscriptionsUrl, request);
+  }
+
+  async createAudioTranslation(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
+    if (!this.audioTranslationsUrl) {
+      throw new Error(`${this.name} does not expose an audio translations URL in models.dev`);
+    }
+
+    return this.createAudioMultipart(this.audioTranslationsUrl, request);
+  }
+
+  async createAudioSpeech(request: AudioSpeechRequest): Promise<AudioProxyResponse> {
+    if (!this.audioSpeechUrl) {
+      throw new Error(`${this.name} does not expose an audio speech URL in models.dev`);
+    }
+
+    const response = await fetch(this.audioSpeechUrl, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError(this.name, response);
+    }
+
+    return toAudioProxyResponse(response);
   }
 
   listModels(): Model[] {
@@ -319,11 +370,28 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     yield* streamTextResponseBody(response);
+  }
+
+  private async createAudioMultipart(
+    url: string,
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyResponse> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      body: cloneFormDataWithModel(request.formData, request.model),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError(this.name, response);
+    }
+
+    return toAudioProxyResponse(response);
   }
 
   private toChatCompletionsUrl(apiBase: string): string {

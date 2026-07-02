@@ -20,6 +20,9 @@ export const azureCapabilities: ProviderCapabilities = {
   moderationsApi: false,
   imageGenerationsApi: false,
   completionsApi: false,
+  audioTranscriptionsApi: false,
+  audioTranslationsApi: false,
+  audioSpeechApi: false,
 };
 
 export class AzureResponsesEndpointNotConfiguredError extends Error {

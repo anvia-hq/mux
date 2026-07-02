@@ -84,6 +84,7 @@ vi.mock("../../../src/modules/keys/services", () => {
 
 import { Hono } from "hono";
 import { imageGenerationsRouter } from "../../../src/modules/images/router";
+import { UpstreamOpenAICompatibleError } from "../../../src/providers/openai-compatible-error";
 
 describe("image generations router", () => {
   beforeEach(() => {
@@ -132,6 +133,28 @@ describe("image generations router", () => {
         rawBody: JSON.stringify({ model: "gpt-image-1", prompt: "cat" }),
       }),
     );
+  });
+
+  it("POST / returns upstream OpenAI-compatible errors verbatim", async () => {
+    mockHandleImageGeneration.mockRejectedValueOnce(
+      new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 429,
+        body: '{"error":{"message":"rate limited"}}',
+        contentType: "application/json",
+      }),
+    );
+
+    const app = new Hono().route("/v1/images/generations", imageGenerationsRouter);
+    const res = await app.request("/v1/images/generations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-image-1", prompt: "cat" }),
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    await expect(res.text()).resolves.toBe('{"error":{"message":"rate limited"}}');
   });
 
   it("POST / streams raw SSE and records usage when available", async () => {

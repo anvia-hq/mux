@@ -65,6 +65,9 @@ describe("ModelsDevProviderAdapter", () => {
     expect(a.capabilities.moderationsApi).toBe(false);
     expect(a.capabilities.imageGenerationsApi).toBe(false);
     expect(a.capabilities.completionsApi).toBe(false);
+    expect(a.capabilities.audioTranscriptionsApi).toBe(false);
+    expect(a.capabilities.audioTranslationsApi).toBe(false);
+    expect(a.capabilities.audioSpeechApi).toBe(false);
   });
 
   it("chatCompletion throws without apiBase", async () => {
@@ -249,6 +252,59 @@ describe("ModelsDevProviderAdapter", () => {
     expect(mockGlobalFetch).toHaveBeenCalledWith(
       "https://x.com/v1/completions",
       expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("createAudioTranscription sends multipart to the derived audio transcriptions endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(Response.json({ text: "hello" }));
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+    const formData = new FormData();
+    const file = new File(["audio"], "speech.wav", { type: "audio/wav" });
+    formData.append("file", file);
+    formData.append("model", "client-model");
+
+    await a.createAudioTranscription({ model: "m1", formData });
+
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer k" },
+      }),
+    );
+    const requestBody = mockGlobalFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(requestBody.get("model")).toBe("m1");
+    expect(requestBody.get("file")).toBe(file);
+  });
+
+  it("createAudioSpeech sends JSON to the derived audio speech endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      new Response(new Uint8Array([1]), { headers: { "Content-Type": "audio/mpeg" } }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const response = await a.createAudioSpeech({ model: "m1", input: "hello", voice: "alloy" });
+
+    expect(response.contentType).toBe("audio/mpeg");
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/audio/speech",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
     );
   });
 

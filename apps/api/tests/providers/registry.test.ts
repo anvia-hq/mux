@@ -20,6 +20,8 @@ import {
   estimateCost,
   initProviders,
   listPublicModels,
+  resolveAudioSpeechModel,
+  resolveAudioTranscriptionModel,
   resolveChatModel,
   resolveCompletionModel,
   resolveEmbeddingModel,
@@ -174,6 +176,53 @@ describe("OpenAI-compatible endpoint resolvers", () => {
       kind: "fallback-group",
       requestedModelId: "mux:legacy-completions",
       targets: [{ providerName: "openai", modelId: "gpt-3.5-turbo-instruct" }],
+    });
+  });
+
+  it("returns only audio-capable targets from fallback groups", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "openai", ciphertext: "enc-openai" },
+      { provider: "anthropic", ciphertext: "enc-anthropic" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "transcribe",
+      name: "Transcribe",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "whisper-1", position: 1 },
+      ],
+    });
+
+    await expect(resolveAudioTranscriptionModel("mux:transcribe")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:transcribe",
+      targets: [{ providerName: "openai", modelId: "whisper-1" }],
+    });
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "speech",
+      name: "Speech",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "tts-1", position: 1 },
+      ],
+    });
+
+    await expect(resolveAudioSpeechModel("mux:speech")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:speech",
+      targets: [{ providerName: "openai", modelId: "tts-1" }],
     });
   });
 });

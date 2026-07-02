@@ -97,6 +97,7 @@ vi.mock("../../../src/modules/keys/services", () => {
 import { Hono } from "hono";
 import { completionsRouter } from "../../../src/modules/completions/router";
 import { ApiKeyUnbillableCompletionUsageError } from "../../../src/modules/completions/services";
+import { UpstreamOpenAICompatibleError } from "../../../src/providers/openai-compatible-error";
 
 describe("completions router", () => {
   beforeEach(() => {
@@ -190,6 +191,28 @@ describe("completions router", () => {
     });
 
     expect(res.status).toBe(429);
+  });
+
+  it("POST / returns upstream OpenAI-compatible errors verbatim", async () => {
+    mockHandleCompletion.mockRejectedValueOnce(
+      new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 400,
+        body: '{"error":{"message":"bad prompt"}}',
+        contentType: "application/json",
+      }),
+    );
+
+    const app = new Hono().route("/v1/completions", completionsRouter);
+    const res = await app.request("/v1/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-3.5-turbo-instruct", prompt: "hello" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    await expect(res.text()).resolves.toBe('{"error":{"message":"bad prompt"}}');
   });
 
   it("POST / streams raw SSE and records usage when available", async () => {

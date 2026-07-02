@@ -6,6 +6,7 @@ import {
   ChannelParamOverrideError,
   type ChannelOverrideRequestContext,
 } from "../../providers/channel-overrides";
+import { upstreamOpenAICompatibleStatusCode } from "../../providers/openai-compatible-error";
 import {
   estimateCost,
   resolveModerationModel,
@@ -120,7 +121,7 @@ async function createModerationWithFallback(
         channelName: target.channelName,
         endpoint: "/v1/moderations",
         latencyMs,
-        statusCode: 500,
+        statusCode: upstreamOpenAICompatibleStatusCode(error),
         errorMessage,
       });
     }

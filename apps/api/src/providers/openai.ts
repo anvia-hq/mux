@@ -1,4 +1,7 @@
 import type {
+  AudioMultipartRequest,
+  AudioProxyResponse,
+  AudioSpeechRequest,
   ChatCompletionRequest,
   ChatCompletionResponse,
   ChatCompletionChunk,
@@ -18,6 +21,8 @@ import type {
   ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { cloneFormDataWithModel, toAudioProxyResponse } from "./openai-compatible-audio";
+import { throwOpenAICompatibleError } from "./openai-compatible-error";
 import { mergeProviderRequestHeaders } from "./types";
 import {
   streamImageGenerationResponseBody,
@@ -50,6 +55,141 @@ const MODELS: Model[] = [
     maxOutputTokens: 3072,
     inputModalities: ["text"],
     outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "whisper-1",
+    name: "whisper-1",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-transcribe",
+    name: "gpt-4o-transcribe",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-mini-transcribe",
+    name: "gpt-4o-mini-transcribe",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-mini-transcribe-2025-12-15",
+    name: "gpt-4o-mini-transcribe-2025-12-15",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-transcribe-diarize",
+    name: "gpt-4o-transcribe-diarize",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["audio"],
+    outputModalities: ["text"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "tts-1",
+    name: "tts-1",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["audio"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "tts-1-hd",
+    name: "tts-1-hd",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["audio"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-mini-tts",
+    name: "gpt-4o-mini-tts",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["audio"],
+    reasoning: false,
+    toolCall: false,
+    structuredOutput: false,
+    weights: "closed",
+  },
+  {
+    id: "gpt-4o-mini-tts-2025-12-15",
+    name: "gpt-4o-mini-tts-2025-12-15",
+    provider: "openai",
+    inputPricePer1M: 0,
+    outputPricePer1M: 0,
+    contextWindow: 0,
+    maxOutputTokens: 0,
+    inputModalities: ["text"],
+    outputModalities: ["audio"],
     reasoning: false,
     toolCall: false,
     structuredOutput: false,
@@ -888,6 +1028,9 @@ const OPENAI_EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
 const OPENAI_MODERATIONS_URL = "https://api.openai.com/v1/moderations";
 const OPENAI_IMAGE_GENERATIONS_URL = "https://api.openai.com/v1/images/generations";
 const OPENAI_COMPLETIONS_URL = "https://api.openai.com/v1/completions";
+const OPENAI_AUDIO_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
+const OPENAI_AUDIO_TRANSLATIONS_URL = "https://api.openai.com/v1/audio/translations";
+const OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
 const REQUEST_TIMEOUT_MS = 60_000;
 
 export class UpstreamResponsesApiError extends Error {
@@ -1055,8 +1198,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     return (await response.json()) as ModerationResponse;
@@ -1074,8 +1216,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     return (await response.json()) as ImageGenerationResponse;
@@ -1093,8 +1234,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     yield* streamImageGenerationResponseBody(response);
@@ -1112,8 +1252,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     return (await response.json()) as CompletionResponse;
@@ -1124,6 +1263,32 @@ export class OpenAIAdapter implements ProviderAdapter {
     options?: ProviderRequestOptions,
   ): AsyncIterable<string> {
     yield* this.createRawStream(OPENAI_COMPLETIONS_URL, { ...request, stream: true }, options);
+  }
+
+  async createAudioTranscription(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
+    return this.createAudioMultipart(OPENAI_AUDIO_TRANSCRIPTIONS_URL, request);
+  }
+
+  async createAudioTranslation(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
+    return this.createAudioMultipart(OPENAI_AUDIO_TRANSLATIONS_URL, request);
+  }
+
+  async createAudioSpeech(request: AudioSpeechRequest): Promise<AudioProxyResponse> {
+    const response = await fetch(OPENAI_AUDIO_SPEECH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError("OpenAI", response);
+    }
+
+    return toAudioProxyResponse(response);
   }
 
   async createResponse(
@@ -1300,11 +1465,30 @@ export class OpenAIAdapter implements ProviderAdapter {
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     yield* streamTextResponseBody(response);
+  }
+
+  private async createAudioMultipart(
+    url: string,
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyResponse> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: cloneFormDataWithModel(request.formData, request.model),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError("OpenAI", response);
+    }
+
+    return toAudioProxyResponse(response);
   }
 
   listModels(): Model[] {
