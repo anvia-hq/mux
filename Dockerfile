@@ -1,4 +1,4 @@
-FROM node:22-alpine
+FROM node:22-alpine AS app
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -21,3 +21,17 @@ COPY . .
 RUN DATABASE_URL="postgresql://postgres:postgres@postgres:5432/monorepo_template?schema=public" pnpm db:generate
 
 CMD ["pnpm", "dev"]
+
+FROM app AS platform-build
+
+ARG VITE_API_URL="/api"
+ENV VITE_API_URL=$VITE_API_URL
+
+RUN pnpm --filter @repo/platform build
+
+FROM caddy:2-alpine AS platform-static
+
+COPY apps/platform/Caddyfile /etc/caddy/Caddyfile
+COPY --from=platform-build /app/apps/platform/dist /srv
+
+EXPOSE 3000

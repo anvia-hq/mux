@@ -5,12 +5,19 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   envDir: "../..",
-  plugins: [
-    tanstackRouter({
-      target: "react",
-      autoCodeSplitting: true,
-    }),
-    react(),
-    tailwindcss(),
-  ],
+  build: {
+    rollupOptions: {
+      onwarn(warning, warn) {
+        if (
+          warning.code === "INVALID_ANNOTATION" &&
+          warning.id?.includes("@hugeicons/core-free-icons")
+        ) {
+          return;
+        }
+
+        warn(warning);
+      },
+    },
+  },
+  plugins: [tanstackRouter(), react(), tailwindcss()],
 });

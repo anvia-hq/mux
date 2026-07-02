@@ -18,8 +18,8 @@ import { Route as AuthedUsersRouteImport } from './routes/_authed.users'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
 import { Route as AuthedPlaygroundRouteImport } from './routes/_authed.playground'
-import { Route as AuthedModelAliasesRouteImport } from './routes/_authed.model-aliases'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
+import { Route as AuthedModelAliasesRouteImport } from './routes/_authed.model-aliases'
 import { Route as AuthedLogsRouteImport } from './routes/_authed.logs'
 import { Route as AuthedFallbackGroupsRouteImport } from './routes/_authed.fallback-groups'
 import { Route as AuthedDocsRouteImport } from './routes/_authed.docs'
@@ -73,14 +73,14 @@ const AuthedPlaygroundRoute = AuthedPlaygroundRouteImport.update({
   path: '/playground',
   getParentRoute: () => AuthedRoute,
 } as any)
-const AuthedModelAliasesRoute = AuthedModelAliasesRouteImport.update({
-  id: '/model-aliases',
-  path: '/model-aliases',
-  getParentRoute: () => AuthedRoute,
-} as any)
 const AuthedModelsRoute = AuthedModelsRouteImport.update({
   id: '/models',
   path: '/models',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedModelAliasesRoute = AuthedModelAliasesRouteImport.update({
+  id: '/model-aliases',
+  path: '/model-aliases',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedLogsRoute = AuthedLogsRouteImport.update({
@@ -328,18 +328,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedModelsRouteImport
       parentRoute: typeof AuthedRoute
     }
-    '/_authed/logs': {
-      id: '/_authed/logs'
-      path: '/logs'
-      fullPath: '/logs'
-      preLoaderRoute: typeof AuthedLogsRouteImport
-      parentRoute: typeof AuthedRoute
-    }
     '/_authed/model-aliases': {
       id: '/_authed/model-aliases'
       path: '/model-aliases'
       fullPath: '/model-aliases'
       preLoaderRoute: typeof AuthedModelAliasesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/logs': {
+      id: '/_authed/logs'
+      path: '/logs'
+      fullPath: '/logs'
+      preLoaderRoute: typeof AuthedLogsRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/fallback-groups': {

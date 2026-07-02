@@ -1,9 +1,13 @@
 name: mux-gateway
 
+x-app-build: &app-build
+  context: .
+  dockerfile: Dockerfile
+
 x-app: &app
   build:
-    context: .
-    dockerfile: Dockerfile
+    <<: *app-build
+    target: app
   image: mux-gateway-app
 
 services:
@@ -88,21 +92,22 @@ services:
       - internal
 
   platform:
-    <<: *app
+    build:
+      <<: *app-build
+      target: platform-static
+      args:
+        # Vite embeds env values at build time. Keep Compose builds pinned to
+        # the Caddy /api route instead of host-mode VITE_API_URL values.
+        VITE_API_URL: "${DOCKER_VITE_API_URL:-/api}"
+    image: mux-gateway-platform
     container_name: mux-platform
     restart: unless-stopped
-    # No ports exposed - only Caddy proxies to it
+    # Static platform assets served internally; only Caddy proxies to it.
     expose:
       - "3000"
-    environment:
-      # Docker/Caddy serves the API from the same public origin under /api.
-      # Keep this literal so host-mode .env values like http://localhost:8000
-      # do not get baked into the browser client inside Compose.
-      VITE_API_URL: "/api"
     depends_on:
       gateway:
         condition: service_started
-    command: pnpm --filter @repo/platform dev
     networks:
       - internal
 
