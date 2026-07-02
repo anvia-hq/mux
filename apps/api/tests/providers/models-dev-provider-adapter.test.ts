@@ -123,6 +123,53 @@ describe("ModelsDevProviderAdapter", () => {
     await expect(a.chatCompletion({ model: "m1", messages: [] })).rejects.toThrow("429");
   });
 
+  it("createEmbedding throws without apiBase", async () => {
+    const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
+    await expect(a.createEmbedding({ model: "m1", input: "hello" })).rejects.toThrow(
+      "embeddings URL",
+    );
+  });
+
+  it("createEmbedding sends POST and returns response", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [{ object: "embedding", embedding: [0.1], index: 0 }],
+        model: "m1",
+        usage: { prompt_tokens: 1, total_tokens: 1 },
+      }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+    const resp = await a.createEmbedding({
+      model: "m1",
+      input: ["hello"],
+      encoding_format: "float",
+    });
+
+    expect(resp.data[0]?.embedding).toEqual([0.1]);
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/embeddings",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "m1",
+      input: ["hello"],
+      encoding_format: "float",
+    });
+  });
+
   it("chatCompletionStream throws without apiBase", async () => {
     const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
     await expect(async () => {

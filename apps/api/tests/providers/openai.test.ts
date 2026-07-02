@@ -135,6 +135,47 @@ describe("OpenAIAdapter", () => {
     });
   });
 
+  it("creates embeddings through the OpenAI Embeddings API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [{ object: "embedding", embedding: [0.1, 0.2], index: 0 }],
+        model: "text-embedding-3-small",
+        usage: { prompt_tokens: 2, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createEmbedding({
+      model: "text-embedding-3-small",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+      user: "user-1",
+    });
+
+    expect(response.data[0]?.embedding).toEqual([0.1, 0.2]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/embeddings",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "text-embedding-3-small",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+      user: "user-1",
+    });
+  });
+
   it("creates responses through the OpenAI Responses API", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({

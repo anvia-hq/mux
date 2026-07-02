@@ -1,4 +1,4 @@
-import type { ProviderAdapter, Model } from "./types";
+import type { EmbeddingRequest, EmbeddingResponse, ProviderAdapter, Model } from "./types";
 import { RequestyAdapter } from "./requesty";
 import { QiniuAiAdapter } from "./qiniu-ai";
 import { AlibabaCnAdapter } from "./alibaba-cn";
@@ -652,6 +652,69 @@ export type ResolvedResponseTarget = {
   requestedModelId: string;
   target: ResolvedProviderModel;
 };
+
+export type ResolvedEmbeddingProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createEmbedding: (request: EmbeddingRequest) => Promise<EmbeddingResponse>;
+  };
+};
+
+export type ResolvedEmbeddingModel =
+  | {
+      kind: "direct";
+      requestedModelId: string;
+      targets: [ResolvedEmbeddingProviderModel];
+    }
+  | {
+      kind: "fallback-group";
+      groupId: string;
+      name: string;
+      description: string | null;
+      requestedModelId: string;
+      targets: ResolvedEmbeddingProviderModel[];
+    };
+
+function isEmbeddingCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedEmbeddingProviderModel {
+  return (
+    target.provider.capabilities.embeddingsApi === true &&
+    typeof target.provider.createEmbedding === "function"
+  );
+}
+
+export async function resolveEmbeddingModel(model: string): Promise<ResolvedEmbeddingModel | null> {
+  const resolved = await resolveChatModel(model);
+  if (!resolved) {
+    return null;
+  }
+
+  if (resolved.kind === "direct") {
+    const target = resolved.targets[0];
+    if (!isEmbeddingCapableTarget(target)) {
+      return null;
+    }
+    return {
+      kind: "direct",
+      requestedModelId: resolved.requestedModelId,
+      targets: [target],
+    };
+  }
+
+  const targets = resolved.targets.filter(isEmbeddingCapableTarget);
+  if (targets.length === 0) {
+    return null;
+  }
+
+  return {
+    kind: "fallback-group",
+    groupId: resolved.groupId,
+    name: resolved.name,
+    description: resolved.description,
+    requestedModelId: resolved.requestedModelId,
+    targets,
+  };
+}
 
 /**
  * Pick the first Responses-capable target for a model id. Accepts:

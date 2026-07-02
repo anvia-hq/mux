@@ -2,6 +2,8 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
   Model,
   ProviderAdapter,
 } from "./types";
@@ -13,12 +15,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
   readonly capabilities = { ...openAICompatibleCapabilities, responsesApi: false };
   private readonly apiKey: string;
   private readonly chatCompletionsUrl: string;
+  private readonly embeddingsUrl: string;
   private readonly models: Model[];
 
   constructor(input: { name: string; apiKey: string; apiBase: string; models: Model[] }) {
     this.name = input.name;
     this.apiKey = input.apiKey;
     this.chatCompletionsUrl = this.toChatCompletionsUrl(input.apiBase);
+    this.embeddingsUrl = this.toEndpointUrl(input.apiBase, "embeddings");
     this.models = input.models;
   }
 
@@ -87,6 +91,22 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     }
   }
 
+  async createEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+    const response = await fetch(this.embeddingsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as EmbeddingResponse;
+  }
+
   listModels(): Model[] {
     return this.models;
   }
@@ -99,7 +119,17 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
   }
 
   private toChatCompletionsUrl(apiBase: string): string {
+    return this.toEndpointUrl(apiBase, "chat/completions");
+  }
+
+  private toEndpointUrl(apiBase: string, endpoint: string): string {
     const normalized = apiBase.replace(/\/$/, "");
-    return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+    if (normalized.endsWith(`/${endpoint}`)) {
+      return normalized;
+    }
+    if (normalized.endsWith("/chat/completions")) {
+      return normalized.replace(/\/chat\/completions$/, `/${endpoint}`);
+    }
+    return `${normalized}/${endpoint}`;
   }
 }
