@@ -1,9 +1,11 @@
 import type {
   ProviderCapabilities,
+  ProviderRequestOptions,
   ResponseCompactRequest,
   ResponseCreateRequest,
   ResponseObject,
 } from "./types";
+import { mergeProviderRequestHeaders } from "./types";
 import { openAICompatibleCapabilities } from "./chat-compat";
 import { AZURE_OPENAI_RESPONSES_API_VERSION } from "./models-dev-provider-adapter";
 
@@ -117,18 +119,27 @@ export class AzureResponsesClient {
     return qs ? `${base}${tail}&${qs}` : `${base}${tail}`;
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+  private buildHeaders(
+    options?: ProviderRequestOptions,
+    includeContentType = true,
+  ): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        ...(includeContentType ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      options,
+    );
   }
 
-  async createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
+  async createResponse(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesBaseUrl(), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -140,11 +151,14 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async *createResponseStream(request: ResponseCreateRequest): AsyncIterable<string> {
+  async *createResponseStream(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
     const response = await fetch(this.getResponsesBaseUrl(), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify({ ...request, stream: true }),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -167,10 +181,10 @@ export class AzureResponsesClient {
     if (tail) yield tail;
   }
 
-  async getResponse(id: string): Promise<ResponseObject> {
+  async getResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesItemUrl(id), {
       method: "GET",
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -182,10 +196,10 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async deleteResponse(id: string): Promise<ResponseObject> {
+  async deleteResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesItemUrl(id), {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -197,10 +211,10 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async cancelResponse(id: string): Promise<ResponseObject> {
+  async cancelResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesCancelUrl(id), {
       method: "POST",
-      headers: this.buildHeaders(),
+      headers: this.buildHeaders(options),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -212,11 +226,14 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
+  async compactResponse(
+    request: ResponseCompactRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesCompactUrl(), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -228,11 +245,14 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async countResponseInputTokens(request: ResponseCreateRequest): Promise<ResponseObject> {
+  async countResponseInputTokens(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesInputTokensUrl(), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -244,10 +264,14 @@ export class AzureResponsesClient {
     return (await response.json()) as ResponseObject;
   }
 
-  async listResponseInputItems(id: string, query?: AzureResponsesQuery): Promise<ResponseObject> {
+  async listResponseInputItems(
+    id: string,
+    query?: AzureResponsesQuery,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
     const response = await fetch(this.getResponsesInputItemsUrl(id, query), {
       method: "GET",
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: this.buildHeaders(options, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 

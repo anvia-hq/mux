@@ -8,6 +8,7 @@ const {
   mockEnqueue,
   mockEnqueueLog,
   mockGetProviderApiKey,
+  mockGetProviderHeaders,
   mockIncrbyfloat,
   mockPrismaFindUnique,
   mockPrismaUpdate,
@@ -15,6 +16,7 @@ const {
   mockEnqueue: vi.fn(),
   mockEnqueueLog: vi.fn(),
   mockGetProviderApiKey: vi.fn(),
+  mockGetProviderHeaders: vi.fn(),
   mockIncrbyfloat: vi.fn(),
   mockPrismaFindUnique: vi.fn(),
   mockPrismaUpdate: vi.fn(),
@@ -43,6 +45,8 @@ function makeRow(
     response: unknown;
     inputPricePer1M: number | null;
     outputPricePer1M: number | null;
+    channelId: string | null;
+    channelName: string | null;
   }> = {},
 ) {
   return {
@@ -52,6 +56,8 @@ function makeRow(
     model: "openai:gpt-5",
     status: "queued",
     response: null,
+    channelId: null,
+    channelName: null,
     inputPricePer1M: 1.25,
     outputPricePer1M: 10,
     ...overrides,
@@ -70,6 +76,11 @@ function buildDeps(
   overrides: Partial<{
     now: () => Date;
     getProviderApiKey: (provider: string) => Promise<string>;
+    getProviderHeaders: (
+      provider: string,
+      channelId: string | null | undefined,
+      apiKey: string,
+    ) => Promise<Record<string, string>>;
   }> = {},
 ) {
   return {
@@ -79,6 +90,7 @@ function buildDeps(
     enqueue: mockEnqueue,
     enqueueLog: mockEnqueueLog,
     getProviderApiKey: overrides.getProviderApiKey ?? mockGetProviderApiKey,
+    getProviderHeaders: overrides.getProviderHeaders ?? mockGetProviderHeaders,
     prismaClient: {
       backgroundResponseJob: {
         findUnique: mockPrismaFindUnique,
@@ -120,6 +132,7 @@ describe("processBackgroundPollJob", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetProviderApiKey.mockResolvedValue("sk-test");
+    mockGetProviderHeaders.mockResolvedValue({});
   });
 
   it("is a no-op when the row is missing", async () => {
@@ -167,6 +180,35 @@ describe("processBackgroundPollJob", () => {
       }),
     );
     expect(mockEnqueue).toHaveBeenCalledWith("resp_bg_abc", 2, 4_000);
+  });
+
+  it("applies static channel headers while polling upstream", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({ status: "queued", channelId: "openai-primary" }),
+    );
+    mockGetProviderHeaders.mockResolvedValueOnce({
+      "x-project": "proj_123",
+    });
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({ id: "resp_bg_abc", status: "queued", model: "gpt-5" }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(
+      makeJob({ attempt: 1 }),
+      buildDeps(fetchImpl as unknown as typeof fetch),
+    );
+
+    expect(mockGetProviderHeaders).toHaveBeenCalledWith("openai", "openai-primary", "sk-test");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/responses/resp_bg_abc"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer sk-test",
+          "x-project": "proj_123",
+        }),
+      }),
+    );
   });
 
   it("writes the response, bills the API key, and enqueues a final log on completion", async () => {

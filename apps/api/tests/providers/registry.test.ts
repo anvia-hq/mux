@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma, mockDecrypt } = vi.hoisted(() => ({
   mockPrisma: {
+    providerChannel: { findMany: vi.fn(), findUnique: vi.fn() },
     providerKey: { findMany: vi.fn(), findUnique: vi.fn() },
     customProvider: { findMany: vi.fn(), findUnique: vi.fn() },
     disabledModel: { findMany: vi.fn() },
@@ -31,6 +32,7 @@ describe("resolveResponseTarget", () => {
   afterEach(() => {
     vi.clearAllMocks();
     clearProviderCacheForE2e();
+    mockPrisma.providerChannel.findMany.mockRejectedValue(new Error("ProviderChannel missing"));
     mockPrisma.customProvider.findMany.mockResolvedValue([]);
     mockPrisma.modelAlias.findMany.mockResolvedValue([]);
     mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
@@ -180,6 +182,7 @@ describe("custom providers", () => {
   afterEach(() => {
     vi.clearAllMocks();
     clearProviderCacheForE2e();
+    mockPrisma.providerChannel.findMany.mockRejectedValue(new Error("ProviderChannel missing"));
     mockPrisma.modelAlias.findMany.mockResolvedValue([]);
     mockPrisma.modelAlias.findUnique.mockResolvedValue(null);
   });
@@ -243,12 +246,106 @@ describe("custom providers", () => {
       targets: [{ providerName: "custom-openai", modelId: "custom-chat" }],
     });
   });
+
+  it("resolves provider models to ordered channel targets with model mapping", async () => {
+    mockPrisma.providerChannel.findMany.mockResolvedValueOnce([
+      {
+        id: "custom-primary",
+        provider: "custom-openai",
+        name: "Custom primary",
+        enabled: true,
+        priority: 10,
+        weight: 1,
+        keyCiphertext: "enc-primary",
+        modelMapping: { "public-chat": "custom-chat" },
+        settings: { systemPrompt: "Be brief" },
+        otherSettings: null,
+        paramOverride: { temperature: 0 },
+      },
+      {
+        id: "custom-secondary",
+        provider: "custom-openai",
+        name: "Custom secondary",
+        enabled: true,
+        priority: 1,
+        weight: 1,
+        keyCiphertext: "enc-secondary",
+        modelMapping: { "public-chat": "custom-chat" },
+        settings: null,
+        otherSettings: null,
+        paramOverride: null,
+      },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([
+      {
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        models: [
+          {
+            modelId: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            reasoning: false,
+            toolCall: true,
+            structuredOutput: true,
+            weights: "closed",
+          },
+        ],
+      },
+    ]);
+    mockDecrypt.mockReturnValue("custom-key");
+    mockPrisma.disabledModel.findMany.mockResolvedValue([]);
+    mockPrisma.fallbackGroup.findMany.mockResolvedValue([]);
+    mockPrisma.modelAlias.findMany.mockResolvedValue([]);
+
+    await initProviders();
+
+    const resolved = await resolveChatModel("custom-openai:public-chat");
+
+    expect(resolved).toMatchObject({
+      kind: "direct",
+      requestedModelId: "custom-openai:public-chat",
+      targets: [
+        {
+          channelId: "custom-primary",
+          channelName: "Custom primary",
+          modelId: "public-chat",
+          upstreamModelId: "custom-chat",
+          settings: { systemPrompt: "Be brief" },
+          paramOverride: { temperature: 0 },
+        },
+        {
+          channelId: "custom-secondary",
+          channelName: "Custom secondary",
+          modelId: "public-chat",
+          upstreamModelId: "custom-chat",
+        },
+      ],
+    });
+    await expect(listPublicModels()).resolves.toEqual([
+      expect.objectContaining({
+        provider: "custom-openai",
+        id: "custom-chat",
+      }),
+      expect.objectContaining({
+        provider: "custom-openai",
+        id: "public-chat",
+      }),
+    ]);
+  });
 });
 
 describe("model aliases", () => {
   afterEach(() => {
     vi.clearAllMocks();
     clearProviderCacheForE2e();
+    mockPrisma.providerChannel.findMany.mockRejectedValue(new Error("ProviderChannel missing"));
     mockPrisma.customProvider.findMany.mockResolvedValue([]);
     mockPrisma.modelAlias.findMany.mockResolvedValue([]);
     mockPrisma.modelAlias.findUnique.mockResolvedValue(null);

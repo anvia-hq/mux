@@ -1,5 +1,11 @@
 import { ModelsDevProviderAdapter } from "./models-dev-provider-adapter";
-import type { Model, ResponseCompactRequest, ResponseCreateRequest, ResponseObject } from "./types";
+import type {
+  Model,
+  ProviderRequestOptions,
+  ResponseCompactRequest,
+  ResponseCreateRequest,
+  ResponseObject,
+} from "./types";
 import { AzureResponsesClient, azureCapabilities } from "./azure-responses";
 
 const MODELS: Model[] = [
@@ -1433,38 +1439,51 @@ export class AzureCognitiveServicesAdapter extends ModelsDevProviderAdapter {
     });
   }
 
-  createResponse(request: ResponseCreateRequest): Promise<ResponseObject> {
-    return this.responses.createResponse(request);
+  createResponse(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
+    return this.responses.createResponse(request, options);
   }
 
-  createResponseStream(request: ResponseCreateRequest): AsyncIterable<string> {
-    return this.responses.createResponseStream(request);
+  createResponseStream(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    return this.responses.createResponseStream(request, options);
   }
 
-  getResponse(id: string): Promise<ResponseObject> {
-    return this.responses.getResponse(id);
+  getResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
+    return this.responses.getResponse(id, options);
   }
 
-  deleteResponse(id: string): Promise<ResponseObject> {
-    return this.responses.deleteResponse(id);
+  deleteResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
+    return this.responses.deleteResponse(id, options);
   }
 
-  cancelResponse(id: string): Promise<ResponseObject> {
-    return this.responses.cancelResponse(id);
+  cancelResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
+    return this.responses.cancelResponse(id, options);
   }
 
-  compactResponse(request: ResponseCompactRequest): Promise<ResponseObject> {
-    return this.responses.compactResponse(request);
+  compactResponse(
+    request: ResponseCompactRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
+    return this.responses.compactResponse(request, options);
   }
 
-  countResponseInputTokens(request: ResponseCreateRequest): Promise<ResponseObject> {
-    return this.responses.countResponseInputTokens(request);
+  countResponseInputTokens(
+    request: ResponseCreateRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
+    return this.responses.countResponseInputTokens(request, options);
   }
 
   listResponseInputItems(
     id: string,
     query?: Record<string, string | string[]>,
+    options?: ProviderRequestOptions,
   ): Promise<ResponseObject> {
-    return this.responses.listResponseInputItems(id, query);
+    return this.responses.listResponseInputItems(id, query, options);
   }
 }

@@ -20,7 +20,39 @@ import {
   assertApiKeyCanSpend,
 } from "../keys/services";
 import { ApiKeyUnbillableUsageError, handleChatCompletion } from "./services";
-import type { ChatCompletionRequest } from "../../providers/types";
+import type { ChatCompletionChunk, ChatCompletionRequest } from "../../providers/types";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+} from "../../providers/channel-overrides";
+
+function openAIErrorBody(
+  message: string,
+  type = "invalid_request_error",
+  code: string | null = "invalid_request",
+  param: string | null = null,
+) {
+  return {
+    error: {
+      message,
+      type,
+      param,
+      code,
+    },
+  };
+}
+
+function shouldWriteStreamChunk(chunk: ChatCompletionChunk, includeUsage: boolean): boolean {
+  if (includeUsage || !chunk.usage) return true;
+
+  return chunk.choices.some((choice) => {
+    const delta = choice.delta as { content?: unknown; reasoning_content?: unknown };
+    return (
+      (typeof delta.content === "string" && delta.content !== "") ||
+      (typeof delta.reasoning_content === "string" && delta.reasoning_content !== "")
+    );
+  });
+}
 
 /**
  * Router exposing the OpenAI-compatible chat completions endpoint.
@@ -39,23 +71,28 @@ chatRouter.post("/completions", async (c) => {
   const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
   const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
 
+  let rawBody: string;
   let body: ChatCompletionRequest;
   try {
-    body = (await c.req.json()) as ChatCompletionRequest;
+    rawBody = await c.req.text();
+    body = JSON.parse(rawBody) as ChatCompletionRequest;
   } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
+    return c.json(
+      openAIErrorBody("invalid JSON body", "invalid_request_error", "bad_request_body"),
+      400,
+    );
   }
 
   const validationError = validateChatCompletionRequestShape(body);
   if (validationError) {
-    return c.json({ error: validationError }, 400);
+    return c.json(openAIErrorBody(validationError), 400);
   }
 
   try {
     assertApiKeyModelAllowed(body.model, readApiKeyModelAccess(c));
   } catch (error) {
     if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: error.message }, 403);
+      return c.json(openAIErrorBody(error.message, "invalid_request_error", "access_denied"), 403);
     }
     throw error;
   }
@@ -67,15 +104,23 @@ chatRouter.post("/completions", async (c) => {
 
     const result = await handleChatCompletion(body, apiKeyId, {
       requireBillableUsage: isLimitedKey && !body.stream,
+      requestContext: {
+        clientHeaders: c.req.raw.headers,
+        requestPath: new URL(c.req.url).pathname,
+      },
+      rawBody,
     });
 
     // Streaming response: pipe provider chunks to the client as SSE.
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, startTime } = result;
+      const { stream: streamIterable, provider, model, channelId, channelName, startTime } = result;
+      const includeStreamUsage = body.stream_options?.include_usage ?? true;
       const logId = await logStreamStart({
         apiKeyId,
         provider,
         model,
+        channelId,
+        channelName,
         endpoint: "/v1/chat/completions",
         latencyMs: 0,
         statusCode: 102,
@@ -112,6 +157,8 @@ chatRouter.post("/completions", async (c) => {
             apiKeyId,
             provider,
             model,
+            channelId,
+            channelName,
             endpoint: "/v1/chat/completions",
             latencyMs,
             promptTokens,
@@ -136,6 +183,10 @@ chatRouter.post("/completions", async (c) => {
                 completionTokens = maybeUsage.completion_tokens;
             }
 
+            if (!shouldWriteStreamChunk(chunk, includeStreamUsage)) {
+              continue;
+            }
+
             await streamWriter.write(`data: ${JSON.stringify(chunk)}\n\n`);
           }
 
@@ -157,6 +208,8 @@ chatRouter.post("/completions", async (c) => {
                 apiKeyId,
                 provider,
                 model,
+                channelId,
+                channelName,
                 endpoint: "/v1/chat/completions",
                 latencyMs,
                 statusCode: 500,
@@ -179,32 +232,49 @@ chatRouter.post("/completions", async (c) => {
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     if (errorMessage.startsWith("No provider found")) {
-      return c.json({ error: errorMessage }, 404);
+      return c.json(openAIErrorBody(errorMessage, "invalid_request_error", "model_not_found"), 404);
     }
 
     if (error instanceof ApiKeySpendLimitExceededError) {
-      return c.json({ error: errorMessage }, 429);
+      return c.json(openAIErrorBody(errorMessage, "insufficient_quota", "insufficient_quota"), 429);
     }
 
     if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: errorMessage }, 403);
+      return c.json(openAIErrorBody(errorMessage, "invalid_request_error", "access_denied"), 403);
     }
 
     if (error instanceof ApiKeyUnbillableUsageError) {
-      return c.json({ error: errorMessage }, 429);
+      return c.json(openAIErrorBody(errorMessage, "insufficient_quota", "insufficient_quota"), 429);
+    }
+
+    if (error instanceof ChannelParamOverrideError) {
+      return c.json(
+        openAIErrorBody(error.message, error.type, error.code),
+        error.statusCode as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
+      );
+    }
+
+    if (error instanceof ChannelHeaderOverrideError) {
+      return c.json(
+        openAIErrorBody(error.message, "invalid_request_error", "invalid_request"),
+        400,
+      );
     }
 
     if (
       error instanceof RequestLoggingUnavailableError ||
       error instanceof ApiKeySpendLedgerUnavailableError
     ) {
-      return c.json({ error: errorMessage }, 503);
+      return c.json(openAIErrorBody(errorMessage, "server_error", "service_unavailable"), 503);
     }
 
     if (error instanceof UnsupportedChatFeatureError) {
-      return c.json({ error: errorMessage }, 422);
+      return c.json(
+        openAIErrorBody(errorMessage, "invalid_request_error", "unsupported_feature"),
+        422,
+      );
     }
 
-    return c.json({ error: errorMessage }, 500);
+    return c.json(openAIErrorBody(errorMessage, "server_error", "internal_error"), 500);
   }
 });

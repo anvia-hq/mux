@@ -55,6 +55,7 @@ import {
   openAICompatibleCapabilities,
   unsupportedNativeCapabilities,
 } from "../../../src/providers/chat-compat";
+import { ChannelParamOverrideConfigError } from "../../../src/providers/channel-overrides";
 
 describe("chat services", () => {
   afterEach(() => {
@@ -130,6 +131,76 @@ describe("chat services", () => {
     expect(chatCompletion).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4" }));
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ estimatedCost: 0.01, model: "openai:gpt-4", statusCode: 200 }),
+    );
+  });
+
+  it("applies channel body and header overrides before calling the provider", async () => {
+    const chatCompletion = vi.fn().mockResolvedValueOnce({
+      id: "chat-1",
+      model: "gpt-4",
+      choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4",
+      targets: [
+        {
+          ...createResolvedModel("openai", "gpt-4", { chatCompletion }),
+          apiKey: "sk-upstream",
+          headerOverride: {
+            "X-Trace": "{client_header:X-Trace}",
+            "X-Key": "{api_key}",
+          },
+          paramOverride: { temperature: 0 },
+        },
+      ],
+    });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    await handleChatCompletion(createRequest({ temperature: 1 }), "key-1", {
+      requestContext: { clientHeaders: new Headers({ "X-Trace": "trace-123" }) },
+    });
+
+    expect(chatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4", temperature: 0 }),
+      {
+        headers: {
+          "x-key": "sk-upstream",
+          "x-trace": "trace-123",
+        },
+      },
+    );
+  });
+
+  it("passes the original raw body for pass-through channels", async () => {
+    const chatCompletion = vi.fn().mockResolvedValueOnce({
+      id: "chat-1",
+      model: "gpt-4",
+      choices: [{ index: 0, message: { role: "assistant", content: "hi" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    const rawBody =
+      '{\n  "model": "openai:gpt-4",\n  "messages": [{"role":"user","content":"hi"}]\n}';
+
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4",
+      targets: [
+        {
+          ...createResolvedModel("openai", "gpt-4", { chatCompletion }),
+          settings: { passThroughBodyEnabled: true },
+          paramOverride: { temperature: 0 },
+        },
+      ],
+    });
+    mockEstimateCost.mockReturnValueOnce(0.01);
+
+    await handleChatCompletion(createRequest({ temperature: 1 }), "key-1", { rawBody });
+
+    expect(chatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4", temperature: 1 }),
+      { headers: {}, rawBody },
     );
   });
 
@@ -290,6 +361,47 @@ describe("chat services", () => {
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ model: "anthropic:claude-3-haiku", statusCode: 200 }),
     );
+  });
+
+  it("does not fallback when channel param override config is invalid", async () => {
+    const primary = {
+      ...createResolvedModel("openai", "gpt-4", {
+        chatCompletion: vi.fn(),
+      }),
+      paramOverride: {
+        operations: [
+          {
+            mode: "return_error",
+            value: { message: "bad channel config", status_code: 99 },
+          },
+        ],
+      },
+    };
+    const backup = createResolvedModel("openai", "gpt-4o", {
+      chatCompletion: vi.fn().mockResolvedValueOnce({
+        id: "chat-backup",
+        model: "gpt-4o",
+        choices: [
+          { index: 0, message: { role: "assistant", content: "backup" }, finish_reason: "stop" },
+        ],
+      }),
+    });
+
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      groupId: "fast-chat",
+      name: "Fast chat",
+      description: null,
+      requestedModelId: "mux:fast-chat",
+      targets: [primary, backup],
+    });
+
+    await expect(
+      handleChatCompletion(createRequest({ model: "mux:fast-chat" }), "key-1"),
+    ).rejects.toBeInstanceOf(ChannelParamOverrideConfigError);
+    expect(primary.provider.chatCompletion).not.toHaveBeenCalled();
+    expect(backup.provider.chatCompletion).not.toHaveBeenCalled();
+    expect(mockLogRequest).not.toHaveBeenCalled();
   });
 
   it("fails fast when a direct model cannot support requested features", async () => {

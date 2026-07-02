@@ -6,6 +6,8 @@ export type RequestLogPayload = {
   apiKeyId: string;
   provider: string;
   model: string;
+  channelId?: string;
+  channelName?: string;
   endpoint: string;
   latencyMs: number;
   providerLatencyMs?: number;

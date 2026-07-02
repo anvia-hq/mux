@@ -17,6 +17,10 @@ import {
   assertApiKeyModelAllowed,
 } from "../keys/services";
 import { ApiKeyUnbillableCompletionUsageError, handleCompletion } from "./services";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+} from "../../providers/channel-overrides";
 
 export const completionsRouter = new Hono();
 
@@ -27,9 +31,11 @@ completionsRouter.post("/", async (c) => {
   const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
   const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
 
+  let rawBody: string;
   let body: CompletionRequest;
   try {
-    body = (await c.req.json()) as CompletionRequest;
+    rawBody = await c.req.text();
+    body = JSON.parse(rawBody) as CompletionRequest;
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
@@ -55,14 +61,21 @@ completionsRouter.post("/", async (c) => {
 
     const result = await handleCompletion(body, apiKeyId, {
       requireBillableUsage: isLimitedKey && !body.stream,
+      requestContext: {
+        clientHeaders: c.req.raw.headers,
+        requestPath: new URL(c.req.url).pathname,
+      },
+      rawBody,
     });
 
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, startTime } = result;
+      const { stream: streamIterable, provider, model, channelId, channelName, startTime } = result;
       const logId = await logStreamStart({
         apiKeyId,
         provider,
         model,
+        channelId,
+        channelName,
         endpoint: "/v1/completions",
         latencyMs: 0,
         statusCode: 102,
@@ -169,6 +182,17 @@ completionsRouter.post("/", async (c) => {
 
     if (error instanceof ApiKeyUnbillableCompletionUsageError) {
       return c.json({ error: errorMessage }, 429);
+    }
+
+    if (error instanceof ChannelParamOverrideError) {
+      return c.json(
+        { error: error.message },
+        error.statusCode as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
+      );
+    }
+
+    if (error instanceof ChannelHeaderOverrideError) {
+      return c.json({ error: error.message }, 400);
     }
 
     if (

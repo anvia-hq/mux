@@ -104,7 +104,10 @@ describe("moderations router", () => {
     expect(mockHandleModeration).toHaveBeenCalledWith(
       expect.objectContaining({ model: "openai:text-moderation-latest", input: "hello" }),
       "key-1",
-      { recordSpend: false },
+      expect.objectContaining({
+        recordSpend: false,
+        rawBody: JSON.stringify({ input: "hello" }),
+      }),
     );
   });
 
@@ -125,9 +128,14 @@ describe("moderations router", () => {
 
     expect(res.status).toBe(200);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleModeration).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      recordSpend: true,
-    });
+    expect(mockHandleModeration).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        recordSpend: true,
+        rawBody: JSON.stringify({ model: "omni-moderation-latest", input: "hello" }),
+      }),
+    );
   });
 
   it("POST / 429 when spend limit is exhausted", async () => {

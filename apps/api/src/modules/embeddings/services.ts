@@ -1,4 +1,10 @@
 import type { EmbeddingRequest, EmbeddingResponse } from "../../providers/types";
+import { prepareChannelOpenAICompatibleRequestSettings } from "../../providers/channel-settings";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+  type ChannelOverrideRequestContext,
+} from "../../providers/channel-overrides";
 import {
   estimateCost,
   getModelPricing,
@@ -20,7 +26,11 @@ export class ApiKeyUnbillableEmbeddingUsageError extends Error {
 export async function handleEmbedding(
   request: EmbeddingRequest,
   apiKeyId: string,
-  options: { requireBillableUsage?: boolean } = {},
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<EmbeddingResponse> {
   const resolved = await resolveEmbeddingModel(request.model);
 
@@ -43,6 +53,8 @@ export async function handleEmbedding(
     resolved.targets,
     {
       requireBillableUsage: options.requireBillableUsage,
+      requestContext: options.requestContext,
+      rawBody: options.rawBody,
       startTime: Date.now(),
     },
   );
@@ -53,21 +65,39 @@ async function createEmbeddingWithFallback(
   apiKeyId: string,
   responseModelId: string,
   targets: ResolvedEmbeddingProviderModel[],
-  options: { requireBillableUsage?: boolean; startTime: number },
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+    startTime: number;
+  },
 ): Promise<EmbeddingResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
-      const response = await target.provider.createEmbedding({ ...request, model: target.modelId });
+      const prepared = prepareChannelOpenAICompatibleRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, options.requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, options.rawBody),
+      );
+      const response = providerOptions
+        ? await target.provider.createEmbedding(prepared.body, providerOptions)
+        : await target.provider.createEmbedding(prepared.body);
       const latencyMs = Date.now() - options.startTime;
       const estimatedCost = estimateCost(target.publicModelId, response.usage?.prompt_tokens, 0);
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
         await logRequest({
           apiKeyId,
-          provider: target.provider.name,
+          provider: target.providerName,
           model: target.publicModelId,
+          channelId: target.channelId,
+          channelName: target.channelName,
           endpoint: "/v1/embeddings",
           latencyMs,
           promptTokens: response.usage?.prompt_tokens,
@@ -84,8 +114,10 @@ async function createEmbeddingWithFallback(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/embeddings",
         latencyMs,
         promptTokens: response.usage?.prompt_tokens,
@@ -108,14 +140,23 @@ async function createEmbeddingWithFallback(
         throw error;
       }
 
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
+
       lastError = error;
       const latencyMs = Date.now() - options.startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/embeddings",
         latencyMs,
         statusCode: 500,
@@ -125,4 +166,28 @@ async function createEmbeddingWithFallback(
   }
 
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+function targetRequestContext(
+  request: { model: string },
+  target: ResolvedEmbeddingProviderModel,
+  context: ChannelOverrideRequestContext | undefined,
+): ChannelOverrideRequestContext {
+  const upstreamModel = target.upstreamModelId ?? target.modelId;
+  return {
+    ...context,
+    apiKey: context?.apiKey ?? target.apiKey,
+    originalModel: context?.originalModel ?? request.model,
+    upstreamModel: context?.upstreamModel ?? upstreamModel,
+  };
+}
+
+function providerRequestOptions(headers: Record<string, string>, rawBody?: string) {
+  return Object.keys(headers).length > 0 || rawBody !== undefined
+    ? { headers, ...(rawBody !== undefined ? { rawBody } : {}) }
+    : undefined;
+}
+
+function rawPassThroughBody(target: ResolvedEmbeddingProviderModel, rawBody: string | undefined) {
+  return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }

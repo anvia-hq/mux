@@ -124,9 +124,14 @@ describe("image generations router", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockHandleImageGeneration).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      recordSpend: false,
-    });
+    expect(mockHandleImageGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        recordSpend: false,
+        rawBody: JSON.stringify({ model: "gpt-image-1", prompt: "cat" }),
+      }),
+    );
   });
 
   it("POST / streams raw SSE and records usage when available", async () => {
@@ -155,9 +160,14 @@ describe("image generations router", () => {
       'data: {"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}\n\n' +
         "data: [DONE]\n\n",
     );
-    expect(mockHandleImageGeneration).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      recordSpend: false,
-    });
+    expect(mockHandleImageGeneration).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        recordSpend: false,
+        rawBody: JSON.stringify({ model: "gpt-image-1", prompt: "cat", stream: true }),
+      }),
+    );
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({

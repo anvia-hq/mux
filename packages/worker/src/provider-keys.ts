@@ -39,8 +39,22 @@ function decrypt(payload: string): string {
   return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }
 
-export async function readProviderApiKey(provider: string): Promise<string> {
+export async function readProviderApiKey(
+  provider: string,
+  channelId?: string | null,
+): Promise<string> {
   try {
+    if (channelId) {
+      const row = await prisma.providerChannel.findUnique({
+        where: { id: channelId },
+        select: { provider: true, keyCiphertext: true },
+      });
+      if (!row || row.provider !== provider) {
+        throw new Error("provider channel key row not found");
+      }
+      return decrypt(row.keyCiphertext);
+    }
+
     const row = await prisma.providerKey.findUnique({
       where: { provider },
       select: { ciphertext: true },
@@ -52,4 +66,41 @@ export async function readProviderApiKey(provider: string): Promise<string> {
   } catch (error) {
     throw new ProviderKeyUnavailableError(provider, error);
   }
+}
+
+export async function readProviderHeaders(
+  provider: string,
+  channelId: string | null | undefined,
+  apiKey: string,
+): Promise<Record<string, string>> {
+  if (!channelId) return {};
+
+  const row = await prisma.providerChannel.findUnique({
+    where: { id: channelId },
+    select: { provider: true, headerOverride: true },
+  });
+  if (!row || row.provider !== provider) return {};
+
+  return resolveStaticHeaders(row.headerOverride, apiKey);
+}
+
+function resolveStaticHeaders(value: unknown, apiKey: string): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+
+  const headers: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim().toLowerCase();
+    if (!key || isPassthroughRuleKey(key)) continue;
+    if (typeof rawValue !== "string") continue;
+
+    const trimmed = rawValue.trim();
+    if (trimmed.startsWith("{client_header:")) continue;
+    const resolved = trimmed.replaceAll("{api_key}", apiKey).trim();
+    if (resolved) headers[key] = resolved;
+  }
+  return headers;
+}
+
+function isPassthroughRuleKey(key: string): boolean {
+  return key === "*" || key.startsWith("re:") || key.startsWith("regex:");
 }

@@ -1,6 +1,12 @@
 import { logRequest } from "../../middleware/logger";
 import { RequestLoggingUnavailableError } from "../../middleware/logger";
 import type { ImageGenerationRequest, ImageGenerationResponse } from "../../providers/types";
+import { prepareChannelOpenAICompatibleRequestSettings } from "../../providers/channel-settings";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+  type ChannelOverrideRequestContext,
+} from "../../providers/channel-overrides";
 import {
   estimateCost,
   resolveImageGenerationModel,
@@ -14,6 +20,8 @@ export type ImageGenerationResult =
       stream: AsyncIterable<string>;
       provider: string;
       model: string;
+      channelId?: string;
+      channelName?: string;
       startTime: number;
     }
   | {
@@ -24,7 +32,11 @@ export type ImageGenerationResult =
 export async function handleImageGeneration(
   request: ImageGenerationRequest,
   apiKeyId: string,
-  options: { recordSpend?: boolean } = {},
+  options: {
+    recordSpend?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<ImageGenerationResult> {
   const resolved = await resolveImageGenerationModel(request.model);
 
@@ -35,18 +47,29 @@ export async function handleImageGeneration(
   const startTime = Date.now();
 
   if (request.stream) {
-    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, startTime);
+    const selected = await resolveStreamingTarget(
+      request,
+      apiKeyId,
+      resolved.targets,
+      startTime,
+      options.requestContext,
+      options.rawBody,
+    );
     return {
       kind: "stream",
       stream: selected.stream,
-      provider: selected.target.provider.name,
+      provider: selected.target.providerName,
       model: selected.target.publicModelId,
+      channelId: selected.target.channelId,
+      channelName: selected.target.channelName,
       startTime,
     };
   }
 
   return createImageGenerationWithFallback(request, apiKeyId, resolved.targets, {
     recordSpend: options.recordSpend,
+    requestContext: options.requestContext,
+    rawBody: options.rawBody,
     startTime,
   });
 }
@@ -55,16 +78,29 @@ async function createImageGenerationWithFallback(
   request: ImageGenerationRequest,
   apiKeyId: string,
   targets: ResolvedImageGenerationProviderModel[],
-  options: { recordSpend?: boolean; startTime: number },
+  options: {
+    recordSpend?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+    startTime: number;
+  },
 ): Promise<ImageGenerationResult> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
-      const response = await target.provider.createImageGeneration({
-        ...request,
-        model: target.modelId,
-      });
+      const prepared = prepareChannelOpenAICompatibleRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, options.requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, options.rawBody),
+      );
+      const response = providerOptions
+        ? await target.provider.createImageGeneration(prepared.body, providerOptions)
+        : await target.provider.createImageGeneration(prepared.body);
       const latencyMs = Date.now() - options.startTime;
       const usage = extractImageGenerationTokenUsage(response);
       const estimatedCost = estimateCost(
@@ -79,8 +115,10 @@ async function createImageGenerationWithFallback(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/images/generations",
         latencyMs,
         promptTokens: usage.promptTokens,
@@ -94,7 +132,9 @@ async function createImageGenerationWithFallback(
     } catch (error) {
       if (
         error instanceof RequestLoggingUnavailableError ||
-        error instanceof ApiKeySpendLedgerUnavailableError
+        error instanceof ApiKeySpendLedgerUnavailableError ||
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
       ) {
         throw error;
       }
@@ -105,8 +145,10 @@ async function createImageGenerationWithFallback(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/images/generations",
         latencyMs,
         statusCode: 500,
@@ -123,28 +165,47 @@ async function resolveStreamingTarget(
   apiKeyId: string,
   targets: ResolvedImageGenerationProviderModel[],
   startTime: number,
+  requestContext?: ChannelOverrideRequestContext,
+  rawBody?: string,
 ): Promise<{ target: ResolvedImageGenerationProviderModel; stream: AsyncIterable<string> }> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
       if (!target.provider.createImageGenerationStream) {
-        throw new Error(`${target.provider.name} does not support image generation streaming`);
+        throw new Error(`${target.providerName} does not support image generation streaming`);
       }
-      const stream = target.provider.createImageGenerationStream({
-        ...request,
-        model: target.modelId,
-      });
+      const prepared = prepareChannelOpenAICompatibleRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, rawBody),
+      );
+      const stream = providerOptions
+        ? target.provider.createImageGenerationStream(prepared.body, providerOptions)
+        : target.provider.createImageGenerationStream(prepared.body);
       return { target, stream: await prefetchFirstStreamChunk(stream) };
     } catch (error) {
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
+
       lastError = error;
       const latencyMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/images/generations",
         latencyMs,
         statusCode: 500,
@@ -154,6 +215,33 @@ async function resolveStreamingTarget(
   }
 
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+function targetRequestContext(
+  request: { model: string },
+  target: ResolvedImageGenerationProviderModel,
+  context: ChannelOverrideRequestContext | undefined,
+): ChannelOverrideRequestContext {
+  const upstreamModel = target.upstreamModelId ?? target.modelId;
+  return {
+    ...context,
+    apiKey: context?.apiKey ?? target.apiKey,
+    originalModel: context?.originalModel ?? request.model,
+    upstreamModel: context?.upstreamModel ?? upstreamModel,
+  };
+}
+
+function providerRequestOptions(headers: Record<string, string>, rawBody?: string) {
+  return Object.keys(headers).length > 0 || rawBody !== undefined
+    ? { headers, ...(rawBody !== undefined ? { rawBody } : {}) }
+    : undefined;
+}
+
+function rawPassThroughBody(
+  target: ResolvedImageGenerationProviderModel,
+  rawBody: string | undefined,
+) {
+  return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }
 
 async function prefetchFirstStreamChunk(

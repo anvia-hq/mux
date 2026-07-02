@@ -77,13 +77,39 @@ vi.mock("../../../src/providers/chat-compat", () => {
   return {
     UnsupportedChatFeatureError,
     validateChatCompletionRequestShape: vi.fn(
-      (body: { model?: string; messages?: { role?: string; tool_call_id?: string }[] }) => {
+      (body: {
+        model?: string;
+        messages?: unknown;
+        prefix?: unknown;
+        suffix?: unknown;
+        max_tokens?: number;
+        web_search_options?: { search_context_size?: string };
+      }) => {
         if (!body.model) return "request must include a model";
-        if (!Array.isArray(body.messages) || body.messages.length === 0)
-          return "request must include a non-empty messages array";
-        const toolMessage = body.messages?.find((message) => message.role === "tool");
-        return toolMessage && typeof toolMessage.tool_call_id !== "string"
-          ? "messages[0].tool_call_id is required for tool messages"
+        if (typeof body.max_tokens === "number" && body.max_tokens > Math.floor(2_147_483_647 / 2))
+          return "max_tokens is invalid";
+        if (body.messages !== undefined && !Array.isArray(body.messages))
+          return "messages must be an array";
+        if (body.web_search_options) {
+          const searchContextSize = body.web_search_options.search_context_size;
+          if (!searchContextSize) body.web_search_options.search_context_size = "medium";
+          if (searchContextSize && !["high", "medium", "low"].includes(searchContextSize)) {
+            return "invalid search_context_size, must be one of: high, medium, low";
+          }
+        }
+
+        const messages = Array.isArray(body.messages) ? body.messages : [];
+        const hasFimInput =
+          (Object.hasOwn(body, "prefix") && body.prefix !== null) ||
+          (Object.hasOwn(body, "suffix") && body.suffix !== null);
+        if (messages.length === 0 && !hasFimInput)
+          return "request must include a non-empty messages array or prefix/suffix";
+
+        const invalidMessageIndex = messages.findIndex(
+          (message) => !message || typeof message !== "object",
+        );
+        return invalidMessageIndex >= 0
+          ? `messages[${invalidMessageIndex}] must be an object`
           : null;
       },
     ),
@@ -154,6 +180,13 @@ describe("chat router", () => {
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", { method: "POST", body: "bad" });
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        message: "invalid JSON body",
+        type: "invalid_request_error",
+        code: "bad_request_body",
+      }),
+    });
   });
 
   it("POST /completions 400 missing model", async () => {
@@ -164,6 +197,13 @@ describe("chat router", () => {
       body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        message: "request must include a model",
+        type: "invalid_request_error",
+        code: "invalid_request",
+      }),
+    });
   });
 
   it("POST /completions 400 empty messages", async () => {
@@ -174,16 +214,159 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [] }),
     });
     expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        message: "request must include a non-empty messages array or prefix/suffix",
+      }),
+    });
   });
 
-  it("POST /completions 400 malformed tool message", async () => {
+  it("POST /completions forwards broad chat fields without local role rejection", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const request = {
+      model: "gpt-4",
+      messages: [
+        { role: "developer", content: "be concise" },
+        {
+          role: "user",
+          content: [{ type: "video_url", video_url: { url: "https://x.test/video.mp4" } }],
+          cache_control: { type: "ephemeral" },
+        },
+        { role: "tool", content: "ok" },
+      ],
+      functions: [{ name: "legacy_lookup" }],
+      function_call: { name: "legacy_lookup" },
+      temperature: 0,
+      store: false,
+      prompt_cache_retention: null,
+      web_search_options: { search_context_size: "medium" },
+      enable_thinking: false,
+    };
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining(request),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+      }),
+    );
+  });
+
+  it("POST /completions accepts FIM-style prefix requests without messages", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "tool", content: "ok" }] }),
+      body: JSON.stringify({ model: "gpt-4", prefix: "function answer() {" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4", prefix: "function answer() {" }),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false }),
+    );
+  });
+
+  it("POST /completions passes the original raw JSON body to the service", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
+    const rawBody = '{\n  "model": "gpt-4",\n  "messages": [{"role":"user","content":"hi"}]\n}';
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: rawBody,
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4" }),
+      "key-1",
+      expect.objectContaining({ rawBody }),
+    );
+  });
+
+  it("POST /completions accepts non-null FIM prefix values like new-api", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", prefix: "" }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "gpt-4", prefix: "" }),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false }),
+    );
+  });
+
+  it("POST /completions defaults web search context size", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "search" }],
+        web_search_options: {},
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ web_search_options: { search_context_size: "medium" } }),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false }),
+    );
   });
 
   it("POST /completions 404 no provider", async () => {
@@ -197,6 +380,13 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "unknown", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({
+        message: "No provider found for model: unknown",
+        type: "invalid_request_error",
+        code: "model_not_found",
+      }),
+    });
   });
 
   it("POST /completions 200 success", async () => {
@@ -216,9 +406,11 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(200);
-    expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false }),
+    );
   });
 
   it("POST /completions 403 when the API key cannot access the model", async () => {
@@ -236,7 +428,11 @@ describe("chat router", () => {
     });
     expect(res.status).toBe(403);
     await expect(res.json()).resolves.toEqual({
-      error: "API key is not allowed to use model: anthropic:claude",
+      error: expect.objectContaining({
+        message: "API key is not allowed to use model: anthropic:claude",
+        type: "invalid_request_error",
+        code: "access_denied",
+      }),
     });
     expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockHandleChatCompletion).not.toHaveBeenCalled();
@@ -261,9 +457,11 @@ describe("chat router", () => {
     });
     expect(res.status).toBe(200);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: true,
-    });
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: true }),
+    );
   });
 
   it("POST /completions 429 when spend limit is exhausted", async () => {
@@ -330,9 +528,11 @@ describe("chat router", () => {
     expect(res.status).toBe(200);
     await res.text();
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false }),
+    );
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -455,6 +655,59 @@ describe("chat router", () => {
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         logId: "log-1",
+        promptTokens: 11,
+        completionTokens: 17,
+        totalTokens: 28,
+        estimatedCost: 0.01,
+        statusCode: 200,
+      }),
+    );
+  });
+
+  it("POST /completions hides usage-only stream chunks when include_usage is false", async () => {
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [{ index: 0, delta: { content: "OK" }, finish_reason: null }],
+        usage: null,
+      };
+      yield {
+        id: "chunk-2",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 11, completion_tokens: 17, total_tokens: 28 },
+      };
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      startTime: Date.now(),
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+        stream_options: { include_usage: false },
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('"content":"OK"');
+    expect(text).not.toContain('"usage":{"prompt_tokens":11');
+    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17);
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
         promptTokens: 11,
         completionTokens: 17,
         totalTokens: 28,

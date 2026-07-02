@@ -23,6 +23,8 @@ export function toRequestLogCreateInput(entry: RequestLogPayload) {
     apiKeyId: entry.apiKeyId,
     provider: entry.provider,
     model: entry.model,
+    channelId: entry.channelId,
+    channelName: entry.channelName,
     endpoint: entry.endpoint,
     latencyMs: entry.latencyMs,
     providerLatencyMs: entry.providerLatencyMs,
@@ -40,6 +42,8 @@ export function toRequestLogFinalizeInput(entry: RequestLogPayload) {
   return {
     provider: entry.provider,
     model: entry.model,
+    channelId: entry.channelId ?? null,
+    channelName: entry.channelName ?? null,
     endpoint: entry.endpoint,
     latencyMs: entry.latencyMs,
     providerLatencyMs: entry.providerLatencyMs ?? null,

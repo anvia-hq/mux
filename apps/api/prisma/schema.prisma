@@ -21,6 +21,8 @@ model User {
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
   providerKeys ProviderKey[]
+  providerChannelsCreated ProviderChannel[] @relation("ProviderChannelCreator")
+  providerChannelsUpdated ProviderChannel[] @relation("ProviderChannelUpdater")
   customProviders CustomProvider[]
   invitationsCreated Invitation[] @relation("InvitationCreator")
   invitationsRedeemed Invitation[] @relation("InvitationRedeemer")
@@ -101,6 +103,8 @@ model RequestLog {
 
   provider          String
   model             String
+  channelId         String?
+  channelName       String?
   endpoint          String
 
   latencyMs         Int
@@ -119,6 +123,7 @@ model RequestLog {
 
   @@index([apiKeyId])
   @@index([provider])
+  @@index([channelId])
   @@index([model])
   @@index([createdAt])
 }
@@ -136,6 +141,35 @@ model ProviderKey {
   updater     User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
+}
+
+/// First-class provider channels. A provider can have multiple channels with
+/// distinct credentials, model mapping, and OpenAI-compatible request settings.
+model ProviderChannel {
+  id             String   @id
+  provider       String
+  name           String
+  enabled        Boolean  @default(true)
+  priority       Int      @default(0)
+  weight         Int      @default(1)
+  /// Base64-encoded ciphertext (IV || authTag || encrypted).
+  keyCiphertext  String
+  /// Last 4 characters of the plaintext key, for display in the UI only.
+  lastFour       String
+  modelMapping   Json?
+  settings       Json?
+  otherSettings  Json?
+  paramOverride  Json?
+  headerOverride Json?
+  createdBy      String
+  creator        User     @relation("ProviderChannelCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  updatedBy      String
+  updater        User     @relation("ProviderChannelUpdater", fields: [updatedBy], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([provider])
+  @@index([enabled, priority])
 }
 
 model CustomProvider {
@@ -231,6 +265,8 @@ model BackgroundResponseJob {
   apiKey       ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
   provider     String
   model        String
+  channelId    String?
+  channelName  String?
   request      Json
   status       String
   response     Json?
@@ -242,6 +278,7 @@ model BackgroundResponseJob {
   completedAt  DateTime?
 
   @@index([apiKeyId])
+  @@index([channelId])
   @@index([status])
   @@index([createdAt])
 }

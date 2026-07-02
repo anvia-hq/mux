@@ -8,7 +8,11 @@ import {
   type BackgroundPollJob,
 } from "./background-response-queue";
 import { enqueueRequestLog, REQUEST_LOG_QUEUE_NAME, type RequestLogJob } from "./request-log-queue";
-import { ProviderKeyUnavailableError, readProviderApiKey } from "./provider-keys";
+import {
+  ProviderKeyUnavailableError,
+  readProviderApiKey,
+  readProviderHeaders,
+} from "./provider-keys";
 
 const TERMINAL_STATUSES = new Set(["completed", "cancelled", "failed"]);
 const MAX_BACKOFF_MS = 30_000;
@@ -29,7 +33,12 @@ type ProcessDeps = {
   now: () => Date;
   enqueue: (jobId: string, attempt: number, delayMs: number) => Promise<void>;
   enqueueLog: (job: RequestLogJob) => Promise<void>;
-  getProviderApiKey: (provider: string) => Promise<string>;
+  getProviderApiKey: (provider: string, channelId?: string | null) => Promise<string>;
+  getProviderHeaders: (
+    provider: string,
+    channelId: string | null | undefined,
+    apiKey: string,
+  ) => Promise<Record<string, string>>;
   prismaClient: typeof prisma;
 };
 
@@ -40,6 +49,7 @@ const defaultDeps: ProcessDeps = {
   enqueue: enqueueBackgroundPoll,
   enqueueLog: enqueueRequestLog,
   getProviderApiKey: readProviderApiKey,
+  getProviderHeaders: readProviderHeaders,
   prismaClient: prisma,
 };
 
@@ -48,6 +58,8 @@ type BackgroundJobRecord = {
   apiKeyId: string;
   provider: string;
   model: string;
+  channelId?: string | null;
+  channelName?: string | null;
   status: string;
   response: unknown;
   inputPricePer1M?: number | null;
@@ -85,6 +97,7 @@ export async function processBackgroundPollJob(
     enqueue,
     enqueueLog,
     getProviderApiKey,
+    getProviderHeaders,
     prismaClient,
   } = {
     ...defaultDeps,
@@ -105,7 +118,7 @@ export async function processBackgroundPollJob(
 
   let upstreamResponse: UpstreamResponse;
   try {
-    upstreamResponse = await fetchUpstream(row, fetchFn, getProviderApiKey);
+    upstreamResponse = await fetchUpstream(row, fetchFn, getProviderApiKey, getProviderHeaders);
   } catch (error) {
     const apiError = error as UpstreamResponsesApiErrorLike;
     if (
@@ -164,6 +177,8 @@ export async function processBackgroundPollJob(
         apiKeyId: row.apiKeyId,
         provider: row.provider,
         model: row.model,
+        channelId: row.channelId ?? undefined,
+        channelName: row.channelName ?? undefined,
         endpoint: "/v1/responses",
         latencyMs: 0,
         promptTokens: upstreamResponse.usage?.input_tokens,
@@ -191,13 +206,22 @@ export async function processBackgroundPollJob(
 async function fetchUpstream(
   row: BackgroundJobRecord,
   fetchFn: typeof fetch,
-  getProviderApiKey: (provider: string) => Promise<string>,
+  getProviderApiKey: (provider: string, channelId?: string | null) => Promise<string>,
+  getProviderHeaders: (
+    provider: string,
+    channelId: string | null | undefined,
+    apiKey: string,
+  ) => Promise<Record<string, string>>,
 ): Promise<UpstreamResponse> {
   const url = buildUpstreamGetUrl(row);
-  const apiKey = await getProviderApiKey(row.provider);
+  const apiKey = await getProviderApiKey(row.provider, row.channelId);
+  const channelHeaders = await getProviderHeaders(row.provider, row.channelId, apiKey);
   const response = await fetchFn(url, {
     method: "GET",
-    headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+    headers: mergeHeaders(
+      { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+      channelHeaders,
+    ),
   });
 
   const text = await response.text();
@@ -214,6 +238,25 @@ async function fetchUpstream(
   } catch {
     return {};
   }
+}
+
+function mergeHeaders(
+  baseHeaders: Record<string, string>,
+  overrideHeaders: Record<string, string>,
+): Record<string, string> {
+  const result = { ...baseHeaders };
+  for (const [key, value] of Object.entries(overrideHeaders)) {
+    const trimmedKey = key.trim();
+    const trimmedValue = value.trim();
+    if (!trimmedKey || !trimmedValue) continue;
+    for (const existingKey of Object.keys(result)) {
+      if (existingKey.toLowerCase() === trimmedKey.toLowerCase()) {
+        delete result[existingKey];
+      }
+    }
+    result[trimmedKey] = trimmedValue;
+  }
+  return result;
 }
 
 function buildUpstreamGetUrl(row: BackgroundJobRecord): string {

@@ -14,6 +14,12 @@ import {
   requestedChatFeatures,
   UnsupportedChatFeatureError,
 } from "../../providers/chat-compat";
+import { prepareChannelChatRequestSettings } from "../../providers/channel-settings";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+  type ChannelOverrideRequestContext,
+} from "../../providers/channel-overrides";
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
 
@@ -29,6 +35,8 @@ export type ChatCompletionResult =
       stream: AsyncIterable<ChatCompletionChunk>;
       provider: string;
       model: string;
+      channelId?: string;
+      channelName?: string;
       startTime: number;
       responseModel: string;
     }
@@ -60,7 +68,11 @@ export class ApiKeyUnbillableUsageError extends Error {
 export async function handleChatCompletion(
   request: ChatCompletionRequest,
   apiKeyId: string,
-  options: { requireBillableUsage?: boolean } = {},
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<ChatCompletionResult> {
   const resolved = await resolveChatModel(request.model);
 
@@ -84,7 +96,14 @@ export async function handleChatCompletion(
   const startTime = Date.now();
 
   if (request.stream) {
-    const selected = await resolveStreamingTarget(request, apiKeyId, targets, startTime);
+    const selected = await resolveStreamingTarget(
+      request,
+      apiKeyId,
+      targets,
+      startTime,
+      options.requestContext,
+      options.rawBody,
+    );
 
     // For streaming, hand off the async iterable to the router. The router
     // owns the stream audit lifecycle because usage is only known after chunks
@@ -92,8 +111,10 @@ export async function handleChatCompletion(
     return {
       kind: "stream",
       stream: prefixStreamModel(selected.stream, resolved.requestedModelId),
-      provider: selected.target.provider.name,
+      provider: selected.target.providerName,
       model: selected.target.publicModelId,
+      channelId: selected.target.channelId,
+      channelName: selected.target.channelName,
       responseModel: resolved.requestedModelId,
       startTime,
     };
@@ -101,6 +122,8 @@ export async function handleChatCompletion(
 
   return handleNonStreamingCompletion(request, apiKeyId, resolved.requestedModelId, targets, {
     requireBillableUsage: options.requireBillableUsage,
+    requestContext: options.requestContext,
+    rawBody: options.rawBody,
     startTime,
   });
 }
@@ -111,7 +134,8 @@ function compatibleTargetsForRequest(
   throwForFirstTarget: boolean,
 ): ResolvedProviderModel[] {
   const compatible = targets.filter((target) => {
-    const model = target.provider.listModels().find((m) => m.id === target.modelId);
+    const upstreamModelId = target.upstreamModelId ?? target.modelId;
+    const model = target.provider.listModels().find((m) => m.id === upstreamModelId);
     if (!model) return false;
 
     try {
@@ -145,13 +169,29 @@ async function handleNonStreamingCompletion(
   apiKeyId: string,
   responseModelId: string,
   targets: ResolvedProviderModel[],
-  options: { requireBillableUsage?: boolean; startTime: number },
+  options: {
+    requireBillableUsage?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+    startTime: number;
+  },
 ): Promise<ChatCompletionResult> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
-      const response = await target.provider.chatCompletion({ ...request, model: target.modelId });
+      const prepared = prepareChannelChatRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, options.requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, options.rawBody),
+      );
+      const response = providerOptions
+        ? await target.provider.chatCompletion(prepared.body, providerOptions)
+        : await target.provider.chatCompletion(prepared.body);
       const latencyMs = Date.now() - options.startTime;
       const estimatedCost = estimateCost(
         target.publicModelId,
@@ -162,8 +202,10 @@ async function handleNonStreamingCompletion(
       if (options.requireBillableUsage && estimatedCost === undefined) {
         await logRequest({
           apiKeyId,
-          provider: target.provider.name,
+          provider: target.providerName,
           model: target.publicModelId,
+          channelId: target.channelId,
+          channelName: target.channelName,
           endpoint: "/v1/chat/completions",
           latencyMs,
           promptTokens: response.usage?.prompt_tokens,
@@ -181,8 +223,10 @@ async function handleNonStreamingCompletion(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/chat/completions",
         latencyMs,
         promptTokens: response.usage?.prompt_tokens,
@@ -206,6 +250,13 @@ async function handleNonStreamingCompletion(
         throw error;
       }
 
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
+
       lastError = error;
       const latencyMs = Date.now() - options.startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -213,8 +264,10 @@ async function handleNonStreamingCompletion(
       // Log the failed concrete attempt before trying the next fallback target.
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/chat/completions",
         latencyMs,
         statusCode: 500,
@@ -231,22 +284,44 @@ async function resolveStreamingTarget(
   apiKeyId: string,
   targets: ResolvedProviderModel[],
   startTime: number,
+  requestContext?: ChannelOverrideRequestContext,
+  rawBody?: string,
 ): Promise<{ target: ResolvedProviderModel; stream: AsyncIterable<ChatCompletionChunk> }> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
-      const stream = target.provider.chatCompletionStream({ ...request, model: target.modelId });
+      const prepared = prepareChannelChatRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, rawBody),
+      );
+      const stream = providerOptions
+        ? target.provider.chatCompletionStream(prepared.body, providerOptions)
+        : target.provider.chatCompletionStream(prepared.body);
       return { target, stream: await prefetchFirstStreamChunk(stream) };
     } catch (error) {
+      if (
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
+      ) {
+        throw error;
+      }
+
       lastError = error;
       const latencyMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/chat/completions",
         latencyMs,
         statusCode: 500,
@@ -256,6 +331,30 @@ async function resolveStreamingTarget(
   }
 
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+function targetRequestContext(
+  request: ChatCompletionRequest,
+  target: ResolvedProviderModel,
+  context: ChannelOverrideRequestContext | undefined,
+): ChannelOverrideRequestContext {
+  const upstreamModel = target.upstreamModelId ?? target.modelId;
+  return {
+    ...context,
+    apiKey: context?.apiKey ?? target.apiKey,
+    originalModel: context?.originalModel ?? request.model,
+    upstreamModel: context?.upstreamModel ?? upstreamModel,
+  };
+}
+
+function providerRequestOptions(headers: Record<string, string>, rawBody?: string) {
+  return Object.keys(headers).length > 0 || rawBody !== undefined
+    ? { headers, ...(rawBody !== undefined ? { rawBody } : {}) }
+    : undefined;
+}
+
+function rawPassThroughBody(target: ResolvedProviderModel, rawBody: string | undefined) {
+  return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }
 
 async function prefetchFirstStreamChunk(

@@ -41,6 +41,10 @@ import {
   submitBackgroundResponse,
   UnsupportedResponseFeatureError,
 } from "./services";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+} from "../../providers/channel-overrides";
 
 export const responsesRouter = new Hono();
 
@@ -54,6 +58,34 @@ function upstreamErrorResponse(c: Context, error: unknown): Response | null {
   return c.json({ error: envelope ?? error.message }, error.status as 400 | 404 | 422 | 500);
 }
 
+function channelOverrideErrorResponse(c: Context, error: unknown): Response | null {
+  if (error instanceof ChannelParamOverrideError) {
+    return c.json(
+      {
+        error: {
+          message: error.message,
+          type: error.type,
+          code: error.code,
+        },
+      },
+      error.statusCode as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
+    );
+  }
+  if (error instanceof ChannelHeaderOverrideError) {
+    return c.json(
+      {
+        error: {
+          message: error.message,
+          type: "invalid_request_error",
+          code: "invalid_request",
+        },
+      },
+      400,
+    );
+  }
+  return null;
+}
+
 function collectQueryParams(c: Context): Record<string, string | string[]> | undefined {
   const url = new URL(c.req.url);
   const result: Record<string, string | string[]> = {};
@@ -62,6 +94,22 @@ function collectQueryParams(c: Context): Record<string, string | string[]> | und
     result[key] = values.length > 1 ? values : (values[0] ?? "");
   }
   return Object.keys(result).length === 0 ? undefined : result;
+}
+
+function requestContextFromHono(c: Context) {
+  return {
+    clientHeaders: c.req.raw.headers,
+    requestPath: new URL(c.req.url).pathname,
+  };
+}
+
+async function captureRawJsonBody(c: Context, next: () => Promise<void>) {
+  c.set("rawJsonBody" as never, await c.req.raw.clone().text());
+  await next();
+}
+
+function rawJsonBodyFromHono(c: Context): string | undefined {
+  return c.get("rawJsonBody" as never) as string | undefined;
 }
 
 function isPendingResponse(response: ResponseObject): boolean {
@@ -82,6 +130,7 @@ function disallowedModelResponse(c: Context, modelId: string): Response | null {
 
 responsesRouter.post(
   "/",
+  captureRawJsonBody,
   zValidator("json", responseCreateRequestSchema, authValidationHook),
   async (c) => {
     const apiKeyId = c.get("apiKeyId" as never) as string;
@@ -100,12 +149,16 @@ responsesRouter.post(
 
         const submitted = await submitBackgroundResponse(body, apiKeyId, {
           requireBillableUsage: isLimitedKey,
+          requestContext: requestContextFromHono(c),
+          rawBody: rawJsonBodyFromHono(c),
         });
         c.header("Location", `/v1/responses/${submitted.id}`);
         return c.json(submitted.response, 202);
       } catch (error) {
         const upstream = upstreamErrorResponse(c, error);
         if (upstream) return upstream;
+        const channelOverride = channelOverrideErrorResponse(c, error);
+        if (channelOverride) return channelOverride;
 
         const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -146,12 +199,24 @@ responsesRouter.post(
       }
 
       if (body.stream === true) {
-        const result = await handleResponseCreateStream(body);
-        const { stream: streamIterable, provider, model, startTime } = result;
+        const result = await handleResponseCreateStream(body, {
+          requestContext: requestContextFromHono(c),
+          rawBody: rawJsonBodyFromHono(c),
+        });
+        const {
+          stream: streamIterable,
+          provider,
+          model,
+          channelId,
+          channelName,
+          startTime,
+        } = result;
         const logId = await logStreamStart({
           apiKeyId,
           provider,
           model,
+          channelId,
+          channelName,
           endpoint: "/v1/responses",
           latencyMs: 0,
           statusCode: 102,
@@ -201,6 +266,8 @@ responsesRouter.post(
                 apiKeyId,
                 provider,
                 model,
+                channelId,
+                channelName,
                 endpoint: "/v1/responses",
                 latencyMs,
                 promptTokens: usage?.input_tokens,
@@ -224,6 +291,8 @@ responsesRouter.post(
                 apiKeyId,
                 provider,
                 model,
+                channelId,
+                channelName,
                 endpoint: "/v1/responses",
                 latencyMs,
                 statusCode: 500,
@@ -240,12 +309,16 @@ responsesRouter.post(
 
       const response = await handleResponseCreate(body, apiKeyId, {
         requireBillableUsage: isLimitedKey,
+        requestContext: requestContextFromHono(c),
+        rawBody: rawJsonBodyFromHono(c),
       });
 
       return c.json(response);
     } catch (error) {
       const upstream = upstreamErrorResponse(c, error);
       if (upstream) return upstream;
+      const channelOverride = channelOverrideErrorResponse(c, error);
+      if (channelOverride) return channelOverride;
 
       const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -283,6 +356,7 @@ responsesRouter.post(
 
 responsesRouter.post(
   "/compact",
+  captureRawJsonBody,
   zValidator("json", responseCompactRequestSchema, authValidationHook),
   async (c) => {
     const apiKeyId = c.get("apiKeyId" as never) as string;
@@ -299,11 +373,15 @@ responsesRouter.post(
 
       const result = await handleResponseCompact(body, apiKeyId, {
         requireBillableUsage: isLimitedKey,
+        requestContext: requestContextFromHono(c),
+        rawBody: rawJsonBodyFromHono(c),
       });
       return c.json(result.response);
     } catch (error) {
       const upstream = upstreamErrorResponse(c, error);
       if (upstream) return upstream;
+      const channelOverride = channelOverrideErrorResponse(c, error);
+      if (channelOverride) return channelOverride;
 
       const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -346,9 +424,11 @@ responsesRouter.post(
 responsesRouter.post("/input_tokens", async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;
 
+  let rawBody: string;
   let body: ResponseCreateRequest;
   try {
-    body = (await c.req.json()) as ResponseCreateRequest;
+    rawBody = await c.req.text();
+    body = JSON.parse(rawBody) as ResponseCreateRequest;
   } catch {
     return c.json({ error: "Request body must be valid JSON" }, 400);
   }
@@ -359,11 +439,19 @@ responsesRouter.post("/input_tokens", async (c) => {
   }
 
   try {
-    const result = await handleResponseInputTokens(body, apiKeyId);
+    const result = await handleResponseInputTokens(body, apiKeyId, {
+      requestContext: {
+        clientHeaders: c.req.raw.headers,
+        requestPath: new URL(c.req.url).pathname,
+      },
+      rawBody,
+    });
     return c.json(result.response);
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
     if (upstream) return upstream;
+    const channelOverride = channelOverrideErrorResponse(c, error);
+    if (channelOverride) return channelOverride;
 
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -403,6 +491,8 @@ responsesRouter.get("/:id", async (c) => {
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
     if (upstream) return upstream;
+    const channelOverride = channelOverrideErrorResponse(c, error);
+    if (channelOverride) return channelOverride;
 
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -432,6 +522,8 @@ responsesRouter.delete("/:id", async (c) => {
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
     if (upstream) return upstream;
+    const channelOverride = channelOverrideErrorResponse(c, error);
+    if (channelOverride) return channelOverride;
 
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -461,6 +553,8 @@ responsesRouter.post("/:id/cancel", async (c) => {
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
     if (upstream) return upstream;
+    const channelOverride = channelOverrideErrorResponse(c, error);
+    if (channelOverride) return channelOverride;
 
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 
@@ -491,6 +585,8 @@ responsesRouter.get("/:id/input_items", async (c) => {
   } catch (error) {
     const upstream = upstreamErrorResponse(c, error);
     if (upstream) return upstream;
+    const channelOverride = channelOverrideErrorResponse(c, error);
+    if (channelOverride) return channelOverride;
 
     const errorMessage = error instanceof Error ? error.message : "Internal server error";
 

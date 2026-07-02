@@ -1,5 +1,11 @@
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
 import type { ModerationRequest, ModerationResponse } from "../../providers/types";
+import { prepareChannelOpenAICompatibleRequestSettings } from "../../providers/channel-settings";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+  type ChannelOverrideRequestContext,
+} from "../../providers/channel-overrides";
 import {
   estimateCost,
   resolveModerationModel,
@@ -10,7 +16,11 @@ import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/se
 export async function handleModeration(
   request: ModerationRequest & { model: string },
   apiKeyId: string,
-  options: { recordSpend?: boolean } = {},
+  options: {
+    recordSpend?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+  } = {},
 ): Promise<ModerationResponse> {
   const resolved = await resolveModerationModel(request.model);
 
@@ -25,6 +35,8 @@ export async function handleModeration(
     resolved.targets,
     {
       recordSpend: options.recordSpend,
+      requestContext: options.requestContext,
+      rawBody: options.rawBody,
       startTime: Date.now(),
     },
   );
@@ -35,16 +47,29 @@ async function createModerationWithFallback(
   apiKeyId: string,
   responseModelId: string,
   targets: ResolvedModerationProviderModel[],
-  options: { recordSpend?: boolean; startTime: number },
+  options: {
+    recordSpend?: boolean;
+    requestContext?: ChannelOverrideRequestContext;
+    rawBody?: string;
+    startTime: number;
+  },
 ): Promise<ModerationResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
     try {
-      const response = await target.provider.createModeration({
-        ...request,
-        model: target.modelId,
-      });
+      const prepared = prepareChannelOpenAICompatibleRequestSettings(
+        { ...request, model: target.upstreamModelId ?? target.modelId },
+        target,
+        targetRequestContext(request, target, options.requestContext),
+      );
+      const providerOptions = providerRequestOptions(
+        prepared.headers,
+        rawPassThroughBody(target, options.rawBody),
+      );
+      const response = providerOptions
+        ? await target.provider.createModeration(prepared.body, providerOptions)
+        : await target.provider.createModeration(prepared.body);
       const latencyMs = Date.now() - options.startTime;
       const usage = extractTokenUsage(response);
       const estimatedCost = estimateCost(
@@ -59,8 +84,10 @@ async function createModerationWithFallback(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/moderations",
         latencyMs,
         promptTokens: usage.promptTokens,
@@ -74,7 +101,9 @@ async function createModerationWithFallback(
     } catch (error) {
       if (
         error instanceof RequestLoggingUnavailableError ||
-        error instanceof ApiKeySpendLedgerUnavailableError
+        error instanceof ApiKeySpendLedgerUnavailableError ||
+        error instanceof ChannelParamOverrideError ||
+        error instanceof ChannelHeaderOverrideError
       ) {
         throw error;
       }
@@ -85,8 +114,10 @@ async function createModerationWithFallback(
 
       await logRequest({
         apiKeyId,
-        provider: target.provider.name,
+        provider: target.providerName,
         model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
         endpoint: "/v1/moderations",
         latencyMs,
         statusCode: 500,
@@ -96,6 +127,30 @@ async function createModerationWithFallback(
   }
 
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+function targetRequestContext(
+  request: { model: string },
+  target: ResolvedModerationProviderModel,
+  context: ChannelOverrideRequestContext | undefined,
+): ChannelOverrideRequestContext {
+  const upstreamModel = target.upstreamModelId ?? target.modelId;
+  return {
+    ...context,
+    apiKey: context?.apiKey ?? target.apiKey,
+    originalModel: context?.originalModel ?? request.model,
+    upstreamModel: context?.upstreamModel ?? upstreamModel,
+  };
+}
+
+function providerRequestOptions(headers: Record<string, string>, rawBody?: string) {
+  return Object.keys(headers).length > 0 || rawBody !== undefined
+    ? { headers, ...(rawBody !== undefined ? { rawBody } : {}) }
+    : undefined;
+}
+
+function rawPassThroughBody(target: ResolvedModerationProviderModel, rawBody: string | undefined) {
+  return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }
 
 function extractTokenUsage(response: ModerationResponse): {

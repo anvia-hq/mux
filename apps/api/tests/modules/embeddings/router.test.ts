@@ -180,9 +180,18 @@ describe("embeddings router", () => {
     await expect(res.json()).resolves.toMatchObject({
       model: "openai:text-embedding-3-small",
     });
-    expect(mockHandleEmbedding).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({
+          model: "openai:text-embedding-3-small",
+          input: [1, 2, 3],
+          dimensions: 256,
+        }),
+      }),
+    );
   });
 
   it("POST /v1/engines/:model/embeddings fills the model from the path", async () => {
@@ -204,7 +213,10 @@ describe("embeddings router", () => {
     expect(mockHandleEmbedding).toHaveBeenCalledWith(
       expect.objectContaining({ model: "text-embedding-3-small", input: "hello" }),
       "key-1",
-      { requireBillableUsage: false },
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({ input: "hello" }),
+      }),
     );
   });
 
@@ -243,9 +255,14 @@ describe("embeddings router", () => {
 
     expect(res.status).toBe(200);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleEmbedding).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: true,
-    });
+    expect(mockHandleEmbedding).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: true,
+        rawBody: JSON.stringify({ model: "openai:text-embedding-3-small", input: "hello" }),
+      }),
+    );
   });
 
   it("POST / 429 when spend limit is exhausted", async () => {

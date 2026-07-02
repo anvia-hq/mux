@@ -229,17 +229,20 @@ describe("responses router", () => {
       output: [],
     });
     const app = new Hono().route("/v1/responses", responsesRouter);
+    const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hi"\n}';
     const res = await app.request("/v1/responses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi" }),
+      body: rawBody,
     });
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({ id: "resp-1" });
-    expect(mockHandleResponseCreate).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleResponseCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: false, rawBody }),
+    );
   });
 
   it("POST /v1/responses preserves extended create fields after validation", async () => {
@@ -286,9 +289,14 @@ describe("responses router", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockHandleResponseCreate).toHaveBeenCalledWith(expect.objectContaining(body), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleResponseCreate).toHaveBeenCalledWith(
+      expect.objectContaining(body),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify(body),
+      }),
+    );
   });
 
   it("returns 403 before handling disallowed response models", async () => {
@@ -349,7 +357,7 @@ describe("responses router", () => {
     expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(
       expect.objectContaining({ model: "openai:gpt-4o", background: true }),
       "key-1",
-      { requireBillableUsage: false },
+      expect.objectContaining({ requireBillableUsage: false }),
     );
     expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockHandleResponseCreate).not.toHaveBeenCalled();
@@ -374,9 +382,11 @@ describe("responses router", () => {
 
     expect(res.status).toBe(202);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: true,
-    });
+    expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: true }),
+    );
   });
 
   it("POST /v1/responses maps spend errors for background requests", async () => {
@@ -529,9 +539,11 @@ describe("responses router", () => {
 
     expect(res.status).toBe(200);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleResponseCreate).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: true,
-    });
+    expect(mockHandleResponseCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({ requireBillableUsage: true }),
+    );
   });
 
   it("POST /v1/responses maps known service errors", async () => {
@@ -1007,16 +1019,24 @@ describe("responses router", () => {
       response: { object: "response.input_tokens", input_tokens: 42 },
     });
     const app = new Hono().route("/v1/responses", responsesRouter);
+    const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hi"\n}';
     const res = await app.request("/v1/responses/input_tokens", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi" }),
+      body: rawBody,
     });
 
     expect(res.status).toBe(200);
     expect(mockHandleResponseInputTokens).toHaveBeenCalledWith(
       { model: "openai:gpt-4o", input: "hi" },
       "key-1",
+      expect.objectContaining({
+        rawBody,
+        requestContext: expect.objectContaining({
+          clientHeaders: expect.any(Headers),
+          requestPath: "/v1/responses/input_tokens",
+        }),
+      }),
     );
     await expect(res.json()).resolves.toMatchObject({
       object: "response.input_tokens",
@@ -1128,15 +1148,16 @@ describe("responses router", () => {
       },
     });
     const app = new Hono().route("/v1/responses", responsesRouter);
+    const rawBody = JSON.stringify({
+      model: "openai:gpt-5",
+      input: "hi",
+      instructions: { text: "preserve tool state" },
+      previous_response_id: "resp_prev",
+    });
     const res = await app.request("/v1/responses/compact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "openai:gpt-5",
-        input: "hi",
-        instructions: { text: "preserve tool state" },
-        previous_response_id: "resp_prev",
-      }),
+      body: rawBody,
     });
 
     expect(res.status).toBe(200);
@@ -1148,7 +1169,7 @@ describe("responses router", () => {
         previous_response_id: "resp_prev",
       }),
       "key-1",
-      { requireBillableUsage: false },
+      expect.objectContaining({ requireBillableUsage: false, rawBody }),
     );
     await expect(res.json()).resolves.toMatchObject({
       id: "resp_001",
@@ -1180,9 +1201,14 @@ describe("responses router", () => {
       body: JSON.stringify({ model: "openai:gpt-5", unknown: "nope" }),
     });
     expect(res.status).toBe(200);
-    expect(mockHandleResponseCompact).toHaveBeenCalledWith({ model: "openai:gpt-5" }, "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleResponseCompact).toHaveBeenCalledWith(
+      { model: "openai:gpt-5" },
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({ model: "openai:gpt-5", unknown: "nope" }),
+      }),
+    );
   });
 
   it("POST /v1/responses/compact passes through the upstream envelope on non-404 errors", async () => {

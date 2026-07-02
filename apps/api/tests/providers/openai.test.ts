@@ -135,6 +135,60 @@ describe("OpenAIAdapter", () => {
     });
   });
 
+  it("merges provider request headers case-insensitively", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chat-1",
+        model: "gpt-4o",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.chatCompletion(
+      {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      {
+        headers: {
+          authorization: "Bearer override",
+          "X-Trace": "trace-123",
+        },
+      },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]?.headers).toEqual({
+      "Content-Type": "application/json",
+      authorization: "Bearer override",
+      "X-Trace": "trace-123",
+    });
+  });
+
+  it("uses raw body when provided for chat completions", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chat-1",
+        model: "gpt-4o",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const rawBody = '{\n  "model": "gpt-4o",\n  "messages": []\n}';
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.chatCompletion(
+      {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      { rawBody },
+    );
+
+    expect(mockFetch.mock.calls[0]?.[1]?.body).toBe(rawBody);
+  });
+
   it("creates embeddings through the OpenAI Embeddings API", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({
@@ -400,6 +454,16 @@ describe("OpenAIAdapter", () => {
       text: { format: { type: "text" } },
       reasoning: { effort: "low" },
     });
+  });
+
+  it("uses raw body when provided for Responses create", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp-1", model: "gpt-4o" }));
+
+    const rawBody = '{\n  "model": "gpt-4o",\n  "input": "hi"\n}';
+    const adapter = new OpenAIAdapter("sk-test");
+    await adapter.createResponse({ model: "gpt-4o", input: "ignored" }, { rawBody });
+
+    expect(mockFetch.mock.calls[0]?.[1]?.body).toBe(rawBody);
   });
 
   it("forwards stream_options.include_obfuscation to the upstream POST body", async () => {

@@ -142,9 +142,14 @@ describe("completions router", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockHandleCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({ model: "gpt-3.5-turbo-instruct", prompt: "hello" }),
+      }),
+    );
   });
 
   it("POST / passes requireBillableUsage for limited non-stream requests", async () => {
@@ -163,9 +168,14 @@ describe("completions router", () => {
 
     expect(res.status).toBe(200);
     expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockHandleCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: true,
-    });
+    expect(mockHandleCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: true,
+        rawBody: JSON.stringify({ model: "gpt-3.5-turbo-instruct", prompt: "hello" }),
+      }),
+    );
   });
 
   it("POST / 429 when limited non-stream usage cannot be billed", async () => {
@@ -212,9 +222,18 @@ describe("completions router", () => {
       'data: {"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}\n\n' +
         "data: [DONE]\n\n",
     );
-    expect(mockHandleCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
-      requireBillableUsage: false,
-    });
+    expect(mockHandleCompletion).toHaveBeenCalledWith(
+      expect.anything(),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({
+          model: "gpt-3.5-turbo-instruct",
+          prompt: "hello",
+          stream: true,
+        }),
+      }),
+    );
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -2,6 +2,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { authRouter } from "./modules/auth/router";
+import { channelsRouter } from "./modules/channels/router";
 import { chatRouter } from "./modules/chat/router";
 import { completionsRouter } from "./modules/completions/router";
 import { e2eRouter } from "./modules/e2e/router";
@@ -58,6 +59,7 @@ const app = new Hono()
   .route("/logs", logsRouter)
   .route("/model-aliases", modelAliasesRouter)
   .route("/fallback-groups", fallbackGroupsRouter)
+  .route("/channels", channelsRouter)
   .route("/providers", providersRouter)
   .route("/playground", playgroundRouter);
 

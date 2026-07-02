@@ -12,8 +12,10 @@ import type {
   ModerationRequest,
   ModerationResponse,
   ProviderAdapter,
+  ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { mergeProviderRequestHeaders } from "./types";
 import {
   streamImageGenerationResponseBody,
   streamTextResponseBody,
@@ -44,11 +46,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
 
   readonly name: string;
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse> {
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: buildOpenAICompatibleRequestBody(request, false),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -60,11 +65,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as ChatCompletionResponse;
   }
 
-  async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
+  async *chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk> {
     const response = await fetch(this.chatCompletionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: buildOpenAICompatibleRequestBody(request, true),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -107,11 +115,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     }
   }
 
-  async createEmbedding(request: EmbeddingRequest): Promise<EmbeddingResponse> {
+  async createEmbedding(
+    request: EmbeddingRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<EmbeddingResponse> {
     const response = await fetch(this.embeddingsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -123,11 +134,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as EmbeddingResponse;
   }
 
-  async createModeration(request: ModerationRequest): Promise<ModerationResponse> {
+  async createModeration(
+    request: ModerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ModerationResponse> {
     const response = await fetch(this.moderationsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -139,11 +153,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as ModerationResponse;
   }
 
-  async createImageGeneration(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
+  async createImageGeneration(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ImageGenerationResponse> {
     const response = await fetch(this.imageGenerationsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -155,11 +172,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as ImageGenerationResponse;
   }
 
-  async *createImageGenerationStream(request: ImageGenerationRequest): AsyncIterable<string> {
+  async *createImageGenerationStream(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
     const response = await fetch(this.imageGenerationsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify({ ...request, stream: true }),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -171,11 +191,14 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     yield* streamImageGenerationResponseBody(response);
   }
 
-  async createCompletion(request: CompletionRequest): Promise<CompletionResponse> {
+  async createCompletion(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<CompletionResponse> {
     const response = await fetch(this.completionsUrl, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -187,29 +210,36 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     return (await response.json()) as CompletionResponse;
   }
 
-  async *createCompletionStream(request: CompletionRequest): AsyncIterable<string> {
-    yield* this.createRawStream(this.completionsUrl, { ...request, stream: true });
+  async *createCompletionStream(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    yield* this.createRawStream(this.completionsUrl, { ...request, stream: true }, options);
   }
 
   listModels(): Model[] {
     return this.models;
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${this.apiKey}`,
-    };
+  private buildHeaders(options?: ProviderRequestOptions): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      options,
+    );
   }
 
   private async *createRawStream(
     url: string,
     request: Record<string, unknown>,
+    options?: ProviderRequestOptions,
   ): AsyncIterable<string> {
     const response = await fetch(url, {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: JSON.stringify(request),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 

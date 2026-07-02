@@ -10,6 +10,10 @@ import {
   assertApiKeyModelAllowed,
 } from "../keys/services";
 import { ApiKeyUnbillableEmbeddingUsageError, handleEmbedding } from "./services";
+import {
+  ChannelHeaderOverrideError,
+  ChannelParamOverrideError,
+} from "../../providers/channel-overrides";
 
 export const embeddingsRouter = new Hono();
 
@@ -20,9 +24,11 @@ embeddingsRouter.post("/", async (c) => {
   const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
   const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
 
+  let rawBody: string;
   let body: EmbeddingRequest;
   try {
-    body = (await c.req.json()) as EmbeddingRequest;
+    rawBody = await c.req.text();
+    body = JSON.parse(rawBody) as EmbeddingRequest;
   } catch {
     return c.json({ error: "invalid JSON body" }, 400);
   }
@@ -53,6 +59,11 @@ embeddingsRouter.post("/", async (c) => {
 
     const response = await handleEmbedding(body, apiKeyId, {
       requireBillableUsage: isLimitedKey,
+      requestContext: {
+        clientHeaders: c.req.raw.headers,
+        requestPath: new URL(c.req.url).pathname,
+      },
+      rawBody,
     });
     return c.json(response);
   } catch (error) {
@@ -72,6 +83,17 @@ embeddingsRouter.post("/", async (c) => {
 
     if (error instanceof ApiKeyUnbillableEmbeddingUsageError) {
       return c.json({ error: errorMessage }, 429);
+    }
+
+    if (error instanceof ChannelParamOverrideError) {
+      return c.json(
+        { error: error.message },
+        error.statusCode as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
+      );
+    }
+
+    if (error instanceof ChannelHeaderOverrideError) {
+      return c.json({ error: error.message }, 400);
     }
 
     if (

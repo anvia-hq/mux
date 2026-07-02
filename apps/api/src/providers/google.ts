@@ -3,11 +3,13 @@ import type {
   ChatCompletionResponse,
   ChatCompletionChunk,
   ProviderAdapter,
+  ProviderRequestOptions,
   Model,
   ChatContentPart,
   ChatMessage,
   ToolCall,
 } from "./types";
+import { mergeProviderRequestHeaders } from "./types";
 import { googleCapabilities } from "./chat-compat";
 
 const MODELS: Model[] = [
@@ -476,17 +478,23 @@ export class GoogleAdapter implements ProviderAdapter {
     return JSON.stringify(body);
   }
 
-  private buildHeaders(): Record<string, string> {
-    return {
-      "Content-Type": "application/json",
-    };
+  private buildHeaders(options?: ProviderRequestOptions): Record<string, string> {
+    return mergeProviderRequestHeaders(
+      {
+        "Content-Type": "application/json",
+      },
+      options,
+    );
   }
 
-  async chatCompletion(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  async chatCompletion(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ChatCompletionResponse> {
     const response = await fetch(this.getApiUrl(request.model, false), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: this.buildRequestBody(request, false),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? this.buildRequestBody(request, false),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
@@ -551,11 +559,14 @@ export class GoogleAdapter implements ProviderAdapter {
     };
   }
 
-  async *chatCompletionStream(request: ChatCompletionRequest): AsyncIterable<ChatCompletionChunk> {
+  async *chatCompletionStream(
+    request: ChatCompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<ChatCompletionChunk> {
     const response = await fetch(this.getApiUrl(request.model, true), {
       method: "POST",
-      headers: this.buildHeaders(),
-      body: this.buildRequestBody(request, true),
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? this.buildRequestBody(request, true),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
