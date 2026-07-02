@@ -242,6 +242,7 @@ export function UsersPage() {
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>User credit</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Updated</TableHead>
                 </TableRow>
@@ -255,6 +256,9 @@ export function UsersPage() {
                       <Badge variant={user.role === "ADMIN" ? "default" : "secondary"}>
                         {formatRole(user.role)}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatUserCredit(user.spendLimitUsd)}
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {new Date(user.createdAt).toLocaleString()}
@@ -356,7 +360,7 @@ function formatInvitationStatus(status: Invitation["status"]) {
 }
 
 function formatInvitationBalance(balanceUsd: number | null) {
-  return balanceUsd === null ? "Unlimited" : `$${balanceUsd.toFixed(2)}`;
+  return formatUsd(balanceUsd);
 }
 
 function formatInvitationUsage(invitation: Invitation) {
@@ -365,4 +369,12 @@ function formatInvitationUsage(invitation: Invitation) {
 
 function invitationCopyId(code: string) {
   return `invitation:${code}`;
+}
+
+function formatUserCredit(value: number | null | undefined) {
+  return value === null || value === undefined ? "No account cap" : formatUsd(value);
+}
+
+function formatUsd(value: number | null | undefined) {
+  return value === null || value === undefined ? "Unlimited" : `$${value.toFixed(2)}`;
 }

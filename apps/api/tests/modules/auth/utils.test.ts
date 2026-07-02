@@ -37,6 +37,7 @@ describe("auth utils", () => {
         name: "Test",
         passwordHash: "secret",
         role: "USER" as const,
+        spendLimitUsd: null,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

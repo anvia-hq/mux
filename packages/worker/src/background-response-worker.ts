@@ -162,7 +162,28 @@ export async function processBackgroundPollJob(
         estimatedCost = computeCost(usage.input_tokens, usage.output_tokens, row);
         if (estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost > 0) {
           try {
-            await redis.incrbyfloat(`apikey_spend:${row.apiKeyId}`, estimatedCost);
+            const apiKey = await prismaClient.apiKey.findUnique({
+              where: { id: row.apiKeyId },
+              select: { createdBy: true },
+            });
+            const transaction = redis
+              .multi()
+              .incrbyfloat(`apikey_spend:${row.apiKeyId}`, estimatedCost);
+
+            if (apiKey) {
+              transaction.incrbyfloat(`user_spend:${apiKey.createdBy}`, estimatedCost);
+            }
+
+            const results = await transaction.exec();
+            if (!results) {
+              throw new Error("Redis transaction aborted");
+            }
+
+            for (const [commandError] of results) {
+              if (commandError) {
+                throw commandError;
+              }
+            }
           } catch (error) {
             console.error(
               `Failed to bill background response ${row.id}:`,

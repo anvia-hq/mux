@@ -16,6 +16,7 @@ import { Route as AuthedRouteImport } from './routes/_authed'
 import { Route as AuthedIndexRouteImport } from './routes/_authed.index'
 import { Route as AuthedUsersRouteImport } from './routes/_authed.users'
 import { Route as AuthedSettingsRouteImport } from './routes/_authed.settings'
+import { Route as AuthedRedemptionsRouteImport } from './routes/_authed.redemptions'
 import { Route as AuthedProvidersRouteImport } from './routes/_authed.providers'
 import { Route as AuthedPlaygroundRouteImport } from './routes/_authed.playground'
 import { Route as AuthedModelsRouteImport } from './routes/_authed.models'
@@ -61,6 +62,11 @@ const AuthedUsersRoute = AuthedUsersRouteImport.update({
 const AuthedSettingsRoute = AuthedSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedRedemptionsRoute = AuthedRedemptionsRouteImport.update({
+  id: '/redemptions',
+  path: '/redemptions',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedProvidersRoute = AuthedProvidersRouteImport.update({
@@ -138,6 +144,7 @@ export interface FileRoutesByFullPath {
   '/models': typeof AuthedModelsRoute
   '/playground': typeof AuthedPlaygroundRoute
   '/providers': typeof AuthedProvidersRouteWithChildren
+  '/redemptions': typeof AuthedRedemptionsRoute
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
   '/docs/coding-harness': typeof AuthedDocsCodingHarnessRoute
@@ -156,6 +163,7 @@ export interface FileRoutesByTo {
   '/model-aliases': typeof AuthedModelAliasesRoute
   '/models': typeof AuthedModelsRoute
   '/playground': typeof AuthedPlaygroundRoute
+  '/redemptions': typeof AuthedRedemptionsRoute
   '/settings': typeof AuthedSettingsRoute
   '/users': typeof AuthedUsersRoute
   '/': typeof AuthedIndexRoute
@@ -178,6 +186,7 @@ export interface FileRoutesById {
   '/_authed/models': typeof AuthedModelsRoute
   '/_authed/playground': typeof AuthedPlaygroundRoute
   '/_authed/providers': typeof AuthedProvidersRouteWithChildren
+  '/_authed/redemptions': typeof AuthedRedemptionsRoute
   '/_authed/settings': typeof AuthedSettingsRoute
   '/_authed/users': typeof AuthedUsersRoute
   '/_authed/': typeof AuthedIndexRoute
@@ -201,6 +210,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/playground'
     | '/providers'
+    | '/redemptions'
     | '/settings'
     | '/users'
     | '/docs/coding-harness'
@@ -219,6 +229,7 @@ export interface FileRouteTypes {
     | '/model-aliases'
     | '/models'
     | '/playground'
+    | '/redemptions'
     | '/settings'
     | '/users'
     | '/'
@@ -240,6 +251,7 @@ export interface FileRouteTypes {
     | '/_authed/models'
     | '/_authed/playground'
     | '/_authed/providers'
+    | '/_authed/redemptions'
     | '/_authed/settings'
     | '/_authed/users'
     | '/_authed/'
@@ -305,6 +317,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AuthedSettingsRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/redemptions': {
+      id: '/_authed/redemptions'
+      path: '/redemptions'
+      fullPath: '/redemptions'
+      preLoaderRoute: typeof AuthedRedemptionsRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/providers': {
@@ -431,6 +450,7 @@ interface AuthedRouteChildren {
   AuthedModelsRoute: typeof AuthedModelsRoute
   AuthedPlaygroundRoute: typeof AuthedPlaygroundRoute
   AuthedProvidersRoute: typeof AuthedProvidersRouteWithChildren
+  AuthedRedemptionsRoute: typeof AuthedRedemptionsRoute
   AuthedSettingsRoute: typeof AuthedSettingsRoute
   AuthedUsersRoute: typeof AuthedUsersRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
@@ -445,6 +465,7 @@ const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedModelsRoute: AuthedModelsRoute,
   AuthedPlaygroundRoute: AuthedPlaygroundRoute,
   AuthedProvidersRoute: AuthedProvidersRouteWithChildren,
+  AuthedRedemptionsRoute: AuthedRedemptionsRoute,
   AuthedSettingsRoute: AuthedSettingsRoute,
   AuthedUsersRoute: AuthedUsersRoute,
   AuthedIndexRoute: AuthedIndexRoute,

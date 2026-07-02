@@ -13,7 +13,7 @@ export type RegisterInput = z.infer<typeof registerSchema>;
 
 export type SanitizedUser = Pick<
   User,
-  "id" | "email" | "name" | "role" | "createdAt" | "updatedAt"
+  "id" | "email" | "name" | "role" | "spendLimitUsd" | "createdAt" | "updatedAt"
 >;
 
 export type AuthResponse = {

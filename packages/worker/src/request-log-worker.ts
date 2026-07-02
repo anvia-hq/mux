@@ -106,6 +106,30 @@ export async function initializeSpendLedgerFromRequestLogs(): Promise<void> {
       "NX",
     );
   }
+
+  if (rows.length === 0) {
+    return;
+  }
+
+  const apiKeys = await prisma.apiKey.findMany({
+    where: { id: { in: rows.map((row) => row.apiKeyId) } },
+    select: { id: true, createdBy: true },
+  });
+  const ownerByKeyId = new Map(apiKeys.map((apiKey) => [apiKey.id, apiKey.createdBy]));
+  const spendByUserId = new Map<string, number>();
+
+  for (const row of rows) {
+    const userId = ownerByKeyId.get(row.apiKeyId);
+    if (!userId) {
+      continue;
+    }
+
+    spendByUserId.set(userId, (spendByUserId.get(userId) ?? 0) + (row._sum.estimatedCost ?? 0));
+  }
+
+  for (const [userId, spentUsd] of spendByUserId) {
+    await workerConnection.set(`user_spend:${userId}`, String(spentUsd), "NX");
+  }
 }
 
 export async function startRequestLogWorker(): Promise<Worker<RequestLogJob>> {

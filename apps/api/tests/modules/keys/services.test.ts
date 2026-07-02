@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
@@ -26,8 +26,18 @@ const { mockRedis } = vi.hoisted(() => ({
   mockRedis: {
     get: vi.fn(),
     incrbyfloat: vi.fn(),
+    multi: vi.fn(),
   },
 }));
+
+const { mockRedisTransaction } = vi.hoisted(() => {
+  const transaction = {
+    incrbyfloat: vi.fn(() => transaction),
+    exec: vi.fn(),
+  };
+
+  return { mockRedisTransaction: transaction };
+});
 
 const { mockListPublicModels } = vi.hoisted(() => ({
   mockListPublicModels: vi.fn(),
@@ -77,6 +87,10 @@ import {
 } from "../../../src/modules/keys/services";
 
 describe("keys services", () => {
+  beforeEach(() => {
+    mockRedis.multi.mockReturnValue(mockRedisTransaction);
+  });
+
   afterEach(() => {
     vi.clearAllMocks();
     mockListPublicModels.mockReset();
@@ -173,6 +187,8 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: null,
+        createdBy: "user-1",
+        ownerSpendLimitUsd: null,
         includeFutureModels: true,
         allowAllModels: true,
       });
@@ -182,10 +198,45 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: null,
+        createdBy: "user-1",
+        ownerSpendLimitUsd: null,
         allowAllModels: true,
         includeFutureModels: true,
         allowedModelIds: [],
       });
+    });
+
+    it("ignores legacy cache entries without owner spend metadata", async () => {
+      mockCacheGet.mockResolvedValueOnce({
+        id: "k1",
+        name: "legacy",
+        isActive: true,
+        spendLimitUsd: null,
+        includeFutureModels: true,
+        allowAllModels: true,
+      });
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        id: "k1",
+        name: "test",
+        isActive: true,
+        spendLimitUsd: null,
+        createdBy: "user-1",
+        creator: { spendLimitUsd: 10 },
+        allowAllModels: true,
+        includeFutureModels: true,
+        allowedModelIds: [],
+      });
+
+      const result = await validateApiKey("mux_live_test");
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: "k1",
+          ownerSpendLimitUsd: 10,
+        }),
+      );
+      expect(mockCacheDelete).toHaveBeenCalledWith(expect.stringMatching(/^apikey:/));
+      expect(mockPrisma.apiKey.findUnique).toHaveBeenCalled();
     });
 
     it("falls through to DB on cache miss", async () => {
@@ -195,6 +246,8 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: 10,
+        createdBy: "user-1",
+        creator: { spendLimitUsd: 25 },
         allowAllModels: false,
         includeFutureModels: false,
         allowedModelIds: ["openai:gpt-4o"],
@@ -205,6 +258,8 @@ describe("keys services", () => {
         name: "test",
         isActive: true,
         spendLimitUsd: 10,
+        createdBy: "user-1",
+        ownerSpendLimitUsd: 25,
         allowAllModels: false,
         includeFutureModels: false,
         allowedModelIds: ["openai:gpt-4o"],
@@ -463,10 +518,29 @@ describe("keys services", () => {
       );
     });
 
-    it("increments Redis ledger spend", async () => {
-      mockRedis.incrbyfloat.mockResolvedValueOnce("3.75");
+    it("throws when owner spend reaches the user limit", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({
+        createdBy: "user-1",
+        creator: { spendLimitUsd: 20 },
+      });
+      mockRedis.get.mockResolvedValueOnce("20");
+
+      await expect(assertApiKeyCanSpend("k1", null)).rejects.toBeInstanceOf(
+        ApiKeySpendLimitExceededError,
+      );
+      expect(mockRedis.get).toHaveBeenCalledWith("user_spend:user-1");
+    });
+
+    it("increments API key and owner Redis ledger spend together", async () => {
+      mockPrisma.apiKey.findUnique.mockResolvedValueOnce({ createdBy: "user-1" });
+      mockRedisTransaction.exec.mockResolvedValueOnce([
+        [null, "3.75"],
+        [null, "8.25"],
+      ]);
+
       await expect(addApiKeySpendUsd("k1", 1.25)).resolves.toBe(3.75);
-      expect(mockRedis.incrbyfloat).toHaveBeenCalledWith("apikey_spend:k1", 1.25);
+      expect(mockRedisTransaction.incrbyfloat).toHaveBeenCalledWith("apikey_spend:k1", 1.25);
+      expect(mockRedisTransaction.incrbyfloat).toHaveBeenCalledWith("user_spend:user-1", 1.25);
     });
 
     it("throws typed error when Redis ledger is unavailable", async () => {

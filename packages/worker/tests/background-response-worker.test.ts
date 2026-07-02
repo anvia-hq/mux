@@ -10,6 +10,9 @@ const {
   mockGetProviderApiKey,
   mockGetProviderHeaders,
   mockIncrbyfloat,
+  mockRedisMulti,
+  mockRedisTransaction,
+  mockPrismaApiKeyFindUnique,
   mockPrismaFindUnique,
   mockPrismaUpdate,
 } = vi.hoisted(() => ({
@@ -18,6 +21,12 @@ const {
   mockGetProviderApiKey: vi.fn(),
   mockGetProviderHeaders: vi.fn(),
   mockIncrbyfloat: vi.fn(),
+  mockRedisMulti: vi.fn(),
+  mockRedisTransaction: {
+    incrbyfloat: vi.fn(),
+    exec: vi.fn(),
+  },
+  mockPrismaApiKeyFindUnique: vi.fn(),
   mockPrismaFindUnique: vi.fn(),
   mockPrismaUpdate: vi.fn(),
 }));
@@ -27,6 +36,9 @@ vi.mock("../src/prisma", () => ({
     backgroundResponseJob: {
       findUnique: mockPrismaFindUnique,
       update: mockPrismaUpdate,
+    },
+    apiKey: {
+      findUnique: mockPrismaApiKeyFindUnique,
     },
   },
 }));
@@ -83,9 +95,12 @@ function buildDeps(
     ) => Promise<Record<string, string>>;
   }> = {},
 ) {
+  mockRedisTransaction.incrbyfloat.mockReturnValue(mockRedisTransaction);
+  mockRedisMulti.mockReturnValue(mockRedisTransaction);
+
   return {
     fetch: fetchImpl,
-    redis: { incrbyfloat: mockIncrbyfloat } as never,
+    redis: { incrbyfloat: mockIncrbyfloat, multi: mockRedisMulti } as never,
     now: overrides.now ?? (() => new Date("2026-06-24T00:00:00Z")),
     enqueue: mockEnqueue,
     enqueueLog: mockEnqueueLog,
@@ -95,6 +110,9 @@ function buildDeps(
       backgroundResponseJob: {
         findUnique: mockPrismaFindUnique,
         update: mockPrismaUpdate,
+      },
+      apiKey: {
+        findUnique: mockPrismaApiKeyFindUnique,
       },
     } as never,
   };
@@ -227,7 +245,11 @@ describe("processBackgroundPollJob", () => {
       }),
     );
     mockPrismaUpdate.mockResolvedValueOnce({});
-    mockIncrbyfloat.mockResolvedValueOnce("0.002125");
+    mockPrismaApiKeyFindUnique.mockResolvedValueOnce({ createdBy: "user-1" });
+    mockRedisTransaction.exec.mockResolvedValueOnce([
+      [null, "0.002125"],
+      [null, "0.002125"],
+    ]);
     await processBackgroundPollJob(
       makeJob({ attempt: 3 }),
       buildDeps(fetchImpl as unknown as typeof fetch),
@@ -243,7 +265,8 @@ describe("processBackgroundPollJob", () => {
       }),
     );
     // 100 * 1.25 / 1e6 + 200 * 10 / 1e6 = 0.000125 + 0.002 = 0.002125
-    expect(mockIncrbyfloat).toHaveBeenCalledWith("apikey_spend:key-1", 0.002125);
+    expect(mockRedisTransaction.incrbyfloat).toHaveBeenCalledWith("apikey_spend:key-1", 0.002125);
+    expect(mockRedisTransaction.incrbyfloat).toHaveBeenCalledWith("user_spend:user-1", 0.002125);
     expect(mockEnqueueLog).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "final",

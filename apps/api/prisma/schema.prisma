@@ -11,12 +11,24 @@ enum Role {
   USER
 }
 
+enum RedemptionCodeStatus {
+  ACTIVE
+  DISABLED
+  USED
+}
+
+enum RedemptionTargetType {
+  USER
+  API_KEY
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
   name         String?
   passwordHash String
   role         Role     @default(USER)
+  spendLimitUsd Float?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   apiKeys      ApiKey[]
@@ -27,6 +39,9 @@ model User {
   invitationsCreated Invitation[] @relation("InvitationCreator")
   invitationsRedeemed Invitation[] @relation("InvitationRedeemer")
   invitationRedemptions InvitationRedemption[]
+  redemptionCodesCreated RedemptionCode[] @relation("RedemptionCodeCreator")
+  redemptionApplicationsApplied RedemptionApplication[] @relation("RedemptionApplicationApplier")
+  redemptionApplications RedemptionApplication[] @relation("RedemptionApplicationUser")
 }
 
 model ApiKey {
@@ -44,12 +59,51 @@ model ApiKey {
   invitationId  String?
   invitation    Invitation? @relation(fields: [invitationId], references: [id], onDelete: SetNull)
   invitationRedemption InvitationRedemption?
+  redemptionApplications RedemptionApplication[]
   createdAt     DateTime @default(now())
   logs          RequestLog[]
   backgroundJobs BackgroundResponseJob[]
 
   @@index([isActive])
   @@index([invitationId])
+}
+
+model RedemptionCode {
+  id           String                 @id @default(cuid())
+  codeHash     String                 @unique
+  codeLastFour String
+  name         String
+  amountUsd    Float
+  status       RedemptionCodeStatus   @default(ACTIVE)
+  expiresAt    DateTime?
+  createdBy    String
+  creator      User                   @relation("RedemptionCodeCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  application  RedemptionApplication?
+  createdAt    DateTime               @default(now())
+  updatedAt    DateTime               @updatedAt
+
+  @@index([status])
+  @@index([createdBy])
+  @@index([expiresAt])
+}
+
+model RedemptionApplication {
+  id               String               @id @default(cuid())
+  redemptionCodeId String               @unique
+  redemptionCode   RedemptionCode       @relation(fields: [redemptionCodeId], references: [id], onDelete: Cascade)
+  targetType       RedemptionTargetType
+  userId           String?
+  user             User?                @relation("RedemptionApplicationUser", fields: [userId], references: [id], onDelete: SetNull)
+  apiKeyId         String?
+  apiKey           ApiKey?              @relation(fields: [apiKeyId], references: [id], onDelete: SetNull)
+  appliedBy        String
+  applier          User                 @relation("RedemptionApplicationApplier", fields: [appliedBy], references: [id], onDelete: Cascade)
+  createdAt        DateTime             @default(now())
+
+  @@index([targetType])
+  @@index([userId])
+  @@index([apiKeyId])
+  @@index([appliedBy])
 }
 
 model Invitation {
