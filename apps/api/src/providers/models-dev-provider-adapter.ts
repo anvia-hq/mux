@@ -1,6 +1,7 @@
 import type {
   AudioMultipartRequest,
   AudioProxyResponse,
+  AudioProxyStreamResponse,
   AudioSpeechRequest,
   ChatCompletionChunk,
   ChatCompletionRequest,
@@ -19,7 +20,11 @@ import type {
   ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
-import { cloneFormDataWithModel, toAudioProxyResponse } from "./openai-compatible-audio";
+import {
+  cloneFormDataWithModel,
+  toAudioProxyResponse,
+  toAudioProxyStreamResponse,
+} from "./openai-compatible-audio";
 import { throwOpenAICompatibleError } from "./openai-compatible-error";
 import { mergeProviderRequestHeaders } from "./types";
 import {
@@ -312,6 +317,16 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     return this.createAudioMultipart(this.audioTranscriptionsUrl, request);
   }
 
+  async createAudioTranscriptionStream(
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyStreamResponse> {
+    if (!this.audioTranscriptionsUrl) {
+      throw new Error(`${this.name} does not expose an audio transcriptions URL in models.dev`);
+    }
+
+    return this.createAudioMultipartStream(this.audioTranscriptionsUrl, request);
+  }
+
   async createAudioTranslation(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
     if (!this.audioTranslationsUrl) {
       throw new Error(`${this.name} does not expose an audio translations URL in models.dev`);
@@ -337,6 +352,25 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     }
 
     return toAudioProxyResponse(response);
+  }
+
+  async createAudioSpeechStream(request: AudioSpeechRequest): Promise<AudioProxyStreamResponse> {
+    if (!this.audioSpeechUrl) {
+      throw new Error(`${this.name} does not expose an audio speech URL in models.dev`);
+    }
+
+    const response = await fetch(this.audioSpeechUrl, {
+      method: "POST",
+      headers: this.buildHeaders(),
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError(this.name, response);
+    }
+
+    return toAudioProxyStreamResponse(response);
   }
 
   listModels(): Model[] {
@@ -392,6 +426,24 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     }
 
     return toAudioProxyResponse(response);
+  }
+
+  private async createAudioMultipartStream(
+    url: string,
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyStreamResponse> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+      body: cloneFormDataWithModel(request.formData, request.model),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError(this.name, response);
+    }
+
+    return toAudioProxyStreamResponse(response);
   }
 
   private toChatCompletionsUrl(apiBase: string): string {

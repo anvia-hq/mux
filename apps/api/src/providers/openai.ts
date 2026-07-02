@@ -1,6 +1,7 @@
 import type {
   AudioMultipartRequest,
   AudioProxyResponse,
+  AudioProxyStreamResponse,
   AudioSpeechRequest,
   ChatCompletionRequest,
   ChatCompletionResponse,
@@ -21,7 +22,11 @@ import type {
   ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
-import { cloneFormDataWithModel, toAudioProxyResponse } from "./openai-compatible-audio";
+import {
+  cloneFormDataWithModel,
+  toAudioProxyResponse,
+  toAudioProxyStreamResponse,
+} from "./openai-compatible-audio";
 import { throwOpenAICompatibleError } from "./openai-compatible-error";
 import { mergeProviderRequestHeaders } from "./types";
 import {
@@ -1269,6 +1274,12 @@ export class OpenAIAdapter implements ProviderAdapter {
     return this.createAudioMultipart(OPENAI_AUDIO_TRANSCRIPTIONS_URL, request);
   }
 
+  async createAudioTranscriptionStream(
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyStreamResponse> {
+    return this.createAudioMultipartStream(OPENAI_AUDIO_TRANSCRIPTIONS_URL, request);
+  }
+
   async createAudioTranslation(request: AudioMultipartRequest): Promise<AudioProxyResponse> {
     return this.createAudioMultipart(OPENAI_AUDIO_TRANSLATIONS_URL, request);
   }
@@ -1289,6 +1300,24 @@ export class OpenAIAdapter implements ProviderAdapter {
     }
 
     return toAudioProxyResponse(response);
+  }
+
+  async createAudioSpeechStream(request: AudioSpeechRequest): Promise<AudioProxyStreamResponse> {
+    const response = await fetch(OPENAI_AUDIO_SPEECH_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError("OpenAI", response);
+    }
+
+    return toAudioProxyStreamResponse(response);
   }
 
   async createResponse(
@@ -1489,6 +1518,26 @@ export class OpenAIAdapter implements ProviderAdapter {
     }
 
     return toAudioProxyResponse(response);
+  }
+
+  private async createAudioMultipartStream(
+    url: string,
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyStreamResponse> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: cloneFormDataWithModel(request.formData, request.model),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      await throwOpenAICompatibleError("OpenAI", response);
+    }
+
+    return toAudioProxyStreamResponse(response);
   }
 
   listModels(): Model[] {

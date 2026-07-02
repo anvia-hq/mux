@@ -302,6 +302,13 @@ export interface AudioProxyResponse {
   usage?: Record<string, unknown>;
 }
 
+export type AudioProxyStreamChunk = string | Uint8Array;
+
+export interface AudioProxyStreamResponse {
+  stream: AsyncIterable<AudioProxyStreamChunk>;
+  contentType?: string;
+}
+
 export type ResponseCreateRequest = {
   model: string;
   input?: unknown;
@@ -545,8 +552,12 @@ export interface ProviderAdapter {
     options?: ProviderRequestOptions,
   ): AsyncIterable<string>;
   createAudioTranscription?(request: AudioMultipartRequest): Promise<AudioProxyResponse>;
+  createAudioTranscriptionStream?(
+    request: AudioMultipartRequest,
+  ): Promise<AudioProxyStreamResponse>;
   createAudioTranslation?(request: AudioMultipartRequest): Promise<AudioProxyResponse>;
   createAudioSpeech?(request: AudioSpeechRequest): Promise<AudioProxyResponse>;
+  createAudioSpeechStream?(request: AudioSpeechRequest): Promise<AudioProxyStreamResponse>;
   createResponse?(
     request: ResponseCreateRequest,
     options?: ProviderRequestOptions,

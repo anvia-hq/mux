@@ -282,6 +282,40 @@ describe("ModelsDevProviderAdapter", () => {
     expect(requestBody.get("file")).toBe(file);
   });
 
+  it("createAudioTranscriptionStream yields raw SSE from the derived audio transcriptions endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(makeSSEStream(["data: hello\n\n"]));
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+    const formData = new FormData();
+    const file = new File(["audio"], "speech.wav", { type: "audio/wav" });
+    formData.append("file", file);
+    formData.append("model", "client-model");
+
+    const response = await a.createAudioTranscriptionStream({ model: "m1", formData });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: hello\n\n");
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer k" },
+      }),
+    );
+    const requestBody = mockGlobalFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(requestBody.get("model")).toBe("m1");
+    expect(requestBody.get("file")).toBe(file);
+  });
+
   it("createAudioSpeech sends JSON to the derived audio speech endpoint", async () => {
     mockGlobalFetch.mockResolvedValueOnce(
       new Response(new Uint8Array([1]), { headers: { "Content-Type": "audio/mpeg" } }),
@@ -306,6 +340,48 @@ describe("ModelsDevProviderAdapter", () => {
         },
       }),
     );
+  });
+
+  it("createAudioSpeechStream yields raw SSE from the derived audio speech endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(makeSSEStream(["data: speech\n\n"]));
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const response = await a.createAudioSpeechStream({
+      model: "m1",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: speech\n\n");
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/audio/speech",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "m1",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
   });
 
   it("createCompletionStream yields raw SSE from the derived completions endpoint", async () => {

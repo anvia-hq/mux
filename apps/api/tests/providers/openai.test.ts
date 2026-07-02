@@ -40,6 +40,24 @@ function makeSSEStream(chunks: string[]) {
   );
 }
 
+function makeBinaryStream(chunks: Uint8Array[]) {
+  let index = 0;
+
+  return new Response(
+    new ReadableStream({
+      pull(controller) {
+        if (index < chunks.length) {
+          controller.enqueue(chunks[index++]);
+          return;
+        }
+
+        controller.close();
+      },
+    }),
+    { headers: { "Content-Type": "audio/mpeg" } },
+  );
+}
+
 describe("OpenAIAdapter", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -448,6 +466,40 @@ describe("OpenAIAdapter", () => {
     expect(requestBody.get("temperature")).toBe("0.2");
   });
 
+  it("streams audio transcriptions through the OpenAI Audio API", async () => {
+    mockFetch.mockResolvedValueOnce(makeSSEStream(["data: hello\n\n"]));
+
+    const formData = new FormData();
+    const file = new File(["audio"], "speech.wav", { type: "audio/wav" });
+    formData.append("model", "client-model");
+    formData.append("file", file);
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createAudioTranscriptionStream({
+      model: "gpt-4o-transcribe",
+      formData,
+    });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: hello\n\n");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer sk-test" },
+      }),
+    );
+
+    const requestBody = mockFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(requestBody.get("model")).toBe("gpt-4o-transcribe");
+    expect(requestBody.get("file")).toBe(file);
+  });
+
   it("creates audio speech and returns upstream audio bytes", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(new Uint8Array([1, 2, 3]), {
@@ -481,6 +533,72 @@ describe("OpenAIAdapter", () => {
       input: "hello",
       voice: "alloy",
       response_format: "mp3",
+    });
+  });
+
+  it("streams audio speech through the OpenAI Audio API", async () => {
+    mockFetch.mockResolvedValueOnce(makeSSEStream(["data: speech\n\n"]));
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createAudioSpeechStream({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: speech\n\n");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/audio/speech",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
+  });
+
+  it("streams raw audio bytes through the OpenAI Audio API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeBinaryStream([new Uint8Array([1, 2]), new Uint8Array([3])]),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createAudioSpeechStream({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "audio",
+    });
+    const bytes: number[] = [];
+    for await (const chunk of response.stream) {
+      expect(chunk).toBeInstanceOf(Uint8Array);
+      bytes.push(...(chunk as Uint8Array));
+    }
+
+    expect(response.contentType).toBe("audio/mpeg");
+    expect(bytes).toEqual([1, 2, 3]);
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-4o-mini-tts",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "audio",
     });
   });
 

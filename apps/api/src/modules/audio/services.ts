@@ -3,15 +3,21 @@ import { upstreamOpenAICompatibleStatusCode } from "../../providers/openai-compa
 import {
   estimateCost,
   resolveAudioSpeechModel,
+  resolveAudioSpeechStreamModel,
   resolveAudioTranscriptionModel,
+  resolveAudioTranscriptionStreamModel,
   resolveAudioTranslationModel,
   type ResolvedAudioSpeechProviderModel,
+  type ResolvedAudioSpeechStreamProviderModel,
   type ResolvedAudioTranscriptionProviderModel,
+  type ResolvedAudioTranscriptionStreamProviderModel,
   type ResolvedAudioTranslationProviderModel,
 } from "../../providers/registry";
 import type {
   AudioMultipartRequest,
   AudioProxyResponse,
+  AudioProxyStreamChunk,
+  AudioProxyStreamResponse,
   AudioSpeechRequest,
 } from "../../providers/types";
 import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
@@ -20,7 +26,28 @@ type AudioMultipartTarget =
   | ResolvedAudioTranscriptionProviderModel
   | ResolvedAudioTranslationProviderModel;
 
-type AudioEndpoint = "/v1/audio/transcriptions" | "/v1/audio/translations" | "/v1/audio/speech";
+type AudioMultipartStreamTarget = ResolvedAudioTranscriptionStreamProviderModel;
+
+export type AudioEndpoint =
+  | "/v1/audio/transcriptions"
+  | "/v1/audio/translations"
+  | "/v1/audio/speech";
+
+export type AudioTokenUsage = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
+export type AudioProxyStreamResult = {
+  stream: AsyncIterable<AudioProxyStreamChunk>;
+  contentType?: string;
+  provider: string;
+  model: string;
+  channelId?: string;
+  channelName?: string;
+  startTime: number;
+};
 
 export async function handleAudioTranscription(
   formData: FormData,
@@ -41,6 +68,27 @@ export async function handleAudioTranscription(
     "/v1/audio/transcriptions",
     (target, request) => target.provider.createAudioTranscription(request),
     { recordSpend: options.recordSpend, startTime: Date.now() },
+  );
+}
+
+export async function handleAudioTranscriptionStream(
+  formData: FormData,
+  model: string,
+  apiKeyId: string,
+): Promise<AudioProxyStreamResult> {
+  const resolved = await resolveAudioTranscriptionStreamModel(model);
+  if (!resolved) {
+    throw new Error(`No provider found for model: ${model}`);
+  }
+
+  return createAudioMultipartStreamWithFallback(
+    formData,
+    model,
+    apiKeyId,
+    resolved.targets,
+    "/v1/audio/transcriptions",
+    (target, request) => target.provider.createAudioTranscriptionStream(request),
+    Date.now(),
   );
 }
 
@@ -82,6 +130,18 @@ export async function handleAudioSpeech(
   });
 }
 
+export async function handleAudioSpeechStream(
+  request: AudioSpeechRequest,
+  apiKeyId: string,
+): Promise<AudioProxyStreamResult> {
+  const resolved = await resolveAudioSpeechStreamModel(request.model);
+  if (!resolved) {
+    throw new Error(`No provider found for model: ${request.model}`);
+  }
+
+  return createAudioSpeechStreamWithFallback(request, apiKeyId, resolved.targets, Date.now());
+}
+
 async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTarget>(
   formData: FormData,
   requestedModel: string,
@@ -95,12 +155,17 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
 
   for (const target of targets) {
     try {
-      const response = await createAudio(target, { model: target.modelId, formData });
+      const response = await createAudio(target, {
+        model: targetUpstreamModelId(target),
+        formData,
+      });
       await recordSuccessfulAudioRequest(
         response,
         apiKeyId,
         target.publicModelId,
-        target.provider.name,
+        target.providerName,
+        target.channelId,
+        target.channelName,
         endpoint,
         options,
       );
@@ -118,9 +183,66 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
         error,
         apiKeyId,
         target.publicModelId,
-        target.provider.name,
+        target.providerName,
+        target.channelId,
+        target.channelName,
         endpoint,
         options.startTime,
+      );
+    }
+  }
+
+  throw lastError ?? new Error(`No provider found for model: ${requestedModel}`);
+}
+
+async function createAudioMultipartStreamWithFallback<TTarget extends AudioMultipartStreamTarget>(
+  formData: FormData,
+  requestedModel: string,
+  apiKeyId: string,
+  targets: TTarget[],
+  endpoint: AudioEndpoint,
+  createAudio: (
+    target: TTarget,
+    request: AudioMultipartRequest,
+  ) => Promise<AudioProxyStreamResponse>,
+  startTime: number,
+): Promise<AudioProxyStreamResult> {
+  let lastError: unknown;
+
+  for (const target of targets) {
+    try {
+      const response = await createAudio(target, {
+        model: targetUpstreamModelId(target),
+        formData,
+      });
+
+      return {
+        stream: await prefetchFirstStreamChunk(response.stream),
+        contentType: response.contentType,
+        provider: target.providerName,
+        model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
+        startTime,
+      };
+    } catch (error) {
+      if (
+        error instanceof RequestLoggingUnavailableError ||
+        error instanceof ApiKeySpendLedgerUnavailableError
+      ) {
+        throw error;
+      }
+
+      lastError = error;
+      await logFailedAudioRequest(
+        error,
+        apiKeyId,
+        target.publicModelId,
+        target.providerName,
+        target.channelId,
+        target.channelName,
+        endpoint,
+        startTime,
       );
     }
   }
@@ -140,13 +262,15 @@ async function createAudioSpeechWithFallback(
     try {
       const response = await target.provider.createAudioSpeech({
         ...request,
-        model: target.modelId,
+        model: targetUpstreamModelId(target),
       });
       await recordSuccessfulAudioRequest(
         response,
         apiKeyId,
         target.publicModelId,
-        target.provider.name,
+        target.providerName,
+        target.channelId,
+        target.channelName,
         "/v1/audio/speech",
         options,
       );
@@ -164,9 +288,62 @@ async function createAudioSpeechWithFallback(
         error,
         apiKeyId,
         target.publicModelId,
-        target.provider.name,
+        target.providerName,
+        target.channelId,
+        target.channelName,
         "/v1/audio/speech",
         options.startTime,
+      );
+    }
+  }
+
+  throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+async function createAudioSpeechStreamWithFallback(
+  request: AudioSpeechRequest,
+  apiKeyId: string,
+  targets: ResolvedAudioSpeechStreamProviderModel[],
+  startTime: number,
+): Promise<AudioProxyStreamResult> {
+  let lastError: unknown;
+
+  for (const target of targets) {
+    try {
+      const response = await target.provider.createAudioSpeechStream({
+        ...request,
+        model: targetUpstreamModelId(target),
+      });
+
+      return {
+        stream: await prefetchFirstStreamChunk(response.stream),
+        contentType:
+          response.contentType ??
+          (request.stream_format === "audio" ? "application/octet-stream" : undefined),
+        provider: target.providerName,
+        model: target.publicModelId,
+        channelId: target.channelId,
+        channelName: target.channelName,
+        startTime,
+      };
+    } catch (error) {
+      if (
+        error instanceof RequestLoggingUnavailableError ||
+        error instanceof ApiKeySpendLedgerUnavailableError
+      ) {
+        throw error;
+      }
+
+      lastError = error;
+      await logFailedAudioRequest(
+        error,
+        apiKeyId,
+        target.publicModelId,
+        target.providerName,
+        target.channelId,
+        target.channelName,
+        "/v1/audio/speech",
+        startTime,
       );
     }
   }
@@ -179,11 +356,13 @@ async function recordSuccessfulAudioRequest(
   apiKeyId: string,
   model: string,
   provider: string,
+  channelId: string | undefined,
+  channelName: string | undefined,
   endpoint: AudioEndpoint,
   options: { recordSpend?: boolean; startTime: number },
 ): Promise<void> {
   const latencyMs = Date.now() - options.startTime;
-  const usage = extractAudioTokenUsage(response);
+  const usage = extractAudioUsage(response.usage, endpoint);
   const estimatedCost = estimateCost(model, usage.promptTokens, usage.completionTokens);
 
   if (options.recordSpend && estimatedCost !== undefined) {
@@ -194,6 +373,8 @@ async function recordSuccessfulAudioRequest(
     apiKeyId,
     provider,
     model,
+    channelId,
+    channelName,
     endpoint,
     latencyMs,
     promptTokens: usage.promptTokens,
@@ -209,6 +390,8 @@ async function logFailedAudioRequest(
   apiKeyId: string,
   model: string,
   provider: string,
+  channelId: string | undefined,
+  channelName: string | undefined,
   endpoint: AudioEndpoint,
   startTime: number,
 ): Promise<void> {
@@ -219,6 +402,8 @@ async function logFailedAudioRequest(
     apiKeyId,
     provider,
     model,
+    channelId,
+    channelName,
     endpoint,
     latencyMs,
     statusCode: upstreamOpenAICompatibleStatusCode(error),
@@ -226,21 +411,213 @@ async function logFailedAudioRequest(
   });
 }
 
-function extractAudioTokenUsage(response: AudioProxyResponse): {
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-} {
-  const usage = response.usage;
+export function extractAudioUsage(value: unknown, endpoint: AudioEndpoint): AudioTokenUsage {
+  const usage = toUsageObject(value);
   if (!usage) return {};
 
+  if (usage.type === "duration") {
+    return extractDurationAudioUsage(usage, endpoint);
+  }
+
   const promptTokens =
-    numberOrUndefined(usage.prompt_tokens) ?? numberOrUndefined(usage.input_tokens);
+    numberOrUndefined(usage.prompt_tokens) ??
+    numberOrUndefined(usage.input_tokens) ??
+    sumUsageDetails(usage.input_token_details);
   const completionTokens =
-    numberOrUndefined(usage.completion_tokens) ?? numberOrUndefined(usage.output_tokens);
-  const totalTokens = numberOrUndefined(usage.total_tokens);
+    numberOrUndefined(usage.completion_tokens) ??
+    numberOrUndefined(usage.output_tokens) ??
+    sumUsageDetails(usage.output_token_details);
+  const totalTokens =
+    numberOrUndefined(usage.total_tokens) ?? sumDefinedTokens(promptTokens, completionTokens);
 
   return { promptTokens, completionTokens, totalTokens };
+}
+
+export function extractAudioUsageFromRawSseChunk(
+  chunk: string,
+  endpoint: AudioEndpoint,
+): AudioTokenUsage {
+  const result: AudioTokenUsage = {};
+
+  for (const rawLine of chunk.split("\n")) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (!line.startsWith("data: ")) continue;
+
+    const data = line.slice(6);
+    if (data === "[DONE]") continue;
+
+    try {
+      const parsed = JSON.parse(data) as { usage?: unknown };
+      const usage = extractAudioUsage(parsed.usage, endpoint);
+      if (usage.promptTokens !== undefined) result.promptTokens = usage.promptTokens;
+      if (usage.completionTokens !== undefined) {
+        result.completionTokens = usage.completionTokens;
+      }
+      if (usage.totalTokens !== undefined) result.totalTokens = usage.totalTokens;
+    } catch {}
+  }
+
+  return result;
+}
+
+export function createAudioUsageAccumulator(
+  endpoint: AudioEndpoint,
+  contentType: string | undefined,
+): {
+  push: (chunk: AudioProxyStreamChunk) => AudioTokenUsage;
+  final: () => AudioTokenUsage;
+} {
+  const normalizedContentType = contentType?.toLowerCase() ?? "";
+  const shouldParseText =
+    normalizedContentType.includes("text/") || normalizedContentType.includes("json");
+  const shouldParseSse = normalizedContentType.includes("text/event-stream");
+  const decoder = new TextDecoder();
+  let lineBuffer = "";
+  let bodyBuffer = "";
+
+  function extractAudioUsageFromCompleteSseLines(endpoint: AudioEndpoint): AudioTokenUsage {
+    const result: AudioTokenUsage = {};
+    const lines = lineBuffer.split(/\r?\n/);
+    lineBuffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (!line.startsWith("data: ")) continue;
+
+      const data = line.slice(6);
+      if (data === "[DONE]") continue;
+
+      try {
+        const parsed = JSON.parse(data) as { usage?: unknown };
+        mergeAudioUsage(result, extractAudioUsage(parsed.usage, endpoint));
+      } catch {}
+    }
+
+    return result;
+  }
+
+  return {
+    push(chunk) {
+      if (!shouldParseText) return {};
+
+      const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      if (shouldParseSse) {
+        lineBuffer += text;
+        return extractAudioUsageFromCompleteSseLines(endpoint);
+      }
+
+      bodyBuffer += text;
+      return {};
+    },
+    final() {
+      if (!shouldParseText) return {};
+
+      const finalText = decoder.decode();
+      if (shouldParseSse) {
+        lineBuffer += finalText;
+        if (lineBuffer.length === 0) return {};
+
+        lineBuffer += "\n";
+        return extractAudioUsageFromCompleteSseLines(endpoint);
+      }
+
+      bodyBuffer += finalText;
+      return extractAudioUsageFromJsonBody(bodyBuffer, endpoint);
+    },
+  };
+}
+
+async function prefetchFirstStreamChunk(
+  stream: AsyncIterable<AudioProxyStreamChunk>,
+): Promise<AsyncIterable<AudioProxyStreamChunk>> {
+  const iterator = stream[Symbol.asyncIterator]();
+  const first = await iterator.next();
+
+  return {
+    async *[Symbol.asyncIterator]() {
+      if (!first.done) {
+        yield first.value;
+      }
+      while (true) {
+        const next = await iterator.next();
+        if (next.done) return;
+        yield next.value;
+      }
+    },
+  };
+}
+
+function targetUpstreamModelId(target: { upstreamModelId?: string; modelId: string }): string {
+  return target.upstreamModelId ?? target.modelId;
+}
+
+function extractAudioUsageFromJsonBody(body: string, endpoint: AudioEndpoint): AudioTokenUsage {
+  try {
+    const parsed = JSON.parse(body) as { usage?: unknown };
+    return extractAudioUsage(parsed.usage, endpoint);
+  } catch {
+    return {};
+  }
+}
+
+function mergeAudioUsage(target: AudioTokenUsage, usage: AudioTokenUsage): void {
+  if (usage.promptTokens !== undefined) target.promptTokens = usage.promptTokens;
+  if (usage.completionTokens !== undefined) {
+    target.completionTokens = usage.completionTokens;
+  }
+  if (usage.totalTokens !== undefined) target.totalTokens = usage.totalTokens;
+}
+
+function extractDurationAudioUsage(
+  usage: Record<string, unknown>,
+  endpoint: AudioEndpoint,
+): AudioTokenUsage {
+  const seconds = numberOrUndefined(usage.seconds);
+  if (seconds === undefined) return {};
+
+  const tokenEquivalent = Math.round((Math.ceil(seconds) / 60) * 1000);
+  if (endpoint === "/v1/audio/speech") {
+    return {
+      promptTokens: 0,
+      completionTokens: tokenEquivalent,
+      totalTokens: tokenEquivalent,
+    };
+  }
+
+  return {
+    promptTokens: tokenEquivalent,
+    completionTokens: 0,
+    totalTokens: tokenEquivalent,
+  };
+}
+
+function sumUsageDetails(value: unknown): number | undefined {
+  const details = toUsageObject(value);
+  if (!details) return undefined;
+
+  let total = 0;
+  let hasValue = false;
+  for (const key of ["text_tokens", "audio_tokens", "image_tokens"] as const) {
+    const tokens = numberOrUndefined(details[key]);
+    if (tokens === undefined) continue;
+
+    total += tokens;
+    hasValue = true;
+  }
+  return hasValue ? total : undefined;
+}
+
+function sumDefinedTokens(
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
+): number | undefined {
+  if (promptTokens === undefined || completionTokens === undefined) {
+    return undefined;
+  }
+  return promptTokens + completionTokens;
+}
+
+function toUsageObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

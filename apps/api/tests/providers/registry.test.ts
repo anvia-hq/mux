@@ -25,7 +25,10 @@ import {
   resolveAnthropicMessagesAccessModelId,
   resolveAnthropicMessagesModel,
   resolveAudioSpeechModel,
+  resolveAudioSpeechStreamModel,
   resolveAudioTranscriptionModel,
+  resolveAudioTranscriptionStreamModel,
+  resolveAudioTranslationModel,
   resolveChatModel,
   resolveCompletionModel,
   resolveEmbeddingModel,
@@ -213,6 +216,24 @@ describe("OpenAI-compatible endpoint resolvers", () => {
 
     mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
     mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "transcribe",
+      name: "Transcribe",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "whisper-1", position: 1 },
+      ],
+    });
+
+    await expect(resolveAudioTranscriptionStreamModel("mux:transcribe")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:transcribe",
+      targets: [{ providerName: "openai", modelId: "whisper-1" }],
+    });
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
       id: "speech",
       name: "Speech",
       description: null,
@@ -228,6 +249,44 @@ describe("OpenAI-compatible endpoint resolvers", () => {
       requestedModelId: "mux:speech",
       targets: [{ providerName: "openai", modelId: "tts-1" }],
     });
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    mockPrisma.fallbackGroup.findUnique.mockResolvedValueOnce({
+      id: "speech",
+      name: "Speech",
+      description: null,
+      enabled: true,
+      targets: [
+        { provider: "anthropic", modelId: "claude-3-haiku-20240307", position: 0 },
+        { provider: "openai", modelId: "tts-1", position: 1 },
+      ],
+    });
+
+    await expect(resolveAudioSpeechStreamModel("mux:speech")).resolves.toMatchObject({
+      kind: "fallback-group",
+      requestedModelId: "mux:speech",
+      targets: [{ providerName: "openai", modelId: "tts-1" }],
+    });
+  });
+
+  it("limits OpenAI audio translations to whisper-1", async () => {
+    mockPrisma.providerKey.findMany.mockResolvedValueOnce([
+      { provider: "openai", ciphertext: "enc-openai" },
+    ]);
+    mockPrisma.customProvider.findMany.mockResolvedValueOnce([]);
+    mockDecrypt.mockReturnValue("key");
+
+    await initProviders();
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    await expect(resolveAudioTranslationModel("openai:whisper-1")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "openai:whisper-1",
+      targets: [{ providerName: "openai", modelId: "whisper-1" }],
+    });
+
+    mockPrisma.disabledModel.findMany.mockResolvedValueOnce([]);
+    await expect(resolveAudioTranslationModel("openai:gpt-4o-transcribe")).resolves.toBeNull();
   });
 });
 
