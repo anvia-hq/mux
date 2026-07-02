@@ -144,6 +144,142 @@ export interface ChatCompletionChunk {
   };
 }
 
+export type EmbeddingInput = string | string[] | number[] | number[][];
+
+export interface EmbeddingRequest {
+  model: string;
+  input: EmbeddingInput;
+  encoding_format?: "float" | "base64";
+  dimensions?: number;
+  user?: string;
+  [key: string]: unknown;
+}
+
+export interface EmbeddingResponse {
+  object: "list";
+  data: {
+    object: "embedding";
+    embedding: number[] | string;
+    index: number;
+  }[];
+  model: string;
+  usage: {
+    prompt_tokens: number;
+    total_tokens: number;
+  };
+}
+
+export type ModerationInput =
+  | string
+  | string[]
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
+    >;
+
+export interface ModerationRequest {
+  model?: string;
+  input: ModerationInput;
+  [key: string]: unknown;
+}
+
+export interface ModerationResponse {
+  id?: string;
+  model?: string;
+  results?: unknown[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    input_tokens?: number;
+    output_tokens?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface ImageGenerationRequest {
+  model: string;
+  prompt: string;
+  n?: number;
+  size?: string;
+  quality?: string;
+  response_format?: "url" | "b64_json";
+  style?: string;
+  user?: string;
+  background?: string;
+  moderation?: string;
+  output_format?: string;
+  output_compression?: number;
+  partial_images?: number;
+  stream?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ImageGenerationResponse {
+  created?: number;
+  data?: Array<{
+    url?: string;
+    b64_json?: string;
+    revised_prompt?: string;
+    [key: string]: unknown;
+  }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export type CompletionPrompt = string | string[] | number[] | number[][];
+
+export interface CompletionRequest {
+  model: string;
+  prompt: CompletionPrompt;
+  stream?: boolean;
+  suffix?: string | null;
+  max_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  n?: number;
+  stop?: string | string[];
+  stream_options?: ChatStreamOptions;
+  logprobs?: number;
+  echo?: boolean;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  best_of?: number;
+  logit_bias?: Record<string, number>;
+  user?: string;
+  seed?: number;
+  [key: string]: unknown;
+}
+
+export interface CompletionResponse {
+  id?: string;
+  object?: string;
+  created?: number;
+  model?: string;
+  choices?: Array<{
+    text?: string;
+    index?: number;
+    logprobs?: unknown;
+    finish_reason?: string | null;
+    [key: string]: unknown;
+  }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export type ResponseCreateRequest = {
   model: string;
   input?: unknown;
@@ -204,6 +340,26 @@ export interface ProviderCapabilities {
    * Defaults to `false`; opt in per adapter.
    */
   responsesApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible embeddings through
+   * `/v1/embeddings`.
+   */
+  embeddingsApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible moderation requests
+   * through `/v1/moderations`.
+   */
+  moderationsApi?: boolean;
+  /**
+   * Whether this adapter can proxy OpenAI-compatible image generation
+   * requests through `/v1/images/generations`.
+   */
+  imageGenerationsApi?: boolean;
+  /**
+   * Whether this adapter can proxy the legacy OpenAI-compatible completions
+   * API through `/v1/completions`.
+   */
+  completionsApi?: boolean;
 }
 
 export type ProviderRequestOptions = {
@@ -287,6 +443,30 @@ export interface ProviderAdapter {
     request: ChatCompletionRequest,
     options?: ProviderRequestOptions,
   ): AsyncIterable<ChatCompletionChunk>;
+  createEmbedding?(
+    request: EmbeddingRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<EmbeddingResponse>;
+  createModeration?(
+    request: ModerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ModerationResponse>;
+  createImageGeneration?(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ImageGenerationResponse>;
+  createImageGenerationStream?(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string>;
+  createCompletion?(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<CompletionResponse>;
+  createCompletionStream?(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string>;
   createResponse?(
     request: ResponseCreateRequest,
     options?: ProviderRequestOptions,

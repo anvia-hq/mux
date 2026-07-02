@@ -1,5 +1,13 @@
 import type { Page } from "@playwright/test";
-import { adminUser, expect, loginViaUi, seedE2e, syntheticDeepSeekModelId, test } from "./fixtures";
+import {
+  adminUser,
+  expect,
+  loginViaUi,
+  providerSearchPlaceholder,
+  seedE2e,
+  syntheticDeepSeekModelId,
+  test,
+} from "./fixtures";
 
 test.use({
   isMobile: true,
@@ -27,7 +35,7 @@ test("navigates core admin pages on a mobile viewport", async ({ page, request }
   await expect(page.getByText("No requests match the current filters.")).toBeVisible();
 
   await goToMobileNav(page, "Providers", "Providers");
-  await page.getByPlaceholder("Search provider name or id...").fill("synthetic");
+  await page.getByPlaceholder(providerSearchPlaceholder).fill("synthetic");
   await expect(page.getByRole("row").filter({ hasText: "Synthetic" })).toBeVisible();
 
   await goToMobileNav(page, "Fallbacks", "Fallback groups");

@@ -40,6 +40,8 @@ import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/se
 const RESPONSE_CREATE_FIELDS = [
   "background",
   "conversation",
+  "context_management",
+  "enable_thinking",
   "include",
   "input",
   "instructions",
@@ -51,6 +53,8 @@ const RESPONSE_CREATE_FIELDS = [
   "previous_response_id",
   "prompt",
   "prompt_cache_key",
+  "prompt_cache_retention",
+  "preset",
   "reasoning",
   "safety_identifier",
   "service_tier",

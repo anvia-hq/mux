@@ -189,6 +189,232 @@ describe("OpenAIAdapter", () => {
     expect(mockFetch.mock.calls[0]?.[1]?.body).toBe(rawBody);
   });
 
+  it("creates embeddings through the OpenAI Embeddings API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [{ object: "embedding", embedding: [0.1, 0.2], index: 0 }],
+        model: "text-embedding-3-small",
+        usage: { prompt_tokens: 2, total_tokens: 2 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createEmbedding({
+      model: "text-embedding-3-small",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+      user: "user-1",
+    });
+
+    expect(response.data[0]?.embedding).toEqual([0.1, 0.2]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/embeddings",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "text-embedding-3-small",
+      input: "hello",
+      encoding_format: "float",
+      dimensions: 256,
+      user: "user-1",
+    });
+  });
+
+  it("creates moderations through the OpenAI Moderations API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "modr-1",
+        model: "omni-moderation-latest",
+        results: [{ flagged: false }],
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createModeration({
+      model: "omni-moderation-latest",
+      input: "hello",
+    });
+
+    expect(response.results).toEqual([{ flagged: false }]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/moderations",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer sk-test",
+        },
+      }),
+    );
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "omni-moderation-latest",
+      input: "hello",
+    });
+  });
+
+  it("creates image generations through the OpenAI Images API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        created: 1,
+        data: [{ url: "https://example.test/image.png", revised_prompt: "A small cat" }],
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createImageGeneration({
+      model: "gpt-image-1",
+      prompt: "cat",
+      size: "1024x1024",
+      response_format: "url",
+    });
+
+    expect(response.data?.[0]?.url).toBe("https://example.test/image.png");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/images/generations",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-image-1",
+      prompt: "cat",
+      size: "1024x1024",
+      response_format: "url",
+    });
+  });
+
+  it("streams raw image generation SSE from the OpenAI Images API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'event: image_generation.partial_image\ndata: {"partial_image_index":0}\n\n',
+        'event: image_generation.completed\ndata: {"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}\n\n',
+      ]),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const chunks: string[] = [];
+    for await (const chunk of adapter.createImageGenerationStream({
+      model: "gpt-image-1",
+      prompt: "cat",
+      stream: true,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe(
+      'event: image_generation.partial_image\ndata: {"partial_image_index":0}\n\n' +
+        'event: image_generation.completed\ndata: {"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}\n\n',
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/images/generations",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({ model: "gpt-image-1", prompt: "cat", stream: true });
+  });
+
+  it("wraps non-stream image generation responses as OpenAI image SSE", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        created: 1,
+        data: [{ b64_json: "abc" }],
+        usage: { input_tokens: 2, output_tokens: 3, total_tokens: 5 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const chunks: string[] = [];
+    for await (const chunk of adapter.createImageGenerationStream({
+      model: "gpt-image-1",
+      prompt: "cat",
+      stream: true,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe(
+      'event: image_generation.completed\ndata: {"created":1,"data":[{"b64_json":"abc"}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}\n\n' +
+        "data: [DONE]\n\n",
+    );
+  });
+
+  it("creates legacy completions through the OpenAI Completions API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "cmpl-1",
+        model: "gpt-3.5-turbo-instruct",
+        choices: [{ text: "hello", index: 0, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      }),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const response = await adapter.createCompletion({
+      model: "gpt-3.5-turbo-instruct",
+      prompt: "Say hello",
+      max_tokens: 8,
+      echo: false,
+    });
+
+    expect(response.choices?.[0]?.text).toBe("hello");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/completions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-3.5-turbo-instruct",
+      prompt: "Say hello",
+      max_tokens: 8,
+      echo: false,
+    });
+  });
+
+  it("streams raw legacy completion SSE from the OpenAI Completions API", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'data: {"id":"cmpl-1","model":"gpt-3.5-turbo-instruct","choices":[{"text":"hi","index":0}]}\n\n',
+        "data: [DONE]\n\n",
+      ]),
+    );
+
+    const adapter = new OpenAIAdapter("sk-test");
+    const chunks: string[] = [];
+    for await (const chunk of adapter.createCompletionStream({
+      model: "gpt-3.5-turbo-instruct",
+      prompt: "Say hi",
+      stream: true,
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe(
+      'data: {"id":"cmpl-1","model":"gpt-3.5-turbo-instruct","choices":[{"text":"hi","index":0}]}\n\n' +
+        "data: [DONE]\n\n",
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://api.openai.com/v1/completions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "gpt-3.5-turbo-instruct",
+      prompt: "Say hi",
+      stream: true,
+    });
+  });
+
   it("creates responses through the OpenAI Responses API", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({

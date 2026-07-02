@@ -2,14 +2,36 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  CompletionRequest,
+  CompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
   Model,
+  ModerationRequest,
+  ModerationResponse,
   ProviderAdapter,
+  ProviderCapabilities,
   ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 import { mergeProviderRequestHeaders } from "./types";
+import {
+  streamImageGenerationResponseBody,
+  streamTextResponseBody,
+} from "./openai-compatible-stream";
 
 const REQUEST_TIMEOUT_MS = 60_000;
+
+const nonHttpEndpointCapabilities: ProviderCapabilities = {
+  ...openAICompatibleCapabilities,
+  responsesApi: false,
+  embeddingsApi: false,
+  moderationsApi: false,
+  imageGenerationsApi: false,
+  completionsApi: false,
+};
 
 /**
  * Pinned api-version for Azure Responses on Azure OpenAI / Microsoft
@@ -24,6 +46,10 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   capabilities = openAICompatibleCapabilities;
   private apiKey: string;
   private chatCompletionsUrl?: string;
+  private embeddingsUrl?: string;
+  private moderationsUrl?: string;
+  private imageGenerationsUrl?: string;
+  private completionsUrl?: string;
   /**
    * Base URL the adapter posts to for Responses API calls, if the
    * upstream exposes the OpenAI Responses surface. Set via the
@@ -43,7 +69,20 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   }) {
     this.name = input.name;
     this.apiKey = input.apiKey;
+    this.capabilities = input.apiBase ? openAICompatibleCapabilities : nonHttpEndpointCapabilities;
     this.chatCompletionsUrl = input.apiBase ? this.toChatCompletionsUrl(input.apiBase) : undefined;
+    this.embeddingsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "embeddings")
+      : undefined;
+    this.moderationsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "moderations")
+      : undefined;
+    this.imageGenerationsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "images/generations")
+      : undefined;
+    this.completionsUrl = input.apiBase
+      ? this.toEndpointUrl(input.apiBase, "completions")
+      : undefined;
     this.responsesEndpoint = input.responsesEndpoint;
     this.models = input.models;
   }
@@ -123,6 +162,132 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     }
   }
 
+  async createEmbedding(
+    request: EmbeddingRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<EmbeddingResponse> {
+    if (!this.embeddingsUrl) {
+      throw new Error(`${this.name} does not expose an embeddings URL in models.dev`);
+    }
+
+    const response = await fetch(this.embeddingsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as EmbeddingResponse;
+  }
+
+  async createModeration(
+    request: ModerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ModerationResponse> {
+    if (!this.moderationsUrl) {
+      throw new Error(`${this.name} does not expose a moderations URL in models.dev`);
+    }
+
+    const response = await fetch(this.moderationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ModerationResponse;
+  }
+
+  async createImageGeneration(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ImageGenerationResponse> {
+    if (!this.imageGenerationsUrl) {
+      throw new Error(`${this.name} does not expose an image generations URL in models.dev`);
+    }
+
+    const response = await fetch(this.imageGenerationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ImageGenerationResponse;
+  }
+
+  async *createImageGenerationStream(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    if (!this.imageGenerationsUrl) {
+      throw new Error(`${this.name} does not expose an image generations URL in models.dev`);
+    }
+
+    const response = await fetch(this.imageGenerationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamImageGenerationResponseBody(response);
+  }
+
+  async createCompletion(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<CompletionResponse> {
+    if (!this.completionsUrl) {
+      throw new Error(`${this.name} does not expose a completions URL in models.dev`);
+    }
+
+    const response = await fetch(this.completionsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as CompletionResponse;
+  }
+
+  async *createCompletionStream(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    if (!this.completionsUrl) {
+      throw new Error(`${this.name} does not expose a completions URL in models.dev`);
+    }
+
+    yield* this.createRawStream(this.completionsUrl, { ...request, stream: true }, options);
+  }
+
   listModels(): Model[] {
     return this.models;
   }
@@ -141,8 +306,41 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
     return buildOpenAICompatibleRequestBody(request, stream);
   }
 
+  private async *createRawStream(
+    url: string,
+    request: Record<string, unknown>,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamTextResponseBody(response);
+  }
+
   private toChatCompletionsUrl(apiBase: string): string {
+    return this.toEndpointUrl(apiBase, "chat/completions");
+  }
+
+  private toEndpointUrl(apiBase: string, endpoint: string): string {
     const normalized = apiBase.replace(/\/$/, "");
-    return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+    if (normalized.endsWith("/chat/completions")) {
+      if (endpoint === "chat/completions") {
+        return normalized;
+      }
+      return normalized.replace(/\/chat\/completions$/, `/${endpoint}`);
+    }
+    if (normalized.endsWith(`/${endpoint}`)) {
+      return normalized;
+    }
+    return `${normalized}/${endpoint}`;
   }
 }

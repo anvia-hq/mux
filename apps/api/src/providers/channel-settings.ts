@@ -115,6 +115,26 @@ export function applyChannelResponseRequestSettings<T extends ResponseCreateRequ
   return prepareChannelResponseRequestSettings(request, channel).body;
 }
 
+export function prepareChannelOpenAICompatibleRequestSettings<
+  T extends { model: string } & Record<string, unknown>,
+>(
+  request: T,
+  channel: ChannelRequestRuntime,
+  context: ChannelOverrideRequestContext = {},
+): PreparedChannelRequest<T> {
+  const body = { ...request } as T;
+
+  if (!channel.settings?.passThroughBodyEnabled) {
+    removeDisabledOpenAICompatibleFields(body, channel.otherSettings);
+    return applyChannelOverrides(body, channel, runtimeContext(body, channel, context));
+  }
+
+  return {
+    body,
+    headers: resolveChannelHeaders(channel, runtimeContext(body, channel, context)),
+  };
+}
+
 export function prepareChannelResponseRequestSettings<T extends ResponseCreateRequest>(
   request: T,
   channel: ChannelRequestRuntime,

@@ -212,6 +212,16 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
   });
 
+  it("POST /v1/responses 400 missing input", async () => {
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o" }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("POST /v1/responses 200 success", async () => {
     mockHandleResponseCreate.mockResolvedValueOnce({
       id: "resp-1",
@@ -232,6 +242,60 @@ describe("responses router", () => {
       expect.anything(),
       "key-1",
       expect.objectContaining({ requireBillableUsage: false, rawBody }),
+    );
+  });
+
+  it("POST /v1/responses preserves extended create fields after validation", async () => {
+    mockHandleResponseCreate.mockResolvedValueOnce({
+      id: "resp-extended",
+      model: "openai:gpt-4o",
+      output: [],
+    });
+    const body = {
+      model: "openai:gpt-4o",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "describe this" },
+            { type: "input_image", image_url: "https://example.test/image.png", detail: "low" },
+            { type: "input_file", file_id: "file_1", filename: "notes.txt" },
+          ],
+        },
+      ],
+      include: ["file_search_call.results", "reasoning.encrypted_content"],
+      conversation: { id: "conv_1" },
+      context_management: { truncation: "auto" },
+      enable_thinking: false,
+      instructions: { text: "be brief" },
+      max_tool_calls: 0,
+      parallel_tool_calls: false,
+      previous_response_id: "resp_prev",
+      prompt_cache_key: "cache-key",
+      prompt_cache_retention: { type: "ephemeral" },
+      preset: "sonar",
+      stream_options: { include_usage: true, include_obfuscation: true },
+      top_logprobs: 0,
+      top_p: 0,
+      user: { id: "user-1" },
+    };
+
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseCreate).toHaveBeenCalledWith(
+      expect.objectContaining(body),
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify(body),
+      }),
     );
   });
 
@@ -1084,7 +1148,12 @@ describe("responses router", () => {
       },
     });
     const app = new Hono().route("/v1/responses", responsesRouter);
-    const rawBody = '{\n  "model": "openai:gpt-5",\n  "input": "hi"\n}';
+    const rawBody = JSON.stringify({
+      model: "openai:gpt-5",
+      input: "hi",
+      instructions: { text: "preserve tool state" },
+      previous_response_id: "resp_prev",
+    });
     const res = await app.request("/v1/responses/compact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1093,7 +1162,12 @@ describe("responses router", () => {
 
     expect(res.status).toBe(200);
     expect(mockHandleResponseCompact).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "openai:gpt-5" }),
+      expect.objectContaining({
+        model: "openai:gpt-5",
+        input: "hi",
+        instructions: { text: "preserve tool state" },
+        previous_response_id: "resp_prev",
+      }),
       "key-1",
       expect.objectContaining({ requireBillableUsage: false, rawBody }),
     );
@@ -1114,14 +1188,27 @@ describe("responses router", () => {
     expect(mockHandleResponseCompact).not.toHaveBeenCalled();
   });
 
-  it("POST /v1/responses/compact returns 400 on unknown fields (strict)", async () => {
+  it("POST /v1/responses/compact strips unknown fields", async () => {
+    mockHandleResponseCompact.mockResolvedValueOnce({
+      provider: "openai",
+      model: "openai:gpt-5",
+      response: { id: "resp_001", object: "response.compaction", output: [] },
+    });
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses/compact", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "openai:gpt-5", instructions: "nope" }),
+      body: JSON.stringify({ model: "openai:gpt-5", unknown: "nope" }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
+    expect(mockHandleResponseCompact).toHaveBeenCalledWith(
+      { model: "openai:gpt-5" },
+      "key-1",
+      expect.objectContaining({
+        requireBillableUsage: false,
+        rawBody: JSON.stringify({ model: "openai:gpt-5", unknown: "nope" }),
+      }),
+    );
   });
 
   it("POST /v1/responses/compact passes through the upstream envelope on non-404 errors", async () => {

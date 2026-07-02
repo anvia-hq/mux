@@ -57,6 +57,16 @@ describe("ModelsDevProviderAdapter", () => {
     expect(a.listModels()).toEqual(testModels);
   });
 
+  it("does not advertise passthrough endpoints without apiBase", () => {
+    const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
+
+    expect(a.capabilities.responsesApi).toBe(false);
+    expect(a.capabilities.embeddingsApi).toBe(false);
+    expect(a.capabilities.moderationsApi).toBe(false);
+    expect(a.capabilities.imageGenerationsApi).toBe(false);
+    expect(a.capabilities.completionsApi).toBe(false);
+  });
+
   it("chatCompletion throws without apiBase", async () => {
     const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
     await expect(a.chatCompletion({ model: "m1", messages: [] })).rejects.toThrow(
@@ -121,6 +131,148 @@ describe("ModelsDevProviderAdapter", () => {
       models: testModels,
     });
     await expect(a.chatCompletion({ model: "m1", messages: [] })).rejects.toThrow("429");
+  });
+
+  it("createEmbedding throws without apiBase", async () => {
+    const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
+    await expect(a.createEmbedding({ model: "m1", input: "hello" })).rejects.toThrow(
+      "embeddings URL",
+    );
+  });
+
+  it("createEmbedding sends POST and returns response", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      Response.json({
+        object: "list",
+        data: [{ object: "embedding", embedding: [0.1], index: 0 }],
+        model: "m1",
+        usage: { prompt_tokens: 1, total_tokens: 1 },
+      }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+    const resp = await a.createEmbedding({
+      model: "m1",
+      input: ["hello"],
+      encoding_format: "float",
+    });
+
+    expect(resp.data[0]?.embedding).toEqual([0.1]);
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/embeddings",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toEqual({
+      model: "m1",
+      input: ["hello"],
+      encoding_format: "float",
+    });
+  });
+
+  it("createModeration sends POST to the derived moderations endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "modr-1",
+        model: "m1",
+        results: [{ flagged: false }],
+      }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const resp = await a.createModeration({ model: "m1", input: "hello" });
+
+    expect(resp.results).toEqual([{ flagged: false }]);
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/moderations",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("createImageGeneration sends POST to the derived image generations endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      Response.json({
+        created: 1,
+        data: [{ b64_json: "abc" }],
+      }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const resp = await a.createImageGeneration({ model: "m1", prompt: "cat" });
+
+    expect(resp.data?.[0]?.b64_json).toBe("abc");
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/images/generations",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("createCompletion sends POST to the derived completions endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "cmpl-1",
+        model: "m1",
+        choices: [{ text: "hi", index: 0 }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const resp = await a.createCompletion({ model: "m1", prompt: "hello" });
+
+    expect(resp.choices?.[0]?.text).toBe("hi");
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/completions",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("createCompletionStream yields raw SSE from the derived completions endpoint", async () => {
+    mockGlobalFetch.mockResolvedValueOnce(makeSSEStream(['data: {"id":"c1"}\n\n']));
+    const a = new ModelsDevProviderAdapter({
+      name: "t",
+      apiKey: "k",
+      apiBase: "https://x.com/v1/chat/completions",
+      models: testModels,
+    });
+
+    const chunks: string[] = [];
+    for await (const chunk of a.createCompletionStream({ model: "m1", prompt: "hello" })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.join("")).toBe('data: {"id":"c1"}\n\n');
+    expect(mockGlobalFetch).toHaveBeenCalledWith(
+      "https://x.com/v1/completions",
+      expect.objectContaining({ method: "POST" }),
+    );
+    const requestBody = JSON.parse(String(mockGlobalFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({ model: "m1", prompt: "hello", stream: true });
   });
 
   it("chatCompletionStream throws without apiBase", async () => {

@@ -16,6 +16,10 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export const azureCapabilities: ProviderCapabilities = {
   ...openAICompatibleCapabilities,
   responsesApi: true,
+  embeddingsApi: false,
+  moderationsApi: false,
+  imageGenerationsApi: false,
+  completionsApi: false,
 };
 
 export class AzureResponsesEndpointNotConfiguredError extends Error {

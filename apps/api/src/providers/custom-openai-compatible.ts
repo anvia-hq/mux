@@ -2,12 +2,24 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
-  ProviderRequestOptions,
+  CompletionRequest,
+  CompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
+  ImageGenerationRequest,
+  ImageGenerationResponse,
   Model,
+  ModerationRequest,
+  ModerationResponse,
   ProviderAdapter,
+  ProviderRequestOptions,
 } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 import { mergeProviderRequestHeaders } from "./types";
+import {
+  streamImageGenerationResponseBody,
+  streamTextResponseBody,
+} from "./openai-compatible-stream";
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -15,12 +27,20 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
   readonly capabilities = { ...openAICompatibleCapabilities, responsesApi: false };
   private readonly apiKey: string;
   private readonly chatCompletionsUrl: string;
+  private readonly embeddingsUrl: string;
+  private readonly moderationsUrl: string;
+  private readonly imageGenerationsUrl: string;
+  private readonly completionsUrl: string;
   private readonly models: Model[];
 
   constructor(input: { name: string; apiKey: string; apiBase: string; models: Model[] }) {
     this.name = input.name;
     this.apiKey = input.apiKey;
     this.chatCompletionsUrl = this.toChatCompletionsUrl(input.apiBase);
+    this.embeddingsUrl = this.toEndpointUrl(input.apiBase, "embeddings");
+    this.moderationsUrl = this.toEndpointUrl(input.apiBase, "moderations");
+    this.imageGenerationsUrl = this.toEndpointUrl(input.apiBase, "images/generations");
+    this.completionsUrl = this.toEndpointUrl(input.apiBase, "completions");
     this.models = input.models;
   }
 
@@ -95,6 +115,108 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     }
   }
 
+  async createEmbedding(
+    request: EmbeddingRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<EmbeddingResponse> {
+    const response = await fetch(this.embeddingsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as EmbeddingResponse;
+  }
+
+  async createModeration(
+    request: ModerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ModerationResponse> {
+    const response = await fetch(this.moderationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ModerationResponse;
+  }
+
+  async createImageGeneration(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<ImageGenerationResponse> {
+    const response = await fetch(this.imageGenerationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as ImageGenerationResponse;
+  }
+
+  async *createImageGenerationStream(
+    request: ImageGenerationRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    const response = await fetch(this.imageGenerationsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamImageGenerationResponseBody(response);
+  }
+
+  async createCompletion(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): Promise<CompletionResponse> {
+    const response = await fetch(this.completionsUrl, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    return (await response.json()) as CompletionResponse;
+  }
+
+  async *createCompletionStream(
+    request: CompletionRequest,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    yield* this.createRawStream(this.completionsUrl, { ...request, stream: true }, options);
+  }
+
   listModels(): Model[] {
     return this.models;
   }
@@ -109,8 +231,41 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
     );
   }
 
+  private async *createRawStream(
+    url: string,
+    request: Record<string, unknown>,
+    options?: ProviderRequestOptions,
+  ): AsyncIterable<string> {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: this.buildHeaders(options),
+      body: options?.rawBody ?? JSON.stringify(request),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+    }
+
+    yield* streamTextResponseBody(response);
+  }
+
   private toChatCompletionsUrl(apiBase: string): string {
+    return this.toEndpointUrl(apiBase, "chat/completions");
+  }
+
+  private toEndpointUrl(apiBase: string, endpoint: string): string {
     const normalized = apiBase.replace(/\/$/, "");
-    return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+    if (normalized.endsWith("/chat/completions")) {
+      if (endpoint === "chat/completions") {
+        return normalized;
+      }
+      return normalized.replace(/\/chat\/completions$/, `/${endpoint}`);
+    }
+    if (normalized.endsWith(`/${endpoint}`)) {
+      return normalized;
+    }
+    return `${normalized}/${endpoint}`;
   }
 }

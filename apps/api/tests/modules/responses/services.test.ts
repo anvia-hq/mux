@@ -401,6 +401,41 @@ describe("responses services", () => {
     );
   });
 
+  it("forwards remaining Responses passthrough fields on create", async () => {
+    const createResponse = vi.fn().mockResolvedValueOnce({
+      id: "resp-context",
+      model: "gpt-4o",
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    mockResolveResponseTarget.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4o",
+      target: createResolvedModel("openai", "gpt-4o", createResponse),
+    });
+    mockEstimateCost.mockReturnValueOnce(0.000002);
+
+    await handleResponseCreate(
+      createRequest({
+        context_management: { truncation: "auto" },
+        enable_thinking: false,
+        prompt_cache_retention: { type: "ephemeral" },
+        preset: "sonar",
+      }),
+      "key-1",
+    );
+
+    expect(createResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-4o",
+        input: "hello",
+        context_management: { truncation: "auto" },
+        enable_thinking: false,
+        prompt_cache_retention: { type: "ephemeral" },
+        preset: "sonar",
+      }),
+    );
+  });
+
   it("rejects unsupported response features before resolving providers", async () => {
     await expect(handleResponseCreate(createRequest({ stream: true }), "key-1")).rejects.toThrow(
       "streaming",
@@ -1396,7 +1431,12 @@ describe("responses services", () => {
       mockEstimateCost.mockReturnValueOnce(0.42);
 
       const result = await handleResponseCompact(
-        { model: "openai:gpt-5", input: [{ role: "user", content: "hi" }] },
+        {
+          model: "openai:gpt-5",
+          input: [{ role: "user", content: "hi" }],
+          instructions: { text: "preserve tool state" },
+          previous_response_id: "resp_prev",
+        },
         "key-1",
         { requireBillableUsage: true },
       );
@@ -1405,7 +1445,13 @@ describe("responses services", () => {
         provider: "openai",
         model: "openai:gpt-5",
       });
-      expect(compactResponse).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-5" }));
+      expect(compactResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: "gpt-5",
+          instructions: { text: "preserve tool state" },
+          previous_response_id: "resp_prev",
+        }),
+      );
       expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.42);
       expect(mockLogRequest).toHaveBeenCalledWith(
         expect.objectContaining({

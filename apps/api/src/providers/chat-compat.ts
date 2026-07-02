@@ -19,6 +19,10 @@ export const openAICompatibleCapabilities: ProviderCapabilities = {
   logprobs: true,
   openAICompatiblePassthrough: true,
   responsesApi: true,
+  embeddingsApi: true,
+  moderationsApi: true,
+  imageGenerationsApi: true,
+  completionsApi: true,
 };
 
 export const anthropicCapabilities: ProviderCapabilities = {
