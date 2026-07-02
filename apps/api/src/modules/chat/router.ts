@@ -12,6 +12,7 @@ import {
   validateChatCompletionRequestShape,
 } from "../../providers/chat-compat";
 import {
+  addApiKeySpendUsd,
   ApiKeyModelAccessDeniedError,
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
@@ -59,17 +60,13 @@ chatRouter.post("/completions", async (c) => {
     throw error;
   }
 
-  if (isLimitedKey && body.stream) {
-    return c.json({ error: "streaming is not supported for API keys with a spend limit" }, 429);
-  }
-
   try {
     if (isLimitedKey) {
       await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
     }
 
     const result = await handleChatCompletion(body, apiKeyId, {
-      requireBillableUsage: isLimitedKey,
+      requireBillableUsage: isLimitedKey && !body.stream,
     });
 
     // Streaming response: pipe provider chunks to the client as SSE.
@@ -100,6 +97,16 @@ chatRouter.post("/completions", async (c) => {
           streamLogFinalized = true;
 
           const latencyMs = Date.now() - startTime;
+          const estimatedCost = estimateCost(model, promptTokens, completionTokens);
+
+          if (isLimitedKey && estimatedCost !== undefined) {
+            try {
+              await addApiKeySpendUsd(apiKeyId, estimatedCost);
+            } catch (spendError) {
+              console.error("Failed to record streamed chat spend:", spendError);
+            }
+          }
+
           await logStreamFinal({
             logId,
             apiKeyId,
@@ -110,7 +117,7 @@ chatRouter.post("/completions", async (c) => {
             promptTokens,
             completionTokens,
             totalTokens,
-            estimatedCost: estimateCost(model, promptTokens, completionTokens),
+            estimatedCost,
             statusCode: 200,
           });
         }

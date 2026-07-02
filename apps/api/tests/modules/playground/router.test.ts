@@ -98,12 +98,21 @@ describe("playground router", () => {
     expect(res.status).toBe(404);
   });
 
-  it("rejects spend-limited keys", async () => {
+  it("accepts spend-limited keys", async () => {
     mockRequireRole.mockResolvedValueOnce({ id: "admin-1" });
     mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
       id: "key-1",
       spendLimitUsd: 10,
+      allowAllModels: true,
+      allowedModelIds: [],
     });
+    mockCreatePlaygroundApiKeyToken.mockResolvedValueOnce("mux_playground_token");
+    mockCreateCompletionStream.mockReturnValueOnce(
+      (async function* stream() {
+        yield { type: "text_delta", delta: "hello" };
+      })(),
+    );
+    mockCreateEventStream.mockReturnValueOnce(new Response("jsonl", { status: 200 }));
 
     const res = await createApp().request("/playground/chat/completions", {
       method: "POST",
@@ -111,8 +120,9 @@ describe("playground router", () => {
       body: JSON.stringify(requestBody()),
     });
 
-    expect(res.status).toBe(422);
-    expect(mockCreatePlaygroundApiKeyToken).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(mockCreatePlaygroundApiKeyToken).toHaveBeenCalledWith("key-1");
+    expect(mockCreateEventStream).toHaveBeenCalledWith(expect.anything(), { format: "jsonl" });
   });
 
   it("rejects models outside the selected key access", async () => {

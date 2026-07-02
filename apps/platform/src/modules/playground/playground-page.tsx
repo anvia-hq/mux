@@ -79,10 +79,7 @@ export function PlaygroundPage() {
   const [threadKey, setThreadKey] = useState(0);
 
   const apiKeys = apiKeysQuery.data?.keys ?? [];
-  const selectableApiKeys = useMemo(
-    () => apiKeys.filter((key) => key.isActive && key.spendLimitUsd === null),
-    [apiKeys],
-  );
+  const selectableApiKeys = useMemo(() => apiKeys.filter((key) => key.isActive), [apiKeys]);
   const selectedApiKey =
     selectableApiKeys.find((key) => key.id === selectedApiKeyId) ?? selectableApiKeys[0] ?? null;
   const models = modelsQuery.data?.data ?? [];
@@ -115,10 +112,8 @@ export function PlaygroundPage() {
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : selectableApiKeys.length === 0 ? (
         <Alert>
-          <AlertTitle>No active unlimited API keys</AlertTitle>
-          <AlertDescription>
-            Create an API key without a USD balance before running playground prompts.
-          </AlertDescription>
+          <AlertTitle>No active API keys</AlertTitle>
+          <AlertDescription>Create an API key before running playground prompts.</AlertDescription>
         </Alert>
       ) : models.length === 0 ? (
         <Alert>

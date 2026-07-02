@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
+  mockAddApiKeySpendUsd,
   mockAssertApiKeyCanSpend,
   mockEstimateCost,
   mockHandleChatCompletion,
@@ -9,6 +10,7 @@ const {
   mockModelAccess,
   mockSpendLimit,
 } = vi.hoisted(() => ({
+  mockAddApiKeySpendUsd: vi.fn(),
   mockAssertApiKeyCanSpend: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockHandleChatCompletion: vi.fn(),
@@ -108,6 +110,7 @@ vi.mock("../../../src/modules/keys/services", () => {
   }
 
   return {
+    addApiKeySpendUsd: mockAddApiKeySpendUsd,
     ApiKeyModelAccessDeniedError,
     ApiKeySpendLedgerUnavailableError,
     ApiKeySpendLimitExceededError,
@@ -276,8 +279,9 @@ describe("chat router", () => {
     expect(mockHandleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it("POST /completions 429 for limited streaming request", async () => {
+  it("POST /completions 429 when spend limit is exhausted before streaming", async () => {
     mockSpendLimit.value = 10;
+    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
@@ -290,6 +294,55 @@ describe("chat router", () => {
     });
     expect(res.status).toBe(429);
     expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("POST /completions checks and bills limited streaming requests", async () => {
+    mockSpendLimit.value = 10;
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+      };
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      startTime: Date.now(),
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(expect.anything(), "key-1", {
+      requireBillableUsage: false,
+    });
+    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        estimatedCost: 0.01,
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+        statusCode: 200,
+      }),
+    );
   });
 
   it("POST /completions 429 when limited request cannot be billed", async () => {
@@ -406,6 +459,49 @@ describe("chat router", () => {
         completionTokens: 17,
         totalTokens: 28,
         estimatedCost: 0.01,
+        statusCode: 200,
+      }),
+    );
+  });
+
+  it("POST /completions does not bill limited streaming requests without estimated cost", async () => {
+    mockSpendLimit.value = 10;
+    mockEstimateCost.mockReturnValueOnce(undefined);
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [],
+      };
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      startTime: Date.now(),
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    await res.text();
+    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
+    expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        estimatedCost: undefined,
         statusCode: 200,
       }),
     );

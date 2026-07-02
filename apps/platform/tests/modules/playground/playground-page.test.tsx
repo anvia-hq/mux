@@ -229,7 +229,7 @@ describe("PlaygroundPage", () => {
     ]);
   });
 
-  it("renders assistant chat controls with the selected active unlimited key and first allowed model", async () => {
+  it("renders assistant chat controls with the selected active key and first allowed model", async () => {
     mockUseApiKeysQuery.mockReturnValue({
       isLoading: false,
       data: {
@@ -239,9 +239,9 @@ describe("PlaygroundPage", () => {
             name: "limited",
             isActive: true,
             spendLimitUsd: 1,
-            allowAllModels: true,
-            includeFutureModels: true,
-            allowedModelIds: null,
+            allowAllModels: false,
+            includeFutureModels: false,
+            allowedModelIds: ["e2e:e2e-chat"],
             canReveal: true,
           },
           {
@@ -281,7 +281,7 @@ describe("PlaygroundPage", () => {
     expect(screen.getByRole("textbox", { name: "Prompt" })).not.toBeNull();
     expect(screen.getByRole("button", { name: "Send" })).not.toBeNull();
     await waitFor(() => {
-      expect(screen.getByRole("combobox", { name: "API key" }).textContent).toContain("admin-key");
+      expect(screen.getByRole("combobox", { name: "API key" }).textContent).toContain("limited");
       expect(screen.getByRole("combobox", { name: "Model" }).textContent).toContain("e2e:e2e-chat");
       expect(mockUseLocalRuntime).toHaveBeenCalled();
     });
@@ -355,7 +355,7 @@ describe("PlaygroundPage", () => {
     );
   });
 
-  it("shows a setup message without an active unlimited key", () => {
+  it("shows a setup message without an active API key", () => {
     mockUseApiKeysQuery.mockReturnValue({
       isLoading: false,
       data: {
@@ -363,7 +363,7 @@ describe("PlaygroundPage", () => {
           {
             id: "limited-key",
             name: "limited",
-            isActive: true,
+            isActive: false,
             spendLimitUsd: 1,
             allowAllModels: true,
             includeFutureModels: true,
@@ -377,6 +377,6 @@ describe("PlaygroundPage", () => {
 
     render(React.createElement(PlaygroundPage));
 
-    expect(screen.getByText("No active unlimited API keys")).not.toBeNull();
+    expect(screen.getByText("No active API keys")).not.toBeNull();
   });
 });

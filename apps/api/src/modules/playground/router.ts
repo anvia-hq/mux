@@ -42,13 +42,6 @@ playgroundRouter.post(
       return c.json({ error: "API key not found or revoked" }, 404);
     }
 
-    if (apiKey.spendLimitUsd !== null && apiKey.spendLimitUsd !== undefined) {
-      return c.json(
-        { error: "playground streaming requires an API key without a spend limit" },
-        422,
-      );
-    }
-
     try {
       assertApiKeyModelAllowed(body.model, apiKey);
     } catch (error) {

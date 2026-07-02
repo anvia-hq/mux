@@ -132,7 +132,9 @@ test("retries fallback groups after a provider failure", async ({ request }) => 
   );
 });
 
-test("enforces spend limits and rejects unbillable limited chat usage", async ({ request }) => {
+test("enforces spend limits, bills limited streams, and rejects unbillable limited chat usage", async ({
+  request,
+}) => {
   const seed = await seedE2e(request, {
     users: [{ ...adminUser, role: "ADMIN" }],
     e2eProvider: true,
@@ -149,12 +151,21 @@ test("enforces spend limits and rejects unbillable limited chat usage", async ({
         spendLimitUsd: 1,
         isActive: true,
       },
+      {
+        name: "stream-limited-key",
+        createdByEmail: adminUser.email,
+        spendLimitUsd: 0.00002,
+        isActive: true,
+      },
     ],
   });
   const limitedKey = seed.apiKeys.find((key) => key.name === "limited-key")?.rawKey ?? "";
   const unbillableKey = seed.apiKeys.find((key) => key.name === "unbillable-key")?.rawKey ?? "";
+  const streamLimitedKey =
+    seed.apiKeys.find((key) => key.name === "stream-limited-key")?.rawKey ?? "";
   expect(limitedKey).not.toBe("");
   expect(unbillableKey).not.toBe("");
+  expect(streamLimitedKey).not.toBe("");
 
   const first = await postChatCompletion(request, limitedKey, {
     model: e2eChatModel,
@@ -169,14 +180,31 @@ test("enforces spend limits and rejects unbillable limited chat usage", async ({
   expect(second.status()).toBe(429);
   await expect(second.json()).resolves.toMatchObject({ error: "API key spend limit exceeded" });
 
-  const streaming = await postChatCompletion(request, limitedKey, {
+  const streaming = await postChatCompletion(request, streamLimitedKey, {
     model: e2eChatModel,
-    messages: [{ role: "user", content: "stream blocked" }],
+    messages: [{ role: "user", content: "stream allowed" }],
     stream: true,
   });
-  expect(streaming.status()).toBe(429);
-  await expect(streaming.json()).resolves.toMatchObject({
-    error: "streaming is not supported for API keys with a spend limit",
+  expect(streaming.status()).toBe(200);
+  const streamText = await streaming.text();
+  expect(streamText).toContain("E2E stream for stream allowed");
+  await waitForE2eRequestLog(
+    request,
+    (log) =>
+      log.apiKeyName === "stream-limited-key" &&
+      log.model === e2eChatModel &&
+      log.statusCode === 200 &&
+      log.promptTokens === 11 &&
+      log.completionTokens === 7,
+  );
+
+  const afterStream = await postChatCompletion(request, streamLimitedKey, {
+    model: e2eChatModel,
+    messages: [{ role: "user", content: "blocked after stream charge" }],
+  });
+  expect(afterStream.status()).toBe(429);
+  await expect(afterStream.json()).resolves.toMatchObject({
+    error: "API key spend limit exceeded",
   });
 
   const unbillable = await postChatCompletion(request, unbillableKey, {
