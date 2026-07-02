@@ -3,6 +3,7 @@ export type AuthUser = {
   email: string;
   name: string | null;
   role: "ADMIN" | "USER";
+  spendLimitUsd: number | null;
   createdAt: string;
   updatedAt: string;
 };

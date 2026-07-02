@@ -74,7 +74,7 @@ async function authenticateApiKey(c: Context, next: Next, key: string) {
   // Set API key info in context for logging
   c.set("apiKeyId", apiKey.id);
   c.set("apiKeyName", apiKey.name);
-  c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd);
+  c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd ?? apiKey.ownerSpendLimitUsd);
   c.set("apiKeyAllowAllModels", apiKey.allowAllModels);
   c.set("apiKeyIncludeFutureModels", apiKey.includeFutureModels);
   c.set("apiKeyAllowedModelIds", apiKey.allowedModelIds);

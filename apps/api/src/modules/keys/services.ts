@@ -201,6 +201,8 @@ export async function validateApiKey(rawKey: string) {
       name: string;
       isActive: boolean;
       spendLimitUsd: number | null;
+      createdBy?: string;
+      ownerSpendLimitUsd?: number | null;
       allowAllModels?: boolean | null;
       includeFutureModels?: boolean | null;
       allowedModelIds?: string[] | null;
@@ -209,7 +211,11 @@ export async function validateApiKey(rawKey: string) {
     // Cache unavailable, fall through to DB
   }
   if (cached) {
-    return cached.isActive ? { ...cached, ...normalizeApiKeyModelAccess(cached) } : null;
+    if (Object.hasOwn(cached, "ownerSpendLimitUsd")) {
+      return cached.isActive ? { ...cached, ...normalizeApiKeyModelAccess(cached) } : null;
+    }
+
+    await deleteApiKeyCache(hashed);
   }
 
   // Cache miss - query database
@@ -220,6 +226,10 @@ export async function validateApiKey(rawKey: string) {
       name: true,
       isActive: true,
       spendLimitUsd: true,
+      createdBy: true,
+      creator: {
+        select: { spendLimitUsd: true },
+      },
       allowAllModels: true,
       includeFutureModels: true,
       allowedModelIds: true,
@@ -231,13 +241,19 @@ export async function validateApiKey(rawKey: string) {
   }
 
   // Cache the result
+  const { creator, ...apiKeyWithoutCreator } = apiKey;
+  const cacheValue = {
+    ...apiKeyWithoutCreator,
+    ownerSpendLimitUsd: creator?.spendLimitUsd ?? null,
+  };
+
   try {
-    await cacheSet(cacheKey, apiKey);
+    await cacheSet(cacheKey, cacheValue);
   } catch {
     // Cache unavailable, continue without caching
   }
 
-  return apiKey.isActive ? { ...apiKey, ...normalizeApiKeyModelAccess(apiKey) } : null;
+  return apiKey.isActive ? { ...cacheValue, ...normalizeApiKeyModelAccess(apiKey) } : null;
 }
 
 export async function getActiveApiKeyForAuth(id: string) {
@@ -248,13 +264,27 @@ export async function getActiveApiKeyForAuth(id: string) {
       name: true,
       isActive: true,
       spendLimitUsd: true,
+      createdBy: true,
+      creator: {
+        select: { spendLimitUsd: true },
+      },
       allowAllModels: true,
       includeFutureModels: true,
       allowedModelIds: true,
     },
   });
 
-  return apiKey?.isActive ? { ...apiKey, ...normalizeApiKeyModelAccess(apiKey) } : null;
+  if (!apiKey?.isActive) {
+    return null;
+  }
+
+  const { creator, ...apiKeyWithoutCreator } = apiKey;
+
+  return {
+    ...apiKeyWithoutCreator,
+    ownerSpendLimitUsd: creator?.spendLimitUsd ?? null,
+    ...normalizeApiKeyModelAccess(apiKey),
+  };
 }
 
 export async function revokeApiKey(id: string) {
@@ -445,16 +475,47 @@ export async function getApiKeySpentUsd(apiKeyId: string): Promise<number> {
   }
 }
 
+export async function getUserSpentUsd(userId: string): Promise<number> {
+  try {
+    const value = await redis.get(userSpendLedgerKey(userId));
+    return value ? Number(value) : 0;
+  } catch (error) {
+    throw new ApiKeySpendLedgerUnavailableError(error);
+  }
+}
+
 export async function assertApiKeyCanSpend(
   apiKeyId: string,
   spendLimitUsd: number | null | undefined,
 ): Promise<void> {
-  if (spendLimitUsd === null || spendLimitUsd === undefined) {
+  if (spendLimitUsd !== null && spendLimitUsd !== undefined) {
+    const spentUsd = await getApiKeySpentUsd(apiKeyId);
+    if (spentUsd >= spendLimitUsd) {
+      throw new ApiKeySpendLimitExceededError();
+    }
+  }
+
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { id: apiKeyId },
+    select: {
+      createdBy: true,
+      creator: {
+        select: { spendLimitUsd: true },
+      },
+    },
+  });
+
+  if (!apiKey) {
     return;
   }
 
-  const spentUsd = await getApiKeySpentUsd(apiKeyId);
-  if (spentUsd >= spendLimitUsd) {
+  const userSpendLimitUsd = apiKey.creator.spendLimitUsd;
+  if (userSpendLimitUsd === null || userSpendLimitUsd === undefined) {
+    return;
+  }
+
+  const userSpentUsd = await getUserSpentUsd(apiKey.createdBy);
+  if (userSpentUsd >= userSpendLimitUsd) {
     throw new ApiKeySpendLimitExceededError();
   }
 }
@@ -465,11 +526,52 @@ export async function addApiKeySpendUsd(apiKeyId: string, spendUsd: number): Pro
   }
 
   try {
-    const value = await redis.incrbyfloat(apiKeySpendLedgerKey(apiKeyId), spendUsd);
-    return Number(value);
+    const apiKey = await prisma.apiKey.findUnique({
+      where: { id: apiKeyId },
+      select: { createdBy: true },
+    });
+    const transaction = redis.multi().incrbyfloat(apiKeySpendLedgerKey(apiKeyId), spendUsd);
+
+    if (apiKey) {
+      transaction.incrbyfloat(userSpendLedgerKey(apiKey.createdBy), spendUsd);
+    }
+
+    const results = await transaction.exec();
+    if (!results) {
+      throw new Error("Redis transaction aborted");
+    }
+
+    for (const [commandError] of results) {
+      if (commandError) {
+        throw commandError;
+      }
+    }
+
+    const value = results[0]?.[1];
+    return typeof value === "string" || typeof value === "number" ? Number(value) : 0;
   } catch (error) {
     throw new ApiKeySpendLedgerUnavailableError(error);
   }
+}
+
+export async function invalidateApiKeyCacheById(id: string): Promise<void> {
+  const apiKey = await prisma.apiKey.findUnique({
+    where: { id },
+    select: { key: true },
+  });
+
+  if (apiKey) {
+    await deleteApiKeyCache(apiKey.key);
+  }
+}
+
+export async function invalidateApiKeyCachesForUser(userId: string): Promise<void> {
+  const apiKeys = await prisma.apiKey.findMany({
+    where: { createdBy: userId },
+    select: { key: true },
+  });
+
+  await Promise.all(apiKeys.map((apiKey) => deleteApiKeyCache(apiKey.key)));
 }
 
 async function deleteApiKeyCache(hashedKey: string) {
@@ -482,4 +584,8 @@ async function deleteApiKeyCache(hashedKey: string) {
 
 function apiKeySpendLedgerKey(apiKeyId: string): string {
   return `apikey_spend:${apiKeyId}`;
+}
+
+function userSpendLedgerKey(userId: string): string {
+  return `user_spend:${userId}`;
 }

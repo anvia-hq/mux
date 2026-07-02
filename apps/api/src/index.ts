@@ -20,6 +20,7 @@ import { moderationsRouter } from "./modules/moderations/router";
 import { messagesRouter } from "./modules/messages/router";
 import { playgroundRouter } from "./modules/playground/router";
 import { providersRouter } from "./modules/providers/router";
+import { redemptionsRouter } from "./modules/redemptions/router";
 import { responsesRouter } from "./modules/responses/router";
 import { usersRouter } from "./modules/users/router";
 import { initProviders } from "./providers/registry";
@@ -60,6 +61,7 @@ const app = new Hono()
   .route("/dashboard/models", modelsDashboardRouter)
   .route("/api-keys", keysRouter)
   .route("/invitations", invitationsRouter)
+  .route("/redemptions", redemptionsRouter)
   .route("/logs", logsRouter)
   .route("/model-aliases", modelAliasesRouter)
   .route("/fallback-groups", fallbackGroupsRouter)

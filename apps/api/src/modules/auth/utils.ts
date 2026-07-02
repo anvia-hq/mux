@@ -19,6 +19,7 @@ export function sanitizeUser(user: User): SanitizedUser {
     email: user.email,
     name: user.name,
     role: user.role,
+    spendLimitUsd: user.spendLimitUsd,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };

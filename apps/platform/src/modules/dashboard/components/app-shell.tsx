@@ -55,6 +55,7 @@ const navGroups: NavGroup[] = [
       { to: "/", label: "Overview", icon: DashboardSquare01Icon },
       { to: "/api-keys", label: "API keys", icon: Key01Icon },
       { to: "/users", label: "Users", icon: User02Icon, adminOnly: true },
+      { to: "/redemptions", label: "Redemptions", icon: Link01Icon, adminOnly: true },
       { to: "/logs", label: "Logs", icon: Scroll01Icon },
     ],
   },
