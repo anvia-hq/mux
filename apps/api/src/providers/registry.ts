@@ -5,6 +5,7 @@ import type {
   AnthropicMessageTokenCountObject,
   AudioMultipartRequest,
   AudioProxyResponse,
+  AudioProxyStreamResponse,
   AudioSpeechRequest,
   CompletionRequest,
   CompletionResponse,
@@ -1025,6 +1026,17 @@ export type ResolvedAudioTranscriptionProviderModel = ResolvedProviderModel & {
 export type ResolvedAudioTranscriptionModel =
   ResolvedEndpointModel<ResolvedAudioTranscriptionProviderModel>;
 
+export type ResolvedAudioTranscriptionStreamProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAudioTranscriptionStream: (
+      request: AudioMultipartRequest,
+    ) => Promise<AudioProxyStreamResponse>;
+  };
+};
+
+export type ResolvedAudioTranscriptionStreamModel =
+  ResolvedEndpointModel<ResolvedAudioTranscriptionStreamProviderModel>;
+
 export type ResolvedAudioTranslationProviderModel = ResolvedProviderModel & {
   provider: ProviderAdapter & {
     createAudioTranslation: (request: AudioMultipartRequest) => Promise<AudioProxyResponse>;
@@ -1041,6 +1053,15 @@ export type ResolvedAudioSpeechProviderModel = ResolvedProviderModel & {
 };
 
 export type ResolvedAudioSpeechModel = ResolvedEndpointModel<ResolvedAudioSpeechProviderModel>;
+
+export type ResolvedAudioSpeechStreamProviderModel = ResolvedProviderModel & {
+  provider: ProviderAdapter & {
+    createAudioSpeechStream: (request: AudioSpeechRequest) => Promise<AudioProxyStreamResponse>;
+  };
+};
+
+export type ResolvedAudioSpeechStreamModel =
+  ResolvedEndpointModel<ResolvedAudioSpeechStreamProviderModel>;
 
 export type ResolvedAnthropicMessagesProviderModel = ResolvedProviderModel & {
   provider: ProviderAdapter & {
@@ -1115,16 +1136,36 @@ function isAudioTranscriptionCapableTarget(
   return isEndpointCapableTarget(target, "audioTranscriptionsApi", "createAudioTranscription");
 }
 
+function isAudioTranscriptionStreamCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAudioTranscriptionStreamProviderModel {
+  return isEndpointCapableTarget(
+    target,
+    "audioTranscriptionsApi",
+    "createAudioTranscriptionStream",
+  );
+}
+
 function isAudioTranslationCapableTarget(
   target: ResolvedProviderModel,
 ): target is ResolvedAudioTranslationProviderModel {
-  return isEndpointCapableTarget(target, "audioTranslationsApi", "createAudioTranslation");
+  if (!isEndpointCapableTarget(target, "audioTranslationsApi", "createAudioTranslation")) {
+    return false;
+  }
+
+  return target.providerName !== "openai" || target.upstreamModelId === "whisper-1";
 }
 
 function isAudioSpeechCapableTarget(
   target: ResolvedProviderModel,
 ): target is ResolvedAudioSpeechProviderModel {
   return isEndpointCapableTarget(target, "audioSpeechApi", "createAudioSpeech");
+}
+
+function isAudioSpeechStreamCapableTarget(
+  target: ResolvedProviderModel,
+): target is ResolvedAudioSpeechStreamProviderModel {
+  return isEndpointCapableTarget(target, "audioSpeechApi", "createAudioSpeechStream");
 }
 
 function isAnthropicMessagesCapableTarget(
@@ -1203,6 +1244,12 @@ export async function resolveAudioTranscriptionModel(
   return resolveEndpointModel(model, isAudioTranscriptionCapableTarget);
 }
 
+export async function resolveAudioTranscriptionStreamModel(
+  model: string,
+): Promise<ResolvedAudioTranscriptionStreamModel | null> {
+  return resolveEndpointModel(model, isAudioTranscriptionStreamCapableTarget);
+}
+
 export async function resolveAudioTranslationModel(
   model: string,
 ): Promise<ResolvedAudioTranslationModel | null> {
@@ -1213,6 +1260,12 @@ export async function resolveAudioSpeechModel(
   model: string,
 ): Promise<ResolvedAudioSpeechModel | null> {
   return resolveEndpointModel(model, isAudioSpeechCapableTarget);
+}
+
+export async function resolveAudioSpeechStreamModel(
+  model: string,
+): Promise<ResolvedAudioSpeechStreamModel | null> {
+  return resolveEndpointModel(model, isAudioSpeechStreamCapableTarget);
 }
 
 export async function resolveAnthropicMessagesModel(

@@ -27,6 +27,25 @@ const models: Model[] = [
   },
 ];
 
+function makeSSEStream(chunks: string[]) {
+  const encoder = new TextEncoder();
+  const data = chunks.map((chunk) => encoder.encode(chunk));
+  let index = 0;
+
+  return new Response(
+    new ReadableStream({
+      pull(controller) {
+        if (index < data.length) {
+          controller.enqueue(data[index++]);
+          return;
+        }
+        controller.close();
+      },
+    }),
+    { headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
 describe("CustomOpenAICompatibleAdapter", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -147,6 +166,41 @@ describe("CustomOpenAICompatibleAdapter", () => {
     expect(requestBody.get("file")).toBe(file);
   });
 
+  it("streams audio transcriptions through the derived OpenAI-compatible endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(makeSSEStream(["data: hello\n\n"]));
+
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1/chat/completions",
+      models,
+    });
+    const formData = new FormData();
+    const file = new File(["audio"], "speech.wav", { type: "audio/wav" });
+    formData.append("file", file);
+    formData.append("model", "client-model");
+
+    const response = await adapter.createAudioTranscriptionStream({ model: "embed", formData });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: hello\n\n");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://custom.example/v1/audio/transcriptions",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer k" },
+      }),
+    );
+    const requestBody = mockFetch.mock.calls[0]?.[1]?.body as FormData;
+    expect(requestBody.get("model")).toBe("embed");
+    expect(requestBody.get("file")).toBe(file);
+  });
+
   it("creates audio speech through the derived OpenAI-compatible endpoint", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(new Uint8Array([1]), { headers: { "Content-Type": "audio/mpeg" } }),
@@ -175,5 +229,47 @@ describe("CustomOpenAICompatibleAdapter", () => {
         },
       }),
     );
+  });
+
+  it("streams audio speech through the derived OpenAI-compatible endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(makeSSEStream(["data: speech\n\n"]));
+
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1/chat/completions",
+      models,
+    });
+    const response = await adapter.createAudioSpeechStream({
+      model: "embed",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
+    const chunks: string[] = [];
+    for await (const chunk of response.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(response.contentType).toBe("text/event-stream");
+    expect(chunks.join("")).toBe("data: speech\n\n");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://custom.example/v1/audio/speech",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer k",
+        },
+      }),
+    );
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody).toMatchObject({
+      model: "embed",
+      input: "hello",
+      voice: "alloy",
+      stream_format: "sse",
+    });
   });
 });

@@ -4,12 +4,20 @@ const {
   mockAddApiKeySpendUsd,
   mockEstimateCost,
   mockLogRequest,
+  mockResolveAudioSpeechModel,
+  mockResolveAudioSpeechStreamModel,
   mockResolveAudioTranscriptionModel,
+  mockResolveAudioTranscriptionStreamModel,
+  mockResolveAudioTranslationModel,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockLogRequest: vi.fn(),
+  mockResolveAudioSpeechModel: vi.fn(),
+  mockResolveAudioSpeechStreamModel: vi.fn(),
   mockResolveAudioTranscriptionModel: vi.fn(),
+  mockResolveAudioTranscriptionStreamModel: vi.fn(),
+  mockResolveAudioTranslationModel: vi.fn(),
 }));
 
 vi.mock("../../../src/modules/keys/services", () => {
@@ -40,10 +48,20 @@ vi.mock("../../../src/middleware/logger", () => {
 });
 vi.mock("../../../src/providers/registry", () => ({
   estimateCost: mockEstimateCost,
+  resolveAudioSpeechModel: mockResolveAudioSpeechModel,
+  resolveAudioSpeechStreamModel: mockResolveAudioSpeechStreamModel,
   resolveAudioTranscriptionModel: mockResolveAudioTranscriptionModel,
+  resolveAudioTranscriptionStreamModel: mockResolveAudioTranscriptionStreamModel,
+  resolveAudioTranslationModel: mockResolveAudioTranslationModel,
 }));
 
-import { handleAudioTranscription } from "../../../src/modules/audio/services";
+import {
+  createAudioUsageAccumulator,
+  extractAudioUsage,
+  extractAudioUsageFromRawSseChunk,
+  handleAudioTranscription,
+  handleAudioTranscriptionStream,
+} from "../../../src/modules/audio/services";
 import { openAICompatibleCapabilities } from "../../../src/providers/chat-compat";
 import { UpstreamOpenAICompatibleError } from "../../../src/providers/openai-compatible-error";
 
@@ -67,15 +85,30 @@ function createResolvedModel(
     provider: {
       name: provider,
       createAudioTranscription,
+      createAudioTranscriptionStream: vi.fn().mockResolvedValue({
+        stream: streamChunks(["data: {}\n\n"]),
+        contentType: "text/event-stream",
+      }),
       chatCompletion: vi.fn(),
       chatCompletionStream: vi.fn(),
       listModels: vi.fn().mockReturnValue([]),
       capabilities: openAICompatibleCapabilities,
     },
     providerName: provider,
+    channelId: `${provider}-channel`,
+    channelName: provider,
     modelId,
+    upstreamModelId: modelId,
     publicModelId: `${provider}:${modelId}`,
   };
+}
+
+async function* streamChunks(
+  chunks: Array<string | Uint8Array>,
+): AsyncIterable<string | Uint8Array> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
 }
 
 describe("audio services", () => {
@@ -105,12 +138,48 @@ describe("audio services", () => {
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.00001);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
+        channelId: "openai-channel",
+        channelName: "openai",
         endpoint: "/v1/audio/transcriptions",
         promptTokens: 5,
         completionTokens: 2,
         totalTokens: 7,
         estimatedCost: 0.00001,
         statusCode: 200,
+      }),
+    );
+  });
+
+  it("uses duration usage for audio accounting", async () => {
+    const createAudioTranscription = vi.fn().mockResolvedValue({
+      body: new TextEncoder().encode('{"text":"hello"}').buffer,
+      contentType: "application/json",
+      usage: { type: "duration", seconds: 1.2 },
+    });
+    const target = createResolvedModel("openai", "public-transcribe", createAudioTranscription);
+    target.upstreamModelId = "whisper-1";
+    mockResolveAudioTranscriptionModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:public-transcribe",
+      targets: [target],
+    });
+    mockEstimateCost.mockReturnValueOnce(0.00002);
+
+    await handleAudioTranscription(createFormData(), "openai:public-transcribe", "key-1", {
+      recordSpend: true,
+    });
+
+    expect(createAudioTranscription).toHaveBeenCalledWith({
+      model: "whisper-1",
+      formData: expect.any(FormData),
+    });
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:public-transcribe", 33, 0);
+    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.00002);
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptTokens: 33,
+        completionTokens: 0,
+        totalTokens: 33,
       }),
     );
   });
@@ -150,6 +219,100 @@ describe("audio services", () => {
     expect(backup.provider.createAudioTranscription).toHaveBeenCalledWith({
       model: "transcribe",
       formData: expect.any(FormData),
+    });
+  });
+
+  it("prefetches stream output and falls back before returning a transcription stream", async () => {
+    const primary = createResolvedModel("openai", "gpt-4o-transcribe");
+    primary.provider.createAudioTranscriptionStream = vi.fn().mockRejectedValueOnce(
+      new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 429,
+        body: "rate limited",
+      }),
+    );
+    const backup = createResolvedModel("custom", "public-transcribe");
+    backup.upstreamModelId = "upstream-transcribe";
+    backup.provider.createAudioTranscriptionStream = vi.fn().mockResolvedValueOnce({
+      stream: streamChunks(["data: first\n\n", "data: second\n\n"]),
+      contentType: "text/event-stream",
+    });
+    mockResolveAudioTranscriptionStreamModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      groupId: "audio",
+      name: "Audio",
+      description: null,
+      requestedModelId: "mux:audio",
+      targets: [primary, backup],
+    });
+
+    const result = await handleAudioTranscriptionStream(createFormData(), "mux:audio", "key-1");
+    const chunks: string[] = [];
+    for await (const chunk of result.stream) {
+      expect(typeof chunk).toBe("string");
+      chunks.push(String(chunk));
+    }
+
+    expect(chunks).toEqual(["data: first\n\n", "data: second\n\n"]);
+    expect(result).toMatchObject({
+      contentType: "text/event-stream",
+      provider: "custom",
+      model: "custom:public-transcribe",
+      channelId: "custom-channel",
+      channelName: "custom",
+    });
+    expect(mockLogRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "openai:gpt-4o-transcribe",
+        endpoint: "/v1/audio/transcriptions",
+        statusCode: 429,
+      }),
+    );
+    expect(backup.provider.createAudioTranscriptionStream).toHaveBeenCalledWith({
+      model: "upstream-transcribe",
+      formData: expect.any(FormData),
+    });
+  });
+
+  it("extracts token and duration usage from audio SSE chunks", () => {
+    expect(
+      extractAudioUsageFromRawSseChunk(
+        'data: {"usage":{"input_tokens":7,"output_tokens":5,"total_tokens":12}}\n\n',
+        "/v1/audio/transcriptions",
+      ),
+    ).toEqual({ promptTokens: 7, completionTokens: 5, totalTokens: 12 });
+
+    expect(extractAudioUsage({ type: "duration", seconds: 62 }, "/v1/audio/speech")).toEqual({
+      promptTokens: 0,
+      completionTokens: 1033,
+      totalTokens: 1033,
+    });
+  });
+
+  it("accumulates split SSE usage lines", () => {
+    const accumulator = createAudioUsageAccumulator(
+      "/v1/audio/transcriptions",
+      "text/event-stream",
+    );
+
+    expect(accumulator.push('data: {"usage":{"input_tokens":')).toEqual({});
+    expect(accumulator.push('7,"output_tokens":5,"total_tokens":12}}\n\n')).toEqual({
+      promptTokens: 7,
+      completionTokens: 5,
+      totalTokens: 12,
+    });
+    expect(accumulator.final()).toEqual({});
+  });
+
+  it("extracts usage from streamed JSON bodies", () => {
+    const accumulator = createAudioUsageAccumulator("/v1/audio/transcriptions", "application/json");
+
+    expect(accumulator.push('{"text":"hello","usage":{"type":"duration","seconds":9')).toEqual({});
+    expect(accumulator.push("}}")).toEqual({});
+    expect(accumulator.final()).toEqual({
+      promptTokens: 150,
+      completionTokens: 0,
+      totalTokens: 150,
     });
   });
 });
