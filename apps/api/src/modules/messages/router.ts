@@ -140,7 +140,7 @@ messagesRouter.post("/", async (c) => {
     });
 
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, channelId, channelName, startTime } = result;
+      const { stream: streamIterable, provider, model, channelId, channelName, latencyMs } = result;
       const logId = await logStreamStart({
         apiKeyId,
         provider,
@@ -166,9 +166,14 @@ messagesRouter.post("/", async (c) => {
           streamLogFinalized = true;
           usageTracker.end();
 
-          const latencyMs = Date.now() - startTime;
           const usage = usageTracker.usage();
-          const estimatedCost = estimateCost(model, usage.promptTokens, usage.completionTokens);
+          const estimatedCost = estimateCost(
+            model,
+            usage.promptTokens,
+            usage.completionTokens,
+            undefined,
+            usage.pricingInputTokens,
+          );
 
           if (isLimitedKey && estimatedCost !== undefined) {
             try {
@@ -190,6 +195,7 @@ messagesRouter.post("/", async (c) => {
             promptTokens: usage.promptTokens,
             completionTokens: usage.completionTokens,
             totalTokens: usage.totalTokens,
+            pricingInputTokens: usage.pricingInputTokens,
             estimatedCost,
             statusCode: 200,
           });
@@ -207,7 +213,6 @@ messagesRouter.post("/", async (c) => {
             console.error("Failed to finalize Anthropic Messages stream log:", logError);
           }
         } catch (streamError) {
-          const latencyMs = Date.now() - startTime;
           const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
           try {
@@ -352,6 +357,8 @@ class AnthropicSseUsageTracker {
   private buffer = "";
   private promptTokens: number | undefined;
   private completionTokens: number | undefined;
+  private cacheCreationTokens: number | undefined;
+  private cacheReadTokens: number | undefined;
 
   push(chunk: string) {
     this.buffer += chunk.replace(/\r\n/g, "\n");
@@ -370,7 +377,12 @@ class AnthropicSseUsageTracker {
     this.buffer = "";
   }
 
-  usage(): { promptTokens?: number; completionTokens?: number; totalTokens?: number } {
+  usage(): {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    pricingInputTokens?: number;
+  } {
     const totalTokens =
       this.promptTokens === undefined && this.completionTokens === undefined
         ? undefined
@@ -379,6 +391,14 @@ class AnthropicSseUsageTracker {
       promptTokens: this.promptTokens,
       completionTokens: this.completionTokens,
       totalTokens,
+      pricingInputTokens:
+        this.promptTokens === undefined &&
+        this.cacheCreationTokens === undefined &&
+        this.cacheReadTokens === undefined
+          ? undefined
+          : (this.promptTokens ?? 0) +
+            (this.cacheCreationTokens ?? 0) +
+            (this.cacheReadTokens ?? 0),
     };
   }
 
@@ -394,8 +414,20 @@ class AnthropicSseUsageTracker {
 
     try {
       const event = JSON.parse(data) as {
-        message?: { usage?: { input_tokens?: unknown; output_tokens?: unknown } };
-        usage?: { input_tokens?: unknown; output_tokens?: unknown };
+        message?: {
+          usage?: {
+            input_tokens?: unknown;
+            output_tokens?: unknown;
+            cache_creation_input_tokens?: unknown;
+            cache_read_input_tokens?: unknown;
+          };
+        };
+        usage?: {
+          input_tokens?: unknown;
+          output_tokens?: unknown;
+          cache_creation_input_tokens?: unknown;
+          cache_read_input_tokens?: unknown;
+        };
       };
       const usage = event.message?.usage ?? event.usage;
       if (!usage) return;
@@ -405,6 +437,18 @@ class AnthropicSseUsageTracker {
       }
       if (typeof usage.output_tokens === "number" && Number.isFinite(usage.output_tokens)) {
         this.completionTokens = usage.output_tokens;
+      }
+      if (
+        typeof usage.cache_creation_input_tokens === "number" &&
+        Number.isFinite(usage.cache_creation_input_tokens)
+      ) {
+        this.cacheCreationTokens = usage.cache_creation_input_tokens;
+      }
+      if (
+        typeof usage.cache_read_input_tokens === "number" &&
+        Number.isFinite(usage.cache_read_input_tokens)
+      ) {
+        this.cacheReadTokens = usage.cache_read_input_tokens;
       }
     } catch {
       return;

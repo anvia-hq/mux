@@ -33,6 +33,10 @@ export function toRequestLogCreateInput(entry: RequestLogPayload) {
     totalTokens: entry.totalTokens,
     reasoningTokens: entry.reasoningTokens,
     estimatedCost: entry.estimatedCost,
+    pricingInputTokens: entry.pricingInputTokens,
+    appliedInputPricePer1M: entry.appliedInputPricePer1M,
+    appliedOutputPricePer1M: entry.appliedOutputPricePer1M,
+    appliedPricingTierThreshold: entry.appliedPricingTierThreshold,
     statusCode: entry.statusCode,
     errorMessage: entry.errorMessage ?? null,
   };
@@ -52,6 +56,10 @@ export function toRequestLogFinalizeInput(entry: RequestLogPayload) {
     totalTokens: entry.totalTokens ?? null,
     reasoningTokens: entry.reasoningTokens ?? null,
     estimatedCost: entry.estimatedCost ?? null,
+    pricingInputTokens: entry.pricingInputTokens ?? null,
+    appliedInputPricePer1M: entry.appliedInputPricePer1M ?? null,
+    appliedOutputPricePer1M: entry.appliedOutputPricePer1M ?? null,
+    appliedPricingTierThreshold: entry.appliedPricingTierThreshold ?? null,
     statusCode: entry.statusCode,
     errorMessage: entry.errorMessage ?? null,
   };

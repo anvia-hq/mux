@@ -37,7 +37,7 @@ export type ChatCompletionResult =
       model: string;
       channelId?: string;
       channelName?: string;
-      startTime: number;
+      latencyMs: number;
       responseModel: string;
     }
   | {
@@ -93,14 +93,11 @@ export async function handleChatCompletion(
     resolved.targets,
     resolved.kind === "direct",
   );
-  const startTime = Date.now();
-
   if (request.stream) {
     const selected = await resolveStreamingTarget(
       request,
       apiKeyId,
       targets,
-      startTime,
       options.requestContext,
       options.rawBody,
     );
@@ -116,7 +113,7 @@ export async function handleChatCompletion(
       channelId: selected.target.channelId,
       channelName: selected.target.channelName,
       responseModel: resolved.requestedModelId,
-      startTime,
+      latencyMs: selected.latencyMs,
     };
   }
 
@@ -124,7 +121,6 @@ export async function handleChatCompletion(
     requireBillableUsage: options.requireBillableUsage,
     requestContext: options.requestContext,
     rawBody: options.rawBody,
-    startTime,
   });
 }
 
@@ -173,12 +169,12 @@ async function handleNonStreamingCompletion(
     requireBillableUsage?: boolean;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<ChatCompletionResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelChatRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -189,14 +185,17 @@ async function handleNonStreamingCompletion(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await target.provider.chatCompletion(prepared.body, providerOptions)
         : await target.provider.chatCompletion(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const estimatedCost = estimateCost(
         target.publicModelId,
         response.usage?.prompt_tokens,
         response.usage?.completion_tokens,
+        undefined,
+        response.usage?.pricing_input_tokens,
       );
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
@@ -232,6 +231,7 @@ async function handleNonStreamingCompletion(
         promptTokens: response.usage?.prompt_tokens,
         completionTokens: response.usage?.completion_tokens,
         totalTokens: response.usage?.total_tokens,
+        pricingInputTokens: response.usage?.pricing_input_tokens,
         estimatedCost,
         statusCode: 200,
       });
@@ -258,7 +258,7 @@ async function handleNonStreamingCompletion(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       // Log the failed concrete attempt before trying the next fallback target.
@@ -283,13 +283,17 @@ async function resolveStreamingTarget(
   request: ChatCompletionRequest,
   apiKeyId: string,
   targets: ResolvedProviderModel[],
-  startTime: number,
   requestContext?: ChannelOverrideRequestContext,
   rawBody?: string,
-): Promise<{ target: ResolvedProviderModel; stream: AsyncIterable<ChatCompletionChunk> }> {
+): Promise<{
+  target: ResolvedProviderModel;
+  stream: AsyncIterable<ChatCompletionChunk>;
+  latencyMs: number;
+}> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelChatRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -300,10 +304,16 @@ async function resolveStreamingTarget(
         prepared.headers,
         rawPassThroughBody(target, rawBody),
       );
+      attemptStartTime = Date.now();
       const stream = providerOptions
         ? target.provider.chatCompletionStream(prepared.body, providerOptions)
         : target.provider.chatCompletionStream(prepared.body);
-      return { target, stream: await prefetchFirstStreamChunk(stream) };
+      const prefetchedStream = await prefetchFirstStreamChunk(stream);
+      return {
+        target,
+        stream: prefetchedStream,
+        latencyMs: Date.now() - attemptStartTime,
+      };
     } catch (error) {
       if (
         error instanceof ChannelParamOverrideError ||
@@ -313,7 +323,7 @@ async function resolveStreamingTarget(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({

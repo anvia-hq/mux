@@ -16,6 +16,10 @@ export type RequestLogPayload = {
   totalTokens?: number;
   reasoningTokens?: number;
   estimatedCost?: number;
+  pricingInputTokens?: number;
+  appliedInputPricePer1M?: number;
+  appliedOutputPricePer1M?: number;
+  appliedPricingTierThreshold?: number;
   statusCode: number;
   errorMessage?: string;
 };

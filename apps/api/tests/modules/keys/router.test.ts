@@ -3,7 +3,13 @@ import { Hono } from "hono";
 
 const { mockPrisma } = vi.hoisted(() => ({
   mockPrisma: {
-    apiKey: { findMany: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    apiKey: {
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     requestLog: { groupBy: vi.fn() },
     user: { findUnique: vi.fn() },
   },
@@ -358,6 +364,63 @@ describe("keys router", () => {
         },
       }),
     );
+  });
+
+  it("PATCH /model-access updates every active API key", async () => {
+    mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+    mockPrisma.apiKey.findMany.mockResolvedValueOnce([
+      { id: "k1", key: "hashed-1" },
+      { id: "k2", key: "hashed-2" },
+    ]);
+    mockPrisma.apiKey.updateMany.mockResolvedValueOnce({ count: 2 });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/model-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "selected", allowedModelIds: ["openai:gpt-4o"] }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, updatedCount: 2 });
+    expect(mockPrisma.apiKey.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ["k1", "k2"] }, isActive: true } }),
+    );
+  });
+
+  it("PATCH /model-access rejects non-admin users", async () => {
+    mockPrisma.user.findUnique.mockResolvedValueOnce({
+      id: "user-1",
+      email: "user@test.com",
+      name: "User",
+      role: "USER",
+      passwordHash: "h",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/model-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "future" }),
+    });
+
+    expect(res.status).toBe(403);
+    expect(mockPrisma.apiKey.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("PATCH /model-access rejects unknown selected models", async () => {
+    mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+    const app = new Hono().route("/api-keys", keysRouter);
+    const res = await app.request("/api-keys/model-access", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "selected", allowedModelIds: ["anthropic:claude"] }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: "unknown or unavailable model(s): anthropic:claude",
+    });
   });
 
   it("PATCH /:id/model-access returns 404 when the key does not exist", async () => {

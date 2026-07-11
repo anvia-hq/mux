@@ -57,6 +57,7 @@ function makeRow(
     response: unknown;
     inputPricePer1M: number | null;
     outputPricePer1M: number | null;
+    pricingTiers: unknown;
     channelId: string | null;
     channelName: string | null;
   }> = {},
@@ -278,11 +279,50 @@ describe("processBackgroundPollJob", () => {
         completionTokens: 200,
         totalTokens: 300,
         estimatedCost: 0.002125,
+        pricingInputTokens: 100,
+        appliedInputPricePer1M: 1.25,
+        appliedOutputPricePer1M: 10,
         reasoningTokens: 12,
         statusCode: 200,
       }) satisfies Partial<RequestLogJob>,
     );
     expect(mockEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("uses the snapshotted whole-request tier after its threshold is crossed", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        pricingTiers: [
+          { inputTokenThreshold: 200_000, inputPricePer1M: 2.5, outputPricePer1M: 15 },
+        ],
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({
+        id: "resp_bg_abc",
+        status: "completed",
+        usage: { input_tokens: 250_000, output_tokens: 100, total_tokens: 250_100 },
+      }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+    mockPrismaApiKeyFindUnique.mockResolvedValueOnce({ createdBy: "user-1" });
+    mockRedisTransaction.exec.mockResolvedValueOnce([
+      [null, "0.6265"],
+      [null, "0.6265"],
+    ]);
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(mockRedisTransaction.incrbyfloat).toHaveBeenCalledWith("apikey_spend:key-1", 0.6265);
+    expect(mockEnqueueLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        estimatedCost: 0.6265,
+        pricingInputTokens: 250_000,
+        appliedInputPricePer1M: 2.5,
+        appliedOutputPricePer1M: 15,
+        appliedPricingTierThreshold: 200_000,
+      }) satisfies Partial<RequestLogJob>,
+    );
   });
 
   it("marks the row failed when the upstream returns 404", async () => {

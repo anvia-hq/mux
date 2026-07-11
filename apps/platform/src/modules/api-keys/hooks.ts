@@ -94,6 +94,18 @@ export function useUpdateApiKeyModelAccessMutation() {
   });
 }
 
+export function useApplyApiKeyModelAccessMutation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateApiKeyModelAccessInput) =>
+      apiFetch<{ ok: true; updatedCount: number }>("/api-keys/model-access", {
+        method: "PATCH",
+        body: input,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey }),
+  });
+}
+
 export function isForbiddenError(err: unknown) {
   return err instanceof ApiError && err.status === 403;
 }

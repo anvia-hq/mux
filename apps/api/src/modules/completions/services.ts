@@ -23,7 +23,7 @@ export type CompletionResult =
       model: string;
       channelId?: string;
       channelName?: string;
-      startTime: number;
+      latencyMs: number;
     }
   | {
       kind: "complete";
@@ -62,14 +62,11 @@ export async function handleCompletion(
     throw new ApiKeyUnbillableCompletionUsageError();
   }
 
-  const startTime = Date.now();
-
   if (request.stream) {
     const selected = await resolveStreamingTarget(
       request,
       apiKeyId,
       resolved.targets,
-      startTime,
       options.requestContext,
       options.rawBody,
     );
@@ -80,7 +77,7 @@ export async function handleCompletion(
       model: selected.target.publicModelId,
       channelId: selected.target.channelId,
       channelName: selected.target.channelName,
-      startTime,
+      latencyMs: selected.latencyMs,
     };
   }
 
@@ -93,7 +90,6 @@ export async function handleCompletion(
       requireBillableUsage: options.requireBillableUsage,
       requestContext: options.requestContext,
       rawBody: options.rawBody,
-      startTime,
     },
   );
 }
@@ -107,12 +103,12 @@ async function createCompletionWithFallback(
     requireBillableUsage?: boolean;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<CompletionResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -123,10 +119,11 @@ async function createCompletionWithFallback(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await target.provider.createCompletion(prepared.body, providerOptions)
         : await target.provider.createCompletion(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const usage = extractCompletionTokenUsage(response);
       const estimatedCost = estimateCost(
         target.publicModelId,
@@ -184,7 +181,7 @@ async function createCompletionWithFallback(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
@@ -208,13 +205,17 @@ async function resolveStreamingTarget(
   request: CompletionRequest,
   apiKeyId: string,
   targets: ResolvedCompletionProviderModel[],
-  startTime: number,
   requestContext?: ChannelOverrideRequestContext,
   rawBody?: string,
-): Promise<{ target: ResolvedCompletionProviderModel; stream: AsyncIterable<string> }> {
+): Promise<{
+  target: ResolvedCompletionProviderModel;
+  stream: AsyncIterable<string>;
+  latencyMs: number;
+}> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       if (!target.provider.createCompletionStream) {
         throw new Error(`${target.providerName} does not support completions streaming`);
@@ -228,10 +229,16 @@ async function resolveStreamingTarget(
         prepared.headers,
         rawPassThroughBody(target, rawBody),
       );
+      attemptStartTime = Date.now();
       const stream = providerOptions
         ? target.provider.createCompletionStream(prepared.body, providerOptions)
         : target.provider.createCompletionStream(prepared.body);
-      return { target, stream: await prefetchFirstStreamChunk(stream) };
+      const prefetchedStream = await prefetchFirstStreamChunk(stream);
+      return {
+        target,
+        stream: prefetchedStream,
+        latencyMs: Date.now() - attemptStartTime,
+      };
     } catch (error) {
       if (
         error instanceof ChannelParamOverrideError ||
@@ -241,7 +248,7 @@ async function resolveStreamingTarget(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({

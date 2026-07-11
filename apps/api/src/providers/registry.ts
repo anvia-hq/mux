@@ -14,6 +14,7 @@ import type {
   ImageGenerationRequest,
   ImageGenerationResponse,
   Model,
+  ModelPricingTier,
   ModerationRequest,
   ModerationResponse,
   ProviderAdapter,
@@ -339,6 +340,7 @@ type CustomProviderWithModels = {
     name: string;
     inputPricePer1M: number;
     outputPricePer1M: number;
+    pricingTiers?: unknown;
     contextWindow: number;
     maxOutputTokens: number;
     inputModalities: string[];
@@ -391,6 +393,7 @@ function buildCustomAdapter(row: CustomProviderWithModels, apiKey: string): Prov
       provider: row.id,
       inputPricePer1M: model.inputPricePer1M,
       outputPricePer1M: model.outputPricePer1M,
+      pricingTiers: readPricingTiers(model.pricingTiers),
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
       inputModalities: model.inputModalities,
@@ -401,6 +404,21 @@ function buildCustomAdapter(row: CustomProviderWithModels, apiKey: string): Prov
       weights: model.weights === "open" ? "open" : "closed",
     })),
   });
+}
+
+function readPricingTiers(value: unknown): ModelPricingTier[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const tiers = value.filter(
+    (tier): tier is ModelPricingTier =>
+      Boolean(tier) &&
+      typeof tier === "object" &&
+      typeof (tier as ModelPricingTier).inputTokenThreshold === "number" &&
+      typeof (tier as ModelPricingTier).inputPricePer1M === "number" &&
+      typeof (tier as ModelPricingTier).outputPricePer1M === "number",
+  );
+  return tiers.length
+    ? tiers.sort((left, right) => left.inputTokenThreshold - right.inputTokenThreshold)
+    : undefined;
 }
 
 function buildAdapter(
@@ -1541,6 +1559,62 @@ export function getModelPricing(modelId: string): Model | null {
   };
 }
 
+export type CostEstimateDetails = {
+  estimatedCost: number;
+  pricingInputTokens: number;
+  appliedInputPricePer1M: number;
+  appliedOutputPricePer1M: number;
+  appliedPricingTierThreshold: number | null;
+};
+
+export function selectModelPricingRates(
+  pricing: Pick<Model, "inputPricePer1M" | "outputPricePer1M" | "pricingTiers">,
+  pricingInputTokens: number,
+) {
+  const selectedTier = [...(pricing.pricingTiers ?? [])]
+    .sort((left, right) => left.inputTokenThreshold - right.inputTokenThreshold)
+    .filter((tier) => pricingInputTokens > tier.inputTokenThreshold)
+    .at(-1);
+  return {
+    inputPricePer1M: selectedTier?.inputPricePer1M ?? pricing.inputPricePer1M,
+    outputPricePer1M: selectedTier?.outputPricePer1M ?? pricing.outputPricePer1M,
+    threshold: selectedTier?.inputTokenThreshold ?? null,
+  };
+}
+
+/**
+ * Computes cost and records the exact tier selected for a request. Pricing tiers
+ * are whole-request tiers: once crossed, both input and output use that tier.
+ */
+export function estimateCostDetails(
+  modelId: string,
+  promptTokens: number | undefined,
+  completionTokens: number | undefined,
+  pricingInputTokens = promptTokens,
+): CostEstimateDetails | undefined {
+  const pricing = getModelPricing(modelId);
+  if (!pricing) return undefined;
+
+  const inputTokens = promptTokens ?? 0;
+  const outputTokens = completionTokens ?? 0;
+  if (inputTokens === 0 && outputTokens === 0) return undefined;
+
+  const selectorTokens = pricingInputTokens ?? inputTokens;
+  const selectedRates = selectModelPricingRates(pricing, selectorTokens);
+  const appliedInputPricePer1M = selectedRates.inputPricePer1M;
+  const appliedOutputPricePer1M = selectedRates.outputPricePer1M;
+
+  return {
+    estimatedCost:
+      (inputTokens / 1_000_000) * appliedInputPricePer1M +
+      (outputTokens / 1_000_000) * appliedOutputPricePer1M,
+    pricingInputTokens: selectorTokens,
+    appliedInputPricePer1M,
+    appliedOutputPricePer1M,
+    appliedPricingTierThreshold: selectedRates.threshold,
+  };
+}
+
 /**
  * Computes the estimated cost (in USD) of a request given prompt and
  * completion token counts and the model's per-1M-token pricing.
@@ -1557,12 +1631,9 @@ export function estimateCost(
   promptTokens: number | undefined,
   completionTokens: number | undefined,
   cachedTokens?: number,
+  pricingInputTokens?: number,
 ): number | undefined {
   void cachedTokens;
-  const pricing = getModelPricing(modelId);
-  if (!pricing) return undefined;
-  const p = promptTokens ?? 0;
-  const c = completionTokens ?? 0;
-  if (p === 0 && c === 0) return undefined;
-  return (p / 1_000_000) * pricing.inputPricePer1M + (c / 1_000_000) * pricing.outputPricePer1M;
+  return estimateCostDetails(modelId, promptTokens, completionTokens, pricingInputTokens)
+    ?.estimatedCost;
 }

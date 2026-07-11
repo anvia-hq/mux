@@ -465,7 +465,7 @@ describe("responses router", () => {
       stream: chunks(),
       provider: "openai",
       model: "openai:gpt-4o",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/responses", responsesRouter);
@@ -492,6 +492,7 @@ describe("responses router", () => {
         totalTokens: 5,
         reasoningTokens: 7,
         estimatedCost: 0.01,
+        latencyMs: 25,
         statusCode: 200,
       }),
     );
@@ -508,7 +509,7 @@ describe("responses router", () => {
       stream: chunks(),
       provider: "openai",
       model: "openai:gpt-4o",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/responses", responsesRouter);

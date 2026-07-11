@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { enqueueRequestLog, type RequestLogPayload } from "@repo/worker";
+import { estimateCostDetails } from "../providers/registry";
 
 export interface LogEntry {
   logId?: string;
@@ -16,6 +17,8 @@ export interface LogEntry {
   totalTokens?: number;
   reasoningTokens?: number;
   estimatedCost?: number;
+  /** Input token count used only for selecting a whole-request pricing tier. */
+  pricingInputTokens?: number;
   statusCode: number;
   errorMessage?: string;
 }
@@ -29,8 +32,21 @@ export class RequestLoggingUnavailableError extends Error {
 }
 
 function toPayload(entry: LogEntry): RequestLogPayload {
+  const pricingDetails =
+    entry.estimatedCost === undefined
+      ? undefined
+      : estimateCostDetails(
+          entry.model,
+          entry.promptTokens,
+          entry.completionTokens,
+          entry.pricingInputTokens,
+        );
   return {
     ...entry,
+    pricingInputTokens: pricingDetails?.pricingInputTokens,
+    appliedInputPricePer1M: pricingDetails?.appliedInputPricePer1M,
+    appliedOutputPricePer1M: pricingDetails?.appliedOutputPricePer1M,
+    appliedPricingTierThreshold: pricingDetails?.appliedPricingTierThreshold ?? undefined,
     logId: entry.logId ?? randomUUID(),
   };
 }

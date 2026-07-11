@@ -458,7 +458,7 @@ describe("responses services", () => {
       target: createResolvedModel("openai", "gpt-4o", vi.fn(), createResponseStream),
     });
 
-    const result = await handleResponseCreateStream(createRequest({ stream: true }));
+    const result = await handleResponseCreateStream(createRequest({ stream: true }), "key-1");
     expect(result).toMatchObject({ provider: "openai", model: "openai:gpt-4o" });
     expect(createResponseStream).toHaveBeenCalledWith(
       expect.objectContaining({ model: "gpt-4o", input: "hello", stream: true }),

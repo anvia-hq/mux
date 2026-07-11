@@ -13,6 +13,7 @@ import {
   revealApiKey,
   revokeApiKey,
   rotateApiKey,
+  updateActiveApiKeysModelAccess,
   updateApiKeyModelAccess,
 } from "./services";
 
@@ -155,6 +156,31 @@ keysRouter.post("/:id/rotate", async (c) => {
     return c.json({ error: message }, 500);
   }
 });
+
+keysRouter.patch(
+  "/model-access",
+  zValidator("json", updateKeyModelAccessSchema, authValidationHook),
+  async (c) => {
+    const input = c.req.valid("json");
+    const user = c.get("user");
+
+    if (!requireAdmin(user)) {
+      return c.json({ error: "admin access required" }, 403);
+    }
+
+    try {
+      const updatedCount = await updateActiveApiKeysModelAccess(input);
+      return c.json({ ok: true, updatedCount });
+    } catch (error) {
+      if (error instanceof ApiKeyModelFilterValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+
+      const message = error instanceof Error ? error.message : "Internal server error";
+      return c.json({ error: message }, 500);
+    }
+  },
+);
 
 keysRouter.patch(
   "/:id/model-access",

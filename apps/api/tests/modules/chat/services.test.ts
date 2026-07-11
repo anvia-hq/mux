@@ -60,6 +60,7 @@ import { ChannelParamOverrideConfigError } from "../../../src/providers/channel-
 describe("chat services", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   const createRequest = (overrides?: Partial<ChatCompletionRequest>): ChatCompletionRequest => ({
@@ -302,7 +303,7 @@ describe("chat services", () => {
     expect(result).toMatchObject({ kind: "complete", response: { model: "fast-chat" } });
     expect(chatCompletion).toHaveBeenCalledWith(expect.objectContaining({ model: "gpt-4" }));
     expect(mockGetModelPricing).toHaveBeenCalledWith("openai:gpt-4");
-    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4", 10, 20);
+    expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4", 10, 20, undefined, undefined);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ model: "openai:gpt-4", statusCode: 200 }),
     );
@@ -361,6 +362,85 @@ describe("chat services", () => {
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ model: "anthropic:claude-3-haiku", statusCode: 200 }),
     );
+  });
+
+  it("measures each fallback provider attempt independently", async () => {
+    let now = 1_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const primary = createResolvedModel("openai", "gpt-4", {
+      chatCompletion: vi.fn().mockImplementationOnce(async () => {
+        now += 100;
+        throw new Error("rate limited");
+      }),
+    });
+    const backup = createResolvedModel("anthropic", "claude-3-haiku", {
+      chatCompletion: vi.fn().mockImplementationOnce(async () => {
+        now += 30;
+        return {
+          id: "chat-2",
+          model: "claude-3-haiku",
+          choices: [
+            { index: 0, message: { role: "assistant", content: "backup" }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+        };
+      }),
+    });
+
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      groupId: "fast-chat",
+      name: "Fast chat",
+      description: null,
+      requestedModelId: "mux:fast-chat",
+      targets: [primary, backup],
+    });
+
+    await handleChatCompletion(createRequest({ model: "mux:fast-chat" }), "key-1");
+
+    expect(mockLogRequest).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: "openai:gpt-4", latencyMs: 100, statusCode: 500 }),
+    );
+    expect(mockLogRequest).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        model: "anthropic:claude-3-haiku",
+        latencyMs: 30,
+        statusCode: 200,
+      }),
+    );
+    dateNow.mockRestore();
+  });
+
+  it("captures streaming latency at the first provider chunk", async () => {
+    let now = 2_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    async function* streamChunks() {
+      now += 40;
+      yield { id: "chunk-1", model: "gpt-4", choices: [] };
+      now += 500;
+      yield { id: "chunk-2", model: "gpt-4", choices: [] };
+    }
+    const target = createResolvedModel("openai", "gpt-4", {
+      chatCompletionStream: vi.fn().mockReturnValue(streamChunks()),
+    });
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "openai:gpt-4",
+      targets: [target],
+    });
+
+    const result = await handleChatCompletion(createRequest({ stream: true }), "key-1");
+
+    expect(result).toMatchObject({ kind: "stream", latencyMs: 40 });
+    if (result.kind === "stream") {
+      for await (const _chunk of result.stream) {
+        // Consume the remaining stream to prove later chunks do not change the captured value.
+      }
+      expect(result.latencyMs).toBe(40);
+    }
+    dateNow.mockRestore();
   });
 
   it("does not fallback when channel param override config is invalid", async () => {

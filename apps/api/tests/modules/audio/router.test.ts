@@ -212,7 +212,7 @@ describe("audio router", () => {
       contentType: "text/event-stream",
       provider: "openai",
       model: "openai:gpt-4o-transcribe",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
     const formData = new FormData();
     formData.append("model", "gpt-4o-transcribe");
@@ -243,6 +243,7 @@ describe("audio router", () => {
         logId: "log-1",
         model: "openai:gpt-4o-transcribe",
         endpoint: "/v1/audio/transcriptions",
+        latencyMs: 25,
         promptTokens: 11,
         completionTokens: 4,
         totalTokens: 15,
@@ -258,7 +259,7 @@ describe("audio router", () => {
       contentType: "application/json",
       provider: "openai",
       model: "openai:whisper-1",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
     const formData = new FormData();
     formData.append("model", "whisper-1");
@@ -374,7 +375,7 @@ describe("audio router", () => {
       contentType: "text/event-stream",
       provider: "openai",
       model: "openai:gpt-4o-mini-tts",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/audio", audioRouter);
@@ -420,7 +421,7 @@ describe("audio router", () => {
       contentType: "audio/mpeg",
       provider: "openai",
       model: "openai:gpt-4o-mini-tts",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/audio", audioRouter);

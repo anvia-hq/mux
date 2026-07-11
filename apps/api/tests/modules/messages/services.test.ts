@@ -95,7 +95,12 @@ describe("messages services", () => {
     const createAnthropicMessage = vi.fn().mockResolvedValueOnce({
       id: "msg-1",
       model: "claude-test",
-      usage: { input_tokens: 10, output_tokens: 20 },
+      usage: {
+        input_tokens: 10,
+        output_tokens: 20,
+        cache_creation_input_tokens: 30,
+        cache_read_input_tokens: 40,
+      },
     });
     mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
       kind: "direct",
@@ -128,6 +133,7 @@ describe("messages services", () => {
       { headers: { "anthropic-version": "2023-06-01" } },
     );
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.05);
+    expect(mockEstimateCost).toHaveBeenCalledWith("anthropic:claude-test", 10, 20, undefined, 80);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: "/v1/messages",
@@ -135,6 +141,7 @@ describe("messages services", () => {
         promptTokens: 10,
         completionTokens: 20,
         totalTokens: 30,
+        pricingInputTokens: 80,
         estimatedCost: 0.05,
         statusCode: 200,
       }),

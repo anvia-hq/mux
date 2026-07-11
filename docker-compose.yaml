@@ -50,6 +50,19 @@ services:
     networks:
       - internal
 
+  migrate:
+    <<: *app
+    container_name: mux-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: "${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/mux_gateway?schema=public}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["pnpm", "--filter", "@repo/api", "db:migrate:deploy"]
+    networks:
+      - internal
+
   gateway:
     <<: *app
     container_name: mux-gateway
@@ -68,9 +81,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: sh -c "pnpm --filter @repo/api db:push && pnpm --filter @repo/api start"
+    command: ["pnpm", "--filter", "@repo/api", "start"]
     networks:
       - internal
 
@@ -85,9 +100,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
-    command: sh -c "pnpm --filter @repo/api db:push && pnpm --filter @repo/worker start"
+    command: ["pnpm", "--filter", "@repo/worker", "start"]
     networks:
       - internal
 

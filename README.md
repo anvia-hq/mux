@@ -14,7 +14,7 @@ It is built for teams that want provider flexibility without spreading provider 
 - **Keeps provider keys centralized** with encrypted-at-rest storage.
 - **Controls model exposure** so teams only see the models you enable.
 - **Issues gateway API keys** for internal services, with optional USD balances.
-- **Tracks every request** with status, latency, token usage, cost, provider, model, and API key.
+- **Tracks provider attempts** with status, latency, token usage, cost, provider, model, and API key.
 - **Supports streaming responses** using OpenAI-compatible server-sent events.
 - **Creates fallback model IDs** such as `mux:fast-chat` that try ordered provider/model targets.
 - **Runs in your infrastructure** with Docker, Postgres, Redis, and Caddy.
@@ -24,6 +24,8 @@ It is built for teams that want provider flexibility without spreading provider 
 ### Usage And Request Logs
 
 Monitor request volume, tokens, cost, and provider/model activity from the dashboard. Logs stay searchable and filterable when you need to investigate a specific provider, model, API key, status code, or latency spike.
+
+Logged latency measures one upstream provider attempt. Non-streaming latency ends when the provider returns; streaming latency ends at the first upstream chunk or byte. Queueing and database persistence are excluded.
 
 ![Mux request logs dashboard](docs/screenshots/logs.png)
 

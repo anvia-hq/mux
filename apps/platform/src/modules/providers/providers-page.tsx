@@ -41,6 +41,11 @@ import {
   useProviderCatalogQuery,
   useSetProviderKeyMutation,
 } from "./hooks";
+import {
+  parsePricingTierDrafts,
+  PricingTierEditor,
+  type PricingTierDraft,
+} from "./pricing-tier-editor";
 
 type ProviderFilter = "all" | "configured" | "needs-key" | "custom";
 
@@ -58,6 +63,7 @@ type ModelDraft = {
   name: string;
   inputPricePer1M: string;
   outputPricePer1M: string;
+  pricingTiers: PricingTierDraft[];
   contextWindow: string;
   maxOutputTokens: string;
   inputModalities: string;
@@ -99,6 +105,7 @@ function newModelDraft(): ModelDraft {
     name: "",
     inputPricePer1M: "0",
     outputPricePer1M: "0",
+    pricingTiers: [],
     contextWindow: "128000",
     maxOutputTokens: "4096",
     inputModalities: "text,image,pdf",
@@ -180,12 +187,15 @@ function parseModelDrafts(drafts: ModelDraft[]): CustomProviderModelInput[] | st
     if (!inputModalities.length || !outputModalities.length) {
       return "Each model needs at least one input and output modality.";
     }
+    const pricingTiers = parsePricingTierDrafts(draft.pricingTiers, contextWindow);
+    if (typeof pricingTiers === "string") return `${name}: ${pricingTiers}`;
 
     models.push({
       id,
       name,
       inputPricePer1M,
       outputPricePer1M,
+      pricingTiers,
       contextWindow,
       maxOutputTokens,
       inputModalities,
@@ -812,6 +822,11 @@ function CustomProviderForm({
                   placeholder="text"
                 />
               </div>
+              <PricingTierEditor
+                idPrefix={`custom-model-${index}-pricing-tier`}
+                tiers={model.pricingTiers}
+                onChange={(pricingTiers) => updateModel(index, { pricingTiers })}
+              />
               <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_10rem] md:items-center">
                 <CapabilitySwitch
                   id={`custom-model-${index}-reasoning`}

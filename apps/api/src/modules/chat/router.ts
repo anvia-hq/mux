@@ -113,7 +113,7 @@ chatRouter.post("/completions", async (c) => {
 
     // Streaming response: pipe provider chunks to the client as SSE.
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, channelId, channelName, startTime } = result;
+      const { stream: streamIterable, provider, model, channelId, channelName, latencyMs } = result;
       const includeStreamUsage = body.stream_options?.include_usage ?? true;
       const logId = await logStreamStart({
         apiKeyId,
@@ -135,14 +135,20 @@ chatRouter.post("/completions", async (c) => {
         let totalTokens: number | undefined;
         let promptTokens: number | undefined;
         let completionTokens: number | undefined;
+        let pricingInputTokens: number | undefined;
         let streamLogFinalized = false;
 
         async function finalizeSuccessfulStreamLog() {
           if (streamLogFinalized) return;
           streamLogFinalized = true;
 
-          const latencyMs = Date.now() - startTime;
-          const estimatedCost = estimateCost(model, promptTokens, completionTokens);
+          const estimatedCost = estimateCost(
+            model,
+            promptTokens,
+            completionTokens,
+            undefined,
+            pricingInputTokens,
+          );
 
           if (isLimitedKey && estimatedCost !== undefined) {
             try {
@@ -164,6 +170,7 @@ chatRouter.post("/completions", async (c) => {
             promptTokens,
             completionTokens,
             totalTokens,
+            pricingInputTokens,
             estimatedCost,
             statusCode: 200,
           });
@@ -181,6 +188,8 @@ chatRouter.post("/completions", async (c) => {
                 promptTokens = maybeUsage.prompt_tokens;
               if (typeof maybeUsage.completion_tokens === "number")
                 completionTokens = maybeUsage.completion_tokens;
+              if (typeof maybeUsage.pricing_input_tokens === "number")
+                pricingInputTokens = maybeUsage.pricing_input_tokens;
             }
 
             if (!shouldWriteStreamChunk(chunk, includeStreamUsage)) {
@@ -198,7 +207,6 @@ chatRouter.post("/completions", async (c) => {
             console.error("Failed to finalize request log:", logError);
           }
         } catch (streamError) {
-          const latencyMs = Date.now() - startTime;
           const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
           try {

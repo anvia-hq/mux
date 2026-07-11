@@ -511,7 +511,7 @@ describe("chat router", () => {
       provider: "openai",
       model: "gpt-4",
       responseModel: "gpt-4",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/chat", chatRouter);
@@ -537,6 +537,7 @@ describe("chat router", () => {
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         estimatedCost: 0.01,
+        latencyMs: 25,
         promptTokens: 1,
         completionTokens: 2,
         totalTokens: 3,
@@ -573,7 +574,7 @@ describe("chat router", () => {
       provider: "openai",
       model: "gpt-4",
       responseModel: "gpt-4",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/chat", chatRouter);
@@ -632,7 +633,7 @@ describe("chat router", () => {
       provider: "openai",
       model: "gpt-4",
       responseModel: "gpt-4",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/chat", chatRouter);
@@ -651,7 +652,7 @@ describe("chat router", () => {
     expect(text).toContain('"finish_reason":"stop"');
     expect(text).toContain('"choices":[]');
     expect(mockLogStreamFinal).toHaveBeenCalledTimes(1);
-    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17);
+    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17, undefined, undefined);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         logId: "log-1",
@@ -686,7 +687,7 @@ describe("chat router", () => {
       provider: "openai",
       model: "gpt-4",
       responseModel: "gpt-4",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/chat", chatRouter);
@@ -705,7 +706,7 @@ describe("chat router", () => {
     const text = await res.text();
     expect(text).toContain('"content":"OK"');
     expect(text).not.toContain('"usage":{"prompt_tokens":11');
-    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17);
+    expect(mockEstimateCost).toHaveBeenCalledWith("gpt-4", 11, 17, undefined, undefined);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         promptTokens: 11,
@@ -734,7 +735,7 @@ describe("chat router", () => {
       provider: "openai",
       model: "gpt-4",
       responseModel: "gpt-4",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/chat", chatRouter);

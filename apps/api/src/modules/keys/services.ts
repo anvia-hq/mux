@@ -470,6 +470,35 @@ export async function updateApiKeyModelAccess(id: string, input: UpdateKeyModelA
   await deleteApiKeyCache(apiKey.key);
 }
 
+export async function updateActiveApiKeysModelAccess(
+  input: UpdateKeyModelAccessInput,
+): Promise<number> {
+  const modelAccess = await buildApiKeyModelAccess(input);
+  const activeKeys = await prisma.apiKey.findMany({
+    where: { isActive: true },
+    select: { id: true, key: true },
+  });
+
+  if (activeKeys.length === 0) {
+    return 0;
+  }
+
+  const updated = await prisma.apiKey.updateMany({
+    where: {
+      id: { in: activeKeys.map((key) => key.id) },
+      isActive: true,
+    },
+    data: {
+      allowAllModels: modelAccess.allowAllModels,
+      includeFutureModels: modelAccess.includeFutureModels,
+      allowedModelIds: modelAccess.allowedModelIds,
+    },
+  });
+
+  await Promise.all(activeKeys.map((key) => deleteApiKeyCache(key.key)));
+  return updated.count;
+}
+
 export async function freezeLegacyApiKeyModelAccess(): Promise<number> {
   const legacyKeys = await prisma.apiKey.findMany({
     where: {

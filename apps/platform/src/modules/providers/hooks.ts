@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api-client";
-import type { Model } from "../models/hooks";
+import type { Model, ModelPricingTier } from "../models/hooks";
 
 export type ProviderRow = {
   provider: string;
@@ -379,6 +379,7 @@ export type CustomProviderModelInput = {
   name: string;
   inputPricePer1M: number;
   outputPricePer1M: number;
+  pricingTiers?: ModelPricingTier[];
   contextWindow: number;
   maxOutputTokens: number;
   inputModalities: string[];

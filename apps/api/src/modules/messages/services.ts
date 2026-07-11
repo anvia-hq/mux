@@ -33,7 +33,7 @@ export type AnthropicMessageResult =
       model: string;
       channelId?: string;
       channelName?: string;
-      startTime: number;
+      latencyMs: number;
     }
   | {
       kind: "complete";
@@ -81,10 +81,8 @@ export async function handleAnthropicMessage(
     throw new ApiKeyUnbillableAnthropicMessageUsageError();
   }
 
-  const startTime = Date.now();
-
   if (request.stream === true) {
-    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, startTime, {
+    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, {
       providerOptions: options.providerOptions,
       requestContext: options.requestContext,
       rawBody: options.rawBody,
@@ -96,7 +94,7 @@ export async function handleAnthropicMessage(
       model: selected.target.publicModelId,
       channelId: selected.target.channelId,
       channelName: selected.target.channelName,
-      startTime,
+      latencyMs: selected.latencyMs,
     };
   }
 
@@ -105,7 +103,6 @@ export async function handleAnthropicMessage(
     providerOptions: options.providerOptions,
     requestContext: options.requestContext,
     rawBody: options.rawBody,
-    startTime,
   });
 }
 
@@ -124,10 +121,10 @@ export async function handleAnthropicMessageTokenCount(
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  const startTime = Date.now();
   let lastError: unknown;
 
   for (const target of resolved.targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         buildAnthropicMessageTokenCountRequest(request, target),
@@ -139,10 +136,11 @@ export async function handleAnthropicMessageTokenCount(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = requestOptions
         ? await target.provider.countAnthropicMessageTokens(prepared.body, requestOptions)
         : await target.provider.countAnthropicMessageTokens(prepared.body);
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const promptTokens = numberOrUndefined(response.input_tokens);
 
       await logRequest({
@@ -175,7 +173,7 @@ export async function handleAnthropicMessageTokenCount(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
 
@@ -205,12 +203,12 @@ async function createAnthropicMessageWithFallback(
     providerOptions?: ProviderRequestOptions;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<AnthropicMessageResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         buildAnthropicMessageRequest(request, target, false),
@@ -222,15 +220,18 @@ async function createAnthropicMessageWithFallback(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = requestOptions
         ? await target.provider.createAnthropicMessage(prepared.body, requestOptions)
         : await target.provider.createAnthropicMessage(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const usage = extractAnthropicMessageTokenUsage(response);
       const estimatedCost = estimateCost(
         target.publicModelId,
         usage.promptTokens,
         usage.completionTokens,
+        undefined,
+        usage.pricingInputTokens,
       );
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
@@ -266,6 +267,7 @@ async function createAnthropicMessageWithFallback(
         promptTokens: usage.promptTokens,
         completionTokens: usage.completionTokens,
         totalTokens: usage.totalTokens,
+        pricingInputTokens: usage.pricingInputTokens,
         estimatedCost,
         statusCode: 200,
       });
@@ -283,7 +285,7 @@ async function createAnthropicMessageWithFallback(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
 
@@ -308,16 +310,20 @@ async function resolveStreamingTarget(
   request: AnthropicMessageCreateRequest,
   apiKeyId: string,
   targets: ResolvedAnthropicMessagesProviderModel[],
-  startTime: number,
   options: {
     providerOptions?: ProviderRequestOptions;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
   },
-): Promise<{ target: ResolvedAnthropicMessagesProviderModel; stream: AsyncIterable<string> }> {
+): Promise<{
+  target: ResolvedAnthropicMessagesProviderModel;
+  stream: AsyncIterable<string>;
+  latencyMs: number;
+}> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       if (!target.provider.createAnthropicMessageStream) {
         throw new Error(`${target.providerName} does not support Anthropic Messages streaming`);
@@ -332,10 +338,16 @@ async function resolveStreamingTarget(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const stream = requestOptions
         ? target.provider.createAnthropicMessageStream(prepared.body, requestOptions)
         : target.provider.createAnthropicMessageStream(prepared.body);
-      return { target, stream: await prefetchFirstStreamChunk(stream) };
+      const prefetchedStream = await prefetchFirstStreamChunk(stream);
+      return {
+        target,
+        stream: prefetchedStream,
+        latencyMs: Date.now() - attemptStartTime,
+      };
     } catch (error) {
       if (
         error instanceof ChannelParamOverrideError ||
@@ -345,7 +357,7 @@ async function resolveStreamingTarget(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
 
@@ -445,18 +457,25 @@ export function extractAnthropicMessageTokenUsage(response: AnthropicMessageObje
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  pricingInputTokens?: number;
 } {
   const usage = response.usage;
   if (!usage) return {};
 
   const promptTokens = numberOrUndefined(usage.input_tokens);
   const completionTokens = numberOrUndefined(usage.output_tokens);
+  const cacheCreationTokens = numberOrUndefined(usage.cache_creation_input_tokens);
+  const cacheReadTokens = numberOrUndefined(usage.cache_read_input_tokens);
+  const pricingInputTokens =
+    promptTokens === undefined && cacheCreationTokens === undefined && cacheReadTokens === undefined
+      ? undefined
+      : (promptTokens ?? 0) + (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0);
   const totalTokens =
     promptTokens === undefined && completionTokens === undefined
       ? undefined
       : (promptTokens ?? 0) + (completionTokens ?? 0);
 
-  return { promptTokens, completionTokens, totalTokens };
+  return { promptTokens, completionTokens, totalTokens, pricingInputTokens };
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

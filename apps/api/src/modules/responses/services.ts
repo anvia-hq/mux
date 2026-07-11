@@ -95,7 +95,7 @@ export type ResponseStreamResult = {
   model: string;
   channelId?: string;
   channelName?: string;
-  startTime: number;
+  latencyMs: number;
 };
 
 export async function handleResponseCreate(
@@ -129,7 +129,7 @@ export async function handleResponseCreate(
     throw new ApiKeyUnbillableResponseUsageError();
   }
 
-  const startTime = Date.now();
+  let attemptStartTime: number | undefined;
 
   try {
     const prepared = buildOpenAIResponseCreateRequest(request, target, options.requestContext);
@@ -137,10 +137,11 @@ export async function handleResponseCreate(
       prepared.headers,
       rawPassThroughBody(target, options.rawBody),
     );
+    attemptStartTime = Date.now();
     const response = providerOptions
       ? await target.provider.createResponse(prepared.body, providerOptions)
       : await target.provider.createResponse(prepared.body);
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Date.now() - attemptStartTime;
     const usage = response.usage;
     const cachedTokens = readCachedTokens(usage);
     const reasoningTokens = readReasoningTokens(usage);
@@ -208,7 +209,7 @@ export async function handleResponseCreate(
       throw error;
     }
 
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
     await logRequest({
@@ -229,6 +230,7 @@ export async function handleResponseCreate(
 
 export async function handleResponseCreateStream(
   request: ResponseCreateRequest,
+  apiKeyId: string,
   options: { requestContext?: ChannelOverrideRequestContext; rawBody?: string } = {},
 ): Promise<ResponseStreamResult> {
   if (request.background === true) {
@@ -244,7 +246,6 @@ export async function handleResponseCreateStream(
     );
   }
 
-  const startTime = Date.now();
   const prepared = buildOpenAIResponseCreateRequest(
     { ...request, stream: true },
     target,
@@ -254,18 +255,36 @@ export async function handleResponseCreateStream(
     prepared.headers,
     rawPassThroughBody(target, options.rawBody),
   );
-  const stream = providerOptions
-    ? target.provider.createResponseStream(prepared.body, providerOptions)
-    : target.provider.createResponseStream(prepared.body);
+  const attemptStartTime = Date.now();
+  try {
+    const stream = providerOptions
+      ? target.provider.createResponseStream(prepared.body, providerOptions)
+      : target.provider.createResponseStream(prepared.body);
+    const prefetchedStream = await prefetchFirstResponseStreamChunk(stream);
 
-  return {
-    stream: await prefetchFirstResponseStreamChunk(stream),
-    provider: target.providerName,
-    model: target.publicModelId,
-    channelId: target.channelId,
-    channelName: target.channelName,
-    startTime,
-  };
+    return {
+      stream: prefetchedStream,
+      provider: target.providerName,
+      model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
+      latencyMs: Date.now() - attemptStartTime,
+    };
+  } catch (error) {
+    const latencyMs = Date.now() - attemptStartTime;
+    await logRequest({
+      apiKeyId,
+      provider: target.providerName,
+      model: target.publicModelId,
+      channelId: target.channelId,
+      channelName: target.channelName,
+      endpoint: "/v1/responses",
+      latencyMs,
+      statusCode: error instanceof UpstreamResponsesApiError ? error.status : 500,
+      errorMessage: error instanceof Error ? error.message : "Unknown error",
+    });
+    throw error;
+  }
 }
 
 export async function submitBackgroundResponse(
@@ -290,7 +309,8 @@ export async function submitBackgroundResponse(
     throw new ApiKeyUnbillableResponseUsageError();
   }
 
-  const startTime = Date.now();
+  let attemptStartTime: number | undefined;
+  let latencyMs = 0;
   let response: ResponseObject;
 
   try {
@@ -299,15 +319,17 @@ export async function submitBackgroundResponse(
       prepared.headers,
       rawPassThroughBody(target, options.rawBody),
     );
+    attemptStartTime = Date.now();
     response = providerOptions
       ? await target.provider.createResponse(prepared.body, providerOptions)
       : await target.provider.createResponse(prepared.body);
+    latencyMs = Date.now() - attemptStartTime;
   } catch (error) {
     if (error instanceof ChannelParamOverrideError || error instanceof ChannelHeaderOverrideError) {
       throw error;
     }
 
-    const latencyMs = Date.now() - startTime;
+    latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
     await logRequest({
@@ -324,8 +346,6 @@ export async function submitBackgroundResponse(
 
     throw error;
   }
-
-  const latencyMs = Date.now() - startTime;
 
   const upstreamId = typeof response.id === "string" ? response.id : null;
   if (!upstreamId) {
@@ -377,7 +397,8 @@ export async function submitBackgroundResponse(
       response: response as object,
       inputPricePer1M: pricing?.inputPricePer1M ?? null,
       outputPricePer1M: pricing?.outputPricePer1M ?? null,
-      startedAt: new Date(startTime),
+      pricingTiers: pricing?.pricingTiers ?? [],
+      startedAt: new Date(attemptStartTime ?? Date.now()),
       ...(terminal ? { completedAt: new Date() } : {}),
     },
   });
@@ -448,10 +469,8 @@ export async function handleResponseRetrieve(
   });
 
   if (localRow) {
-    const startTime = Date.now();
     const pending = !isTerminalResponseStatus(localRow.status);
     const body = buildLocalBackgroundResponse(localRow);
-    const latencyMs = Date.now() - startTime;
     await logRequest({
       apiKeyId,
       provider: localRow.provider,
@@ -459,7 +478,7 @@ export async function handleResponseRetrieve(
       channelId: localRow.channelId ?? undefined,
       channelName: localRow.channelName ?? undefined,
       endpoint: "/v1/responses/:id",
-      latencyMs,
+      latencyMs: 0,
       statusCode: pending ? 202 : 200,
     });
 
@@ -488,14 +507,16 @@ export async function handleResponseRetrieve(
     );
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const provider of candidates) {
+    const attemptStartTime = Date.now();
     try {
       const response = await provider.getResponse?.(id, query);
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (!response) continue;
-      const latencyMs = Date.now() - startTime;
 
       if (isResponsesCacheEnabled()) {
         await writeCachedResponse(
@@ -523,11 +544,12 @@ export async function handleResponseRetrieve(
       }
 
       lastError = error;
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
       }
 
-      const latencyMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
@@ -544,13 +566,12 @@ export async function handleResponseRetrieve(
     }
   }
 
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: "unknown",
     endpoint: "/v1/responses/:id",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
@@ -577,14 +598,16 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
     );
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const provider of candidates) {
+    const attemptStartTime = Date.now();
     try {
       const response = await provider.deleteResponse?.(id);
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (!response) continue;
-      const latencyMs = Date.now() - startTime;
 
       await logRequest({
         apiKeyId,
@@ -602,11 +625,12 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
       }
 
       lastError = error;
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
       }
 
-      const latencyMs = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
@@ -623,13 +647,12 @@ export async function handleResponseDelete(id: string, apiKeyId: string): Promis
     }
   }
 
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: "unknown",
     endpoint: "/v1/responses/:id",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
@@ -650,14 +673,16 @@ export async function handleResponseInputItems(
     throw new OpenAIResponseProviderNotConfiguredError();
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const provider of candidates) {
+    const attemptStartTime = Date.now();
     try {
       const response = await provider.listResponseInputItems?.(id, query);
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (!response) continue;
-      const latencyMs = Date.now() - startTime;
 
       await logRequest({
         apiKeyId,
@@ -671,6 +696,7 @@ export async function handleResponseInputItems(
       return { provider: provider.name, model: provider.name, response };
     } catch (error) {
       lastError = error;
+      lastLatencyMs = Date.now() - attemptStartTime;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
       }
@@ -679,13 +705,12 @@ export async function handleResponseInputItems(
   }
 
   // Every configured provider returned 404.
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: "unknown",
     endpoint: "/v1/responses/:id/input_items",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
@@ -699,7 +724,6 @@ export async function handleResponseInputTokens(
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
   const resolved = await resolveResponseTarget(body.model);
   if (resolved?.target.provider.countResponseInputTokens) {
-    const startTime = Date.now();
     try {
       const prepared = buildOpenAIResponseCreateRequest(
         body,
@@ -710,10 +734,11 @@ export async function handleResponseInputTokens(
         prepared.headers,
         rawPassThroughBody(resolved.target, options.rawBody),
       );
+      const attemptStartTime = Date.now();
       const response = providerOptions
         ? await resolved.target.provider.countResponseInputTokens(prepared.body, providerOptions)
         : await resolved.target.provider.countResponseInputTokens(prepared.body);
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = Date.now() - attemptStartTime;
 
       await logRequest({
         apiKeyId,
@@ -753,14 +778,16 @@ export async function handleResponseInputTokens(
     throw new OpenAIResponseProviderNotConfiguredError();
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const provider of candidates) {
+    const attemptStartTime = Date.now();
     try {
       const response = await provider.countResponseInputTokens?.(body);
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (!response) continue;
-      const latencyMs = Date.now() - startTime;
 
       await logRequest({
         apiKeyId,
@@ -778,6 +805,7 @@ export async function handleResponseInputTokens(
       };
     } catch (error) {
       lastError = error;
+      lastLatencyMs = Date.now() - attemptStartTime;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
       }
@@ -786,13 +814,12 @@ export async function handleResponseInputTokens(
   }
 
   // Every configured provider returned 404.
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: typeof body.model === "string" ? body.model : "unknown",
     endpoint: "/v1/responses/input_tokens",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
@@ -920,14 +947,16 @@ export async function handleResponseCancel(
     throw new OpenAIResponseProviderNotConfiguredError();
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const provider of candidates) {
+    const attemptStartTime = Date.now();
     try {
       const response = await provider.cancelResponse?.(id);
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       if (!response) continue;
-      const latencyMs = Date.now() - startTime;
 
       await logRequest({
         apiKeyId,
@@ -941,6 +970,7 @@ export async function handleResponseCancel(
       return { provider: provider.name, model: provider.name, response };
     } catch (error) {
       lastError = error;
+      lastLatencyMs = Date.now() - attemptStartTime;
       if (error instanceof UpstreamResponsesApiError && error.status === 404) {
         continue;
       }
@@ -949,13 +979,12 @@ export async function handleResponseCancel(
   }
 
   // Every configured provider returned 404.
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: "unknown",
     endpoint: "/v1/responses/:id/cancel",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });
@@ -1008,19 +1037,22 @@ async function cancelLocalBackgroundJob(
   id: string,
   apiKeyId: string,
 ): Promise<{ provider: string; model: string; response: ResponseObject }> {
-  const startTime = Date.now();
-
   const provider = getProviderForChannel(row.provider, row.channelId);
   let upstreamResponse: ResponseObject | null = null;
   let upstreamNotFound = false;
+  let latencyMs = 0;
 
   if (provider?.cancelResponse) {
+    let attemptStartTime: number | undefined;
     try {
       const providerOptions = staticChannelProviderOptions(row.provider, row.channelId);
+      attemptStartTime = Date.now();
       upstreamResponse = providerOptions
         ? await provider.cancelResponse(id, providerOptions)
         : await provider.cancelResponse(id);
+      latencyMs = Date.now() - attemptStartTime;
     } catch (error) {
+      latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       if (isUpstreamNotFoundError(error)) {
         upstreamNotFound = true;
       } else {
@@ -1048,7 +1080,6 @@ async function cancelLocalBackgroundJob(
     },
   });
 
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: row.provider,
@@ -1068,18 +1099,21 @@ async function deleteLocalBackgroundJob(
   id: string,
   apiKeyId: string,
 ): Promise<ResponseObject> {
-  const startTime = Date.now();
-
   const provider = getProviderForChannel(row.provider, row.channelId);
+  let latencyMs = 0;
   if (provider?.deleteResponse) {
+    let attemptStartTime: number | undefined;
     try {
       const providerOptions = staticChannelProviderOptions(row.provider, row.channelId);
+      attemptStartTime = Date.now();
       if (providerOptions) {
         await provider.deleteResponse(id, providerOptions);
       } else {
         await provider.deleteResponse(id);
       }
+      latencyMs = Date.now() - attemptStartTime;
     } catch (error) {
+      latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       if (!isUpstreamNotFoundError(error)) {
         throw error;
       }
@@ -1090,7 +1124,6 @@ async function deleteLocalBackgroundJob(
     where: { id: row.id },
   });
 
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: row.provider,
@@ -1168,11 +1201,12 @@ export async function handleResponseCompact(
     throw new ApiKeyUnbillableResponseUsageError();
   }
 
-  const startTime = Date.now();
   let lastError: unknown = null;
+  let lastLatencyMs = 0;
 
   for (const candidate of candidates) {
     if (!candidate.provider.compactResponse) continue;
+    let attemptStartTime: number | undefined;
     try {
       const prepared = candidate.target
         ? buildProviderCompactRequest(request, candidate.target, options.requestContext)
@@ -1184,10 +1218,12 @@ export async function handleResponseCompact(
         prepared.headers,
         candidate.target ? rawPassThroughBody(candidate.target, options.rawBody) : undefined,
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await candidate.provider.compactResponse(prepared.body, providerOptions)
         : await candidate.provider.compactResponse(prepared.body);
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = Date.now() - attemptStartTime;
+      lastLatencyMs = latencyMs;
       const usage = response.usage;
       const cachedTokens = readCachedTokens(usage);
       const reasoningTokens = readReasoningTokens(usage);
@@ -1244,6 +1280,7 @@ export async function handleResponseCompact(
       };
     } catch (error) {
       lastError = error;
+      lastLatencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       if (
         error instanceof ChannelParamOverrideError ||
         error instanceof ChannelHeaderOverrideError
@@ -1258,13 +1295,12 @@ export async function handleResponseCompact(
     }
   }
 
-  const latencyMs = Date.now() - startTime;
   await logRequest({
     apiKeyId,
     provider: "unknown",
     model: "unknown",
     endpoint: "/v1/responses/compact",
-    latencyMs,
+    latencyMs: lastLatencyMs,
     statusCode: 404,
     errorMessage: lastError instanceof Error ? lastError.message : "Response not found",
   });

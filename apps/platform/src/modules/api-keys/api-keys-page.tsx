@@ -33,11 +33,13 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowDown01Icon, Copy01Icon, Edit02Icon, Key01Icon } from "@hugeicons/core-free-icons";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useCopyFeedback } from "../../lib/use-copy-feedback";
 import { meQueryOptions } from "../auth/hooks/use-auth";
 import { useModelsQuery, type Model } from "../models/hooks";
 import {
   isForbiddenError,
+  useApplyApiKeyModelAccessMutation,
   useApiKeysQuery,
   useCreateApiKeyMutation,
   useRevealApiKeyMutation,
@@ -64,6 +66,7 @@ export function ApiKeysPage() {
   const revoke = useRevokeApiKeyMutation();
   const rotate = useRotateApiKeyMutation();
   const updateModelAccess = useUpdateApiKeyModelAccessMutation();
+  const applyModelAccess = useApplyApiKeyModelAccessMutation();
   const { copiedId, copy } = useCopyFeedback();
   const [createdKey, setCreatedKey] = useState<{ id: string; key: string } | null>(null);
   const [revealedKey, setRevealedKey] = useState<{ id: string; name: string; key: string } | null>(
@@ -75,13 +78,15 @@ export function ApiKeysPage() {
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [modelSearch, setModelSearch] = useState("");
   const [editingKey, setEditingKey] = useState<ApiKey | null>(null);
+  const [isBulkModelAccessOpen, setIsBulkModelAccessOpen] = useState(false);
   const [editModelAccessMode, setEditModelAccessMode] = useState<ModelAccessMode>("filtered");
   const [editSelectedModelIds, setEditSelectedModelIds] = useState<string[]>([]);
   const [editModelSearch, setEditModelSearch] = useState("");
   const modelsQuery = useModelsQuery({
     viewer: user,
     enabled:
-      modelAccessMode === "filtered" || (Boolean(editingKey) && editModelAccessMode === "filtered"),
+      modelAccessMode === "filtered" ||
+      ((Boolean(editingKey) || isBulkModelAccessOpen) && editModelAccessMode === "filtered"),
   });
   const models = modelsQuery.data?.data ?? [];
   const isAdmin = user?.role === "ADMIN";
@@ -112,19 +117,33 @@ export function ApiKeysPage() {
   }
 
   function openEditModelAccess(key: ApiKey) {
+    setIsBulkModelAccessOpen(false);
     setEditingKey(key);
     setEditModelAccessMode(key.includeFutureModels ? "future" : "filtered");
     setEditSelectedModelIds(key.allowedModelIds ?? []);
     setEditModelSearch("");
     updateModelAccess.reset();
+    applyModelAccess.reset();
   }
 
-  function closeEditModelAccess() {
+  function openApplyModelAccess() {
     setEditingKey(null);
+    setIsBulkModelAccessOpen(true);
+    setEditModelAccessMode("snapshot");
+    setEditSelectedModelIds([]);
+    setEditModelSearch("");
+    updateModelAccess.reset();
+    applyModelAccess.reset();
+  }
+
+  function closeModelAccessDialog() {
+    setEditingKey(null);
+    setIsBulkModelAccessOpen(false);
     setEditModelAccessMode("filtered");
     setEditSelectedModelIds([]);
     setEditModelSearch("");
     updateModelAccess.reset();
+    applyModelAccess.reset();
   }
 
   function toggleModelId(modelId: string, checked: boolean) {
@@ -176,11 +195,12 @@ export function ApiKeysPage() {
   }
 
   const keys = query.data?.keys ?? [];
+  const activeKeyCount = keys.filter((key) => key.isActive).length;
 
   return (
     <div className="grid min-w-0 gap-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+        <div className="sm:mr-auto">
           <h1 className="text-2xl font-semibold">API keys</h1>
           <p className="text-sm text-muted-foreground">
             {isAdmin
@@ -188,6 +208,16 @@ export function ApiKeysPage() {
               : "View and copy your active API keys for gateway access."}
           </p>
         </div>
+        {isAdmin ? (
+          <Button
+            variant="outline"
+            disabled={query.isLoading || activeKeyCount === 0 || applyModelAccess.isPending}
+            onClick={openApplyModelAccess}
+          >
+            <HugeiconsIcon icon={Edit02Icon} className="size-4" />
+            Apply Models
+          </Button>
+        ) : null}
         <Dialog
           onOpenChange={(open) => {
             if (!open) {
@@ -449,27 +479,49 @@ export function ApiKeysPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(editingKey)} onOpenChange={(open) => !open && closeEditModelAccess()}>
+      <Dialog
+        open={Boolean(editingKey) || isBulkModelAccessOpen}
+        onOpenChange={(open) => !open && closeModelAccessDialog()}
+      >
         <DialogContent className="sm:max-w-2xl">
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (!editingKey) return;
+              if (!editingKey && !isBulkModelAccessOpen) return;
 
               const input = toModelAccessInput(editModelAccessMode, editSelectedModelIds);
               if (!input) return;
 
+              if (isBulkModelAccessOpen) {
+                applyModelAccess.mutate(input, {
+                  onSuccess: (data) => {
+                    toast.success(
+                      `Models applied to ${data.updatedCount} active API ${data.updatedCount === 1 ? "key" : "keys"}`,
+                    );
+                    closeModelAccessDialog();
+                  },
+                });
+                return;
+              }
+
+              if (!editingKey) return;
               updateModelAccess.mutate(
                 { id: editingKey.id, ...input },
                 {
-                  onSuccess: closeEditModelAccess,
+                  onSuccess: closeModelAccessDialog,
                 },
               );
             }}
           >
             <DialogHeader>
-              <DialogTitle>Edit model access</DialogTitle>
-              <DialogDescription>{editingKey?.name ?? "API key"}</DialogDescription>
+              <DialogTitle>
+                {isBulkModelAccessOpen ? "Apply Models" : "Edit model access"}
+              </DialogTitle>
+              <DialogDescription>
+                {isBulkModelAccessOpen
+                  ? `Replace model access for ${activeKeyCount} active API ${activeKeyCount === 1 ? "key" : "keys"}.`
+                  : (editingKey?.name ?? "API key")}
+              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3 py-2">
               <div className="grid gap-2">
@@ -504,12 +556,16 @@ export function ApiKeysPage() {
               </div>
               {editModelAccessMode === "snapshot" ? (
                 <p className="text-sm text-muted-foreground">
-                  Saving will replace this key&apos;s model list with models enabled right now.
+                  {isBulkModelAccessOpen
+                    ? "Applying will replace every active key's model list with models enabled right now."
+                    : "Saving will replace this key's model list with models enabled right now."}
                 </p>
               ) : null}
               {editModelAccessMode === "future" ? (
                 <p className="text-sm text-destructive">
-                  This key will automatically gain access to providers and models added later.
+                  {isBulkModelAccessOpen
+                    ? "Every active key will automatically gain access to providers and models added later."
+                    : "This key will automatically gain access to providers and models added later."}
                 </p>
               ) : null}
               {editModelAccessMode === "filtered" ? (
@@ -576,22 +632,36 @@ export function ApiKeysPage() {
                   ) : null}
                 </div>
               ) : null}
-              {updateModelAccess.error ? (
-                <p className="text-sm text-destructive">{updateModelAccess.error.message}</p>
+              {(isBulkModelAccessOpen ? applyModelAccess.error : updateModelAccess.error) ? (
+                <p className="text-sm text-destructive">
+                  {
+                    (isBulkModelAccessOpen ? applyModelAccess.error : updateModelAccess.error)
+                      ?.message
+                  }
+                </p>
               ) : null}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeEditModelAccess}>
+              <Button type="button" variant="outline" onClick={closeModelAccessDialog}>
                 Cancel
               </Button>
               <Button
                 type="submit"
                 disabled={
-                  updateModelAccess.isPending ||
-                  (editModelAccessMode === "filtered" && editSelectedModelIds.length === 0)
+                  (isBulkModelAccessOpen
+                    ? applyModelAccess.isPending || activeKeyCount === 0
+                    : updateModelAccess.isPending) ||
+                  (editModelAccessMode === "filtered" &&
+                    (editSelectedModelIds.length === 0 || modelsQuery.isLoading))
                 }
               >
-                {updateModelAccess.isPending ? "Saving..." : "Save access"}
+                {isBulkModelAccessOpen
+                  ? applyModelAccess.isPending
+                    ? "Applying..."
+                    : "Apply Models"
+                  : updateModelAccess.isPending
+                    ? "Saving..."
+                    : "Save access"}
               </Button>
             </DialogFooter>
           </form>

@@ -83,6 +83,7 @@ import {
   ApiKeyRevealUnavailableError,
   rotateApiKey,
   revokeApiKey,
+  updateActiveApiKeysModelAccess,
   updateApiKeyModelAccess,
   validateApiKey,
 } from "../../../src/modules/keys/services";
@@ -529,6 +530,46 @@ describe("keys services", () => {
         }),
       );
       expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-key");
+    });
+
+    it("applies model access to every active key and invalidates their caches", async () => {
+      mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([
+        { id: "k1", key: "hashed-1" },
+        { id: "k2", key: "hashed-2" },
+      ]);
+      mockPrisma.apiKey.updateMany.mockResolvedValueOnce({ count: 2 });
+
+      await expect(
+        updateActiveApiKeysModelAccess({
+          mode: "selected",
+          allowedModelIds: ["openai:gpt-4o"],
+        }),
+      ).resolves.toBe(2);
+
+      expect(mockPrisma.apiKey.findMany).toHaveBeenCalledWith({
+        where: { isActive: true },
+        select: { id: true, key: true },
+      });
+      expect(mockPrisma.apiKey.updateMany).toHaveBeenCalledWith({
+        where: { id: { in: ["k1", "k2"] }, isActive: true },
+        data: {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o"],
+        },
+      });
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-1");
+      expect(mockCacheDelete).toHaveBeenCalledWith("apikey:hashed-2");
+    });
+
+    it("returns zero without updating when there are no active keys", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([]);
+
+      await expect(updateActiveApiKeysModelAccess({ mode: "future" })).resolves.toBe(0);
+
+      expect(mockPrisma.apiKey.updateMany).not.toHaveBeenCalled();
+      expect(mockCacheDelete).not.toHaveBeenCalled();
     });
 
     it("freezes legacy all-model keys to a current snapshot", async () => {

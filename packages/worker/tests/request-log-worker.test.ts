@@ -23,6 +23,22 @@ describe("request-log-worker toRequestLogCreateInput", () => {
     });
   });
 
+  it("forwards applied pricing audit fields", () => {
+    const input = toRequestLogCreateInput({
+      ...baseEntry,
+      pricingInputTokens: 250_000,
+      appliedInputPricePer1M: 2.5,
+      appliedOutputPricePer1M: 15,
+      appliedPricingTierThreshold: 200_000,
+    });
+    expect(input).toMatchObject({
+      pricingInputTokens: 250_000,
+      appliedInputPricePer1M: 2.5,
+      appliedOutputPricePer1M: 15,
+      appliedPricingTierThreshold: 200_000,
+    });
+  });
+
   it("leaves reasoning_tokens undefined when not provided", () => {
     const input = toRequestLogCreateInput(baseEntry);
     expect(input.reasoningTokens).toBeUndefined();

@@ -226,7 +226,7 @@ describe("completions router", () => {
       stream: chunks(),
       provider: "openai",
       model: "openai:gpt-3.5-turbo-instruct",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/completions", completionsRouter);
@@ -260,6 +260,7 @@ describe("completions router", () => {
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
+        latencyMs: 25,
         promptTokens: 2,
         completionTokens: 3,
         totalTokens: 5,

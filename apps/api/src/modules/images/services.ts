@@ -23,7 +23,7 @@ export type ImageGenerationResult =
       model: string;
       channelId?: string;
       channelName?: string;
-      startTime: number;
+      latencyMs: number;
     }
   | {
       kind: "complete";
@@ -45,14 +45,11 @@ export async function handleImageGeneration(
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  const startTime = Date.now();
-
   if (request.stream) {
     const selected = await resolveStreamingTarget(
       request,
       apiKeyId,
       resolved.targets,
-      startTime,
       options.requestContext,
       options.rawBody,
     );
@@ -63,7 +60,7 @@ export async function handleImageGeneration(
       model: selected.target.publicModelId,
       channelId: selected.target.channelId,
       channelName: selected.target.channelName,
-      startTime,
+      latencyMs: selected.latencyMs,
     };
   }
 
@@ -71,7 +68,6 @@ export async function handleImageGeneration(
     recordSpend: options.recordSpend,
     requestContext: options.requestContext,
     rawBody: options.rawBody,
-    startTime,
   });
 }
 
@@ -83,12 +79,12 @@ async function createImageGenerationWithFallback(
     recordSpend?: boolean;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<ImageGenerationResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -99,10 +95,11 @@ async function createImageGenerationWithFallback(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await target.provider.createImageGeneration(prepared.body, providerOptions)
         : await target.provider.createImageGeneration(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const usage = extractImageGenerationTokenUsage(response);
       const estimatedCost = estimateCost(
         target.publicModelId,
@@ -141,7 +138,7 @@ async function createImageGenerationWithFallback(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({
@@ -165,13 +162,17 @@ async function resolveStreamingTarget(
   request: ImageGenerationRequest,
   apiKeyId: string,
   targets: ResolvedImageGenerationProviderModel[],
-  startTime: number,
   requestContext?: ChannelOverrideRequestContext,
   rawBody?: string,
-): Promise<{ target: ResolvedImageGenerationProviderModel; stream: AsyncIterable<string> }> {
+): Promise<{
+  target: ResolvedImageGenerationProviderModel;
+  stream: AsyncIterable<string>;
+  latencyMs: number;
+}> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       if (!target.provider.createImageGenerationStream) {
         throw new Error(`${target.providerName} does not support image generation streaming`);
@@ -185,10 +186,16 @@ async function resolveStreamingTarget(
         prepared.headers,
         rawPassThroughBody(target, rawBody),
       );
+      attemptStartTime = Date.now();
       const stream = providerOptions
         ? target.provider.createImageGenerationStream(prepared.body, providerOptions)
         : target.provider.createImageGenerationStream(prepared.body);
-      return { target, stream: await prefetchFirstStreamChunk(stream) };
+      const prefetchedStream = await prefetchFirstStreamChunk(stream);
+      return {
+        target,
+        stream: prefetchedStream,
+        latencyMs: Date.now() - attemptStartTime,
+      };
     } catch (error) {
       if (
         error instanceof ChannelParamOverrideError ||
@@ -198,7 +205,7 @@ async function resolveStreamingTarget(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({

@@ -86,7 +86,7 @@ describe("AnthropicAdapter", () => {
   it("maps streaming usage events into OpenAI-style usage", async () => {
     mockFetch.mockResolvedValueOnce(
       makeSSEStream([
-        'data: {"type":"message_start","message":{"id":"msg-1","usage":{"input_tokens":7,"output_tokens":1}}}\n\n',
+        'data: {"type":"message_start","message":{"id":"msg-1","usage":{"input_tokens":7,"output_tokens":1,"cache_creation_input_tokens":5,"cache_read_input_tokens":6}}}\n\n',
         'data: {"type":"content_block_delta","delta":{"text":"hi"}}\n\n',
         'data: {"type":"message_delta","usage":{"output_tokens":3}}\n\n',
         'data: {"type":"message_stop"}\n\n',
@@ -107,6 +107,8 @@ describe("AnthropicAdapter", () => {
       completion_tokens: 3,
       total_tokens: 10,
     });
+    expect(chunks.at(-1)?.usage?.pricing_input_tokens).toBe(18);
+    expect(JSON.stringify(chunks.at(-1)?.usage)).not.toContain("pricing_input_tokens");
   });
 
   it("translates tools and tool results to Anthropic format", async () => {

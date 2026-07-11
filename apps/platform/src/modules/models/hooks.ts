@@ -2,6 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api-client";
 import type { AuthUser } from "../auth/types";
 
+export type ModelPricingTier = {
+  inputTokenThreshold: number;
+  inputPricePer1M: number;
+  outputPricePer1M: number;
+};
+
 export interface Model {
   id: string;
   name: string;
@@ -9,6 +15,7 @@ export interface Model {
   type?: "provider" | "fallback-group" | "alias";
   inputPricePer1M: number;
   outputPricePer1M: number;
+  pricingTiers?: ModelPricingTier[];
   contextWindow: number;
   maxOutputTokens: number;
   inputModalities: string[];

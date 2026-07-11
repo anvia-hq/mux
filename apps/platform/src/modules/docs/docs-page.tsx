@@ -603,8 +603,8 @@ export function ServiceDocsPage() {
               </h1>
               <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
                 Use one endpoint for OpenAI, Anthropic, Google Gemini, and Mistral. Requests stay
-                compatible with OpenAI SDK clients and are logged with latency, token usage, and
-                estimated cost.
+                compatible with OpenAI SDK clients and are logged with provider latency, token
+                usage, and estimated cost.
               </p>
             </div>
             <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
@@ -633,7 +633,10 @@ export function ServiceDocsPage() {
                 ["Unified route", "Send requests to one endpoint and let the gateway dispatch."],
                 ["Normalized output", "Responses follow the OpenAI shape across providers."],
                 ["Fallback groups", "Expose virtual models with ordered backup targets."],
-                ["Request logs", "Track latency, tokens, cost, provider, and status code."],
+                [
+                  "Request logs",
+                  "Track per-attempt provider latency, tokens, cost, provider, and status code.",
+                ],
               ].map(([title, description]) => (
                 <Card key={title} className="gap-2 p-4">
                   <CardTitle className="text-sm">{title}</CardTitle>

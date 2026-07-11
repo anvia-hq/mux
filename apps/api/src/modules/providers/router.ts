@@ -6,7 +6,7 @@ import { authValidationHook } from "../auth/utils";
 import { prisma } from "../../utils/prisma";
 import { encrypt, lastFour } from "./crypto";
 import { reloadProvider, listAllModels } from "../../providers/registry";
-import type { Model } from "../../providers/types";
+import type { Model, ModelPricingTier } from "../../providers/types";
 import {
   createCustomProviderSchema,
   type CustomProviderModelInput,
@@ -40,6 +40,9 @@ function modelCreateData(model: CustomProviderModelInput) {
     name: model.name,
     inputPricePer1M: model.inputPricePer1M,
     outputPricePer1M: model.outputPricePer1M,
+    pricingTiers: [...model.pricingTiers].sort(
+      (left, right) => left.inputTokenThreshold - right.inputTokenThreshold,
+    ),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
     inputModalities: model.inputModalities,
@@ -58,6 +61,7 @@ function customModelToModel(providerId: string, model: ReturnType<typeof modelCr
     provider: providerId,
     inputPricePer1M: model.inputPricePer1M,
     outputPricePer1M: model.outputPricePer1M,
+    ...(model.pricingTiers.length > 0 ? { pricingTiers: model.pricingTiers } : {}),
     contextWindow: model.contextWindow,
     maxOutputTokens: model.maxOutputTokens,
     inputModalities: model.inputModalities,
@@ -67,6 +71,20 @@ function customModelToModel(providerId: string, model: ReturnType<typeof modelCr
     structuredOutput: model.structuredOutput,
     weights: model.weights,
   };
+}
+
+function readPricingTiers(value: unknown): ModelPricingTier[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (tier): tier is ModelPricingTier =>
+        Boolean(tier) &&
+        typeof tier === "object" &&
+        typeof (tier as ModelPricingTier).inputTokenThreshold === "number" &&
+        typeof (tier as ModelPricingTier).inputPricePer1M === "number" &&
+        typeof (tier as ModelPricingTier).outputPricePer1M === "number",
+    )
+    .sort((left, right) => left.inputTokenThreshold - right.inputTokenThreshold);
 }
 
 async function customProviderExists(provider: string): Promise<boolean> {
@@ -99,6 +117,7 @@ async function listAdminModelsForProvider(provider: string): Promise<Model[]> {
       name: model.name,
       inputPricePer1M: model.inputPricePer1M,
       outputPricePer1M: model.outputPricePer1M,
+      pricingTiers: readPricingTiers(model.pricingTiers),
       contextWindow: model.contextWindow,
       maxOutputTokens: model.maxOutputTokens,
       inputModalities: model.inputModalities,

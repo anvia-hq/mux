@@ -199,7 +199,7 @@ responsesRouter.post(
       }
 
       if (body.stream === true) {
-        const result = await handleResponseCreateStream(body, {
+        const result = await handleResponseCreateStream(body, apiKeyId, {
           requestContext: requestContextFromHono(c),
           rawBody: rawJsonBodyFromHono(c),
         });
@@ -209,7 +209,7 @@ responsesRouter.post(
           model,
           channelId,
           channelName,
-          startTime,
+          latencyMs,
         } = result;
         const logId = await logStreamStart({
           apiKeyId,
@@ -248,7 +248,6 @@ responsesRouter.post(
               }
             }
 
-            const latencyMs = Date.now() - startTime;
             const estimatedCost = estimateCost(model, usage?.input_tokens, usage?.output_tokens);
             const reasoningTokens = readReasoningTokens(usage);
 
@@ -281,7 +280,6 @@ responsesRouter.post(
               console.error("Failed to finalize response stream log:", logError);
             }
           } catch (streamError) {
-            const latencyMs = Date.now() - startTime;
             const errorMessage =
               streamError instanceof Error ? streamError.message : "Unknown error";
 

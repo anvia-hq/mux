@@ -321,7 +321,7 @@ describe("messages router", () => {
       model: "anthropic:claude-test",
       channelId: "anthropic-primary",
       channelName: "Anthropic primary",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
     mockEstimateCost.mockReturnValueOnce(0.02);
 
@@ -346,6 +346,7 @@ describe("messages router", () => {
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.02);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
+        latencyMs: 25,
         promptTokens: 4,
         completionTokens: 5,
         totalTokens: 9,

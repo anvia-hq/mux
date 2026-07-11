@@ -168,7 +168,7 @@ describe("image generations router", () => {
       stream: chunks(),
       provider: "openai",
       model: "openai:gpt-image-1",
-      startTime: Date.now(),
+      latencyMs: 25,
     });
 
     const app = new Hono().route("/v1/images/generations", imageGenerationsRouter);
@@ -194,6 +194,7 @@ describe("image generations router", () => {
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
+        latencyMs: 25,
         promptTokens: 2,
         completionTokens: 3,
         totalTokens: 5,

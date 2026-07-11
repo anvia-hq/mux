@@ -284,7 +284,6 @@ async function audioProxyStreamResponse(
       if (streamLogFinalized) return;
       streamLogFinalized = true;
 
-      const latencyMs = Date.now() - result.startTime;
       const estimatedCost = estimateCost(result.model, promptTokens, completionTokens);
 
       if (isLimitedKey && estimatedCost !== undefined) {
@@ -303,7 +302,7 @@ async function audioProxyStreamResponse(
         channelId: result.channelId,
         channelName: result.channelName,
         endpoint,
-        latencyMs,
+        latencyMs: result.latencyMs,
         promptTokens,
         completionTokens,
         totalTokens,
@@ -337,7 +336,6 @@ async function audioProxyStreamResponse(
         console.error("Failed to finalize request log:", logError);
       }
     } catch (streamError) {
-      const latencyMs = Date.now() - result.startTime;
       const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
       try {
@@ -350,7 +348,7 @@ async function audioProxyStreamResponse(
             channelId: result.channelId,
             channelName: result.channelName,
             endpoint,
-            latencyMs,
+            latencyMs: result.latencyMs,
             statusCode: 500,
             errorMessage,
           });

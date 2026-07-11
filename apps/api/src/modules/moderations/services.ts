@@ -38,7 +38,6 @@ export async function handleModeration(
       recordSpend: options.recordSpend,
       requestContext: options.requestContext,
       rawBody: options.rawBody,
-      startTime: Date.now(),
     },
   );
 }
@@ -52,12 +51,12 @@ async function createModerationWithFallback(
     recordSpend?: boolean;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<ModerationResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -68,10 +67,11 @@ async function createModerationWithFallback(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await target.provider.createModeration(prepared.body, providerOptions)
         : await target.provider.createModeration(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const usage = extractTokenUsage(response);
       const estimatedCost = estimateCost(
         target.publicModelId,
@@ -110,7 +110,7 @@ async function createModerationWithFallback(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({

@@ -14,6 +14,7 @@ vi.mock("../../../src/lib/api-client", () => ({
 
 import { apiFetch, ApiError } from "../../../src/lib/api-client";
 import {
+  useApplyApiKeyModelAccessMutation,
   useApiKeysQuery,
   useCreateApiKeyMutation,
   useRevealApiKeyMutation,
@@ -119,6 +120,27 @@ describe("api-keys hooks", () => {
         method: "PATCH",
         body: { mode: "selected", allowedModelIds: ["openai:gpt-4o"] },
       });
+    });
+  });
+
+  describe("useApplyApiKeyModelAccessMutation", () => {
+    it("patches bulk model access and invalidates the API key query", async () => {
+      vi.mocked(apiFetch).mockResolvedValueOnce({ ok: true, updatedCount: 2 });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const invalidateQueries = vi.spyOn(qc, "invalidateQueries");
+      const bulkWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(QueryClientProvider, { client: qc }, children);
+      const { result } = renderHook(() => useApplyApiKeyModelAccessMutation(), {
+        wrapper: bulkWrapper,
+      });
+
+      await act(() => result.current.mutateAsync({ mode: "snapshot" }));
+
+      expect(apiFetch).toHaveBeenCalledWith("/api-keys/model-access", {
+        method: "PATCH",
+        body: { mode: "snapshot" },
+      });
+      expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["api-keys"] });
     });
   });
 

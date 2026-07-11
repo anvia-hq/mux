@@ -23,46 +23,46 @@ enum RedemptionTargetType {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  name         String?
-  passwordHash String
-  role         Role     @default(USER)
-  spendLimitUsd Float?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  apiKeys      ApiKey[]
-  providerKeys ProviderKey[]
-  providerChannelsCreated ProviderChannel[] @relation("ProviderChannelCreator")
-  providerChannelsUpdated ProviderChannel[] @relation("ProviderChannelUpdater")
-  customProviders CustomProvider[]
-  invitationsCreated Invitation[] @relation("InvitationCreator")
-  invitationsRedeemed Invitation[] @relation("InvitationRedeemer")
-  invitationRedemptions InvitationRedemption[]
-  redemptionCodesCreated RedemptionCode[] @relation("RedemptionCodeCreator")
+  id                            String                  @id @default(cuid())
+  email                         String                  @unique
+  name                          String?
+  passwordHash                  String
+  role                          Role                    @default(USER)
+  spendLimitUsd                 Float?
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
+  apiKeys                       ApiKey[]
+  providerKeys                  ProviderKey[]
+  providerChannelsCreated       ProviderChannel[]       @relation("ProviderChannelCreator")
+  providerChannelsUpdated       ProviderChannel[]       @relation("ProviderChannelUpdater")
+  customProviders               CustomProvider[]
+  invitationsCreated            Invitation[]            @relation("InvitationCreator")
+  invitationsRedeemed           Invitation[]            @relation("InvitationRedeemer")
+  invitationRedemptions         InvitationRedemption[]
+  redemptionCodesCreated        RedemptionCode[]        @relation("RedemptionCodeCreator")
   redemptionApplicationsApplied RedemptionApplication[] @relation("RedemptionApplicationApplier")
-  redemptionApplications RedemptionApplication[] @relation("RedemptionApplicationUser")
+  redemptionApplications        RedemptionApplication[] @relation("RedemptionApplicationUser")
 }
 
 model ApiKey {
-  id            String   @id @default(cuid())
-  name          String
-  key           String   @unique
-  keyCiphertext String?
-  createdBy     String
-  creator       User     @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  isActive      Boolean  @default(true)
-  spendLimitUsd Float?
-  allowAllModels Boolean  @default(true)
-  includeFutureModels Boolean @default(false)
-  allowedModelIds String[] @default([])
-  invitationId  String?
-  invitation    Invitation? @relation(fields: [invitationId], references: [id], onDelete: SetNull)
-  invitationRedemption InvitationRedemption?
+  id                     String                  @id @default(cuid())
+  name                   String
+  key                    String                  @unique
+  keyCiphertext          String?
+  createdBy              String
+  creator                User                    @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  isActive               Boolean                 @default(true)
+  spendLimitUsd          Float?
+  allowAllModels         Boolean                 @default(true)
+  includeFutureModels    Boolean                 @default(false)
+  allowedModelIds        String[]                @default([])
+  invitationId           String?
+  invitation             Invitation?             @relation(fields: [invitationId], references: [id], onDelete: SetNull)
+  invitationRedemption   InvitationRedemption?
   redemptionApplications RedemptionApplication[]
-  createdAt     DateTime @default(now())
-  logs          RequestLog[]
-  backgroundJobs BackgroundResponseJob[]
+  createdAt              DateTime                @default(now())
+  logs                   RequestLog[]
+  backgroundJobs         BackgroundResponseJob[]
 
   @@index([isActive])
   @@index([invitationId])
@@ -107,22 +107,22 @@ model RedemptionApplication {
 }
 
 model Invitation {
-  id          String   @id @default(cuid())
-  codeHash    String   @unique
-  codeLastFour String
-  balanceUsd  Float?
-  isActive    Boolean  @default(true)
-  maxRedemptions Int    @default(1)
-  redeemedCount Int     @default(0)
-  createdBy   String
-  creator     User     @relation("InvitationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
-  redeemedBy  String?
-  redeemer    User?    @relation("InvitationRedeemer", fields: [redeemedBy], references: [id], onDelete: SetNull)
-  redeemedAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  apiKeys     ApiKey[]
-  redemptions InvitationRedemption[]
+  id             String                 @id @default(cuid())
+  codeHash       String                 @unique
+  codeLastFour   String
+  balanceUsd     Float?
+  isActive       Boolean                @default(true)
+  maxRedemptions Int                    @default(1)
+  redeemedCount  Int                    @default(0)
+  createdBy      String
+  creator        User                   @relation("InvitationCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  redeemedBy     String?
+  redeemer       User?                  @relation("InvitationRedeemer", fields: [redeemedBy], references: [id], onDelete: SetNull)
+  redeemedAt     DateTime?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  apiKeys        ApiKey[]
+  redemptions    InvitationRedemption[]
 
   @@index([isActive])
   @@index([createdBy])
@@ -144,36 +144,40 @@ model InvitationRedemption {
 }
 
 model AppSetting {
-  id                         String   @id
-  inviteRegistrationEnabled  Boolean  @default(true)
-  createdAt                  DateTime @default(now())
-  updatedAt                  DateTime @updatedAt
+  id                        String   @id
+  inviteRegistrationEnabled Boolean  @default(true)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 }
 
 model RequestLog {
-  id                String   @id @default(cuid())
-  apiKeyId          String
-  apiKey            ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  id       String @id @default(cuid())
+  apiKeyId String
+  apiKey   ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
 
-  provider          String
-  model             String
-  channelId         String?
-  channelName       String?
-  endpoint          String
+  provider    String
+  model       String
+  channelId   String?
+  channelName String?
+  endpoint    String
 
   latencyMs         Int
   providerLatencyMs Int?
 
-  promptTokens      Int?
-  completionTokens  Int?
-  totalTokens       Int?
-  reasoningTokens   Int?
-  estimatedCost     Float?
+  promptTokens                Int?
+  completionTokens            Int?
+  totalTokens                 Int?
+  reasoningTokens             Int?
+  estimatedCost               Float?
+  pricingInputTokens          Int?
+  appliedInputPricePer1M      Float?
+  appliedOutputPricePer1M     Float?
+  appliedPricingTierThreshold Int?
 
-  statusCode        Int
-  errorMessage      String?
+  statusCode   Int
+  errorMessage String?
 
-  createdAt         DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([apiKeyId])
   @@index([provider])
@@ -186,15 +190,15 @@ model RequestLog {
 /// using AES-256-GCM with a key derived from `PROVIDER_KEYS_ENCRYPTION_KEY`.
 /// The `provider` field is the primary key (one key per provider).
 model ProviderKey {
-  provider    String   @id
+  provider   String   @id
   /// Base64-encoded ciphertext (IV || authTag || encrypted).
-  ciphertext  String
+  ciphertext String
   /// Last 4 characters of the plaintext key, for display in the UI only.
-  lastFour    String
-  updatedBy   String
-  updater     User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
-  updatedAt   DateTime @updatedAt
-  createdAt   DateTime @default(now())
+  lastFour   String
+  updatedBy  String
+  updater    User     @relation(fields: [updatedBy], references: [id], onDelete: Cascade)
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
 }
 
 /// First-class provider channels. A provider can have multiple channels with
@@ -240,22 +244,23 @@ model CustomProvider {
 }
 
 model CustomProviderModel {
-  providerId         String
-  provider           CustomProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  modelId            String
-  name               String
-  inputPricePer1M    Float
-  outputPricePer1M   Float
-  contextWindow      Int
-  maxOutputTokens    Int
-  inputModalities    String[]
-  outputModalities   String[]
-  reasoning          Boolean
-  toolCall           Boolean
-  structuredOutput   Boolean
-  weights            String
-  createdAt          DateTime       @default(now())
-  updatedAt          DateTime       @updatedAt
+  providerId       String
+  provider         CustomProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  modelId          String
+  name             String
+  inputPricePer1M  Float
+  outputPricePer1M Float
+  pricingTiers     Json?
+  contextWindow    Int
+  maxOutputTokens  Int
+  inputModalities  String[]
+  outputModalities String[]
+  reasoning        Boolean
+  toolCall         Boolean
+  structuredOutput Boolean
+  weights          String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 
   @@id([providerId, modelId])
 }
@@ -314,22 +319,23 @@ model ModelAlias {
 /// The actual generation is performed server-side by the provider; the
 /// worker polls upstream and updates status until the response is terminal.
 model BackgroundResponseJob {
-  id           String   @id
-  apiKeyId     String
-  apiKey       ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
-  provider     String
-  model        String
-  channelId    String?
-  channelName  String?
-  request      Json
-  status       String
-  response     Json?
-  errorMessage String?
+  id               String    @id
+  apiKeyId         String
+  apiKey           ApiKey    @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  provider         String
+  model            String
+  channelId        String?
+  channelName      String?
+  request          Json
+  status           String
+  response         Json?
+  errorMessage     String?
   inputPricePer1M  Float?
   outputPricePer1M Float?
-  createdAt    DateTime @default(now())
-  startedAt    DateTime?
-  completedAt  DateTime?
+  pricingTiers     Json?
+  createdAt        DateTime  @default(now())
+  startedAt        DateTime?
+  completedAt      DateTime?
 
   @@index([apiKeyId])
   @@index([channelId])

@@ -14,6 +14,7 @@ import {
 import { useModelsQuery, type Model } from "./hooks";
 import { ModelIdCopyButton } from "./model-id-copy-button";
 import { ModalityIcons } from "./modality-icons";
+import { PricingTierTooltip } from "./pricing-tier-tooltip";
 import { PROVIDER_LABELS, providerLabel } from "../providers/hooks";
 import { meQueryOptions } from "../auth/hooks/use-auth";
 
@@ -199,10 +200,14 @@ export function ModelsPage() {
                       {m.maxOutputTokens > 0 ? formatTokens(m.maxOutputTokens) : "-"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {m.inputPricePer1M > 0 ? formatPrice(m.inputPricePer1M) : "-"}
+                      <PricingTierTooltip model={m}>
+                        {m.inputPricePer1M > 0 ? formatPrice(m.inputPricePer1M) : "-"}
+                      </PricingTierTooltip>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {m.outputPricePer1M > 0 ? formatPrice(m.outputPricePer1M) : "-"}
+                      <PricingTierTooltip model={m}>
+                        {m.outputPricePer1M > 0 ? formatPrice(m.outputPricePer1M) : "-"}
+                      </PricingTierTooltip>
                     </TableCell>
                     <TableCell className="text-center">
                       <CapBadge enabled={m.reasoning} />

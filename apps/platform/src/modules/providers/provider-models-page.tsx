@@ -38,6 +38,13 @@ import {
 } from "./hooks";
 import { ModelIdCopyButton } from "../models/model-id-copy-button";
 import { ModalityIcons } from "../models/modality-icons";
+import { PricingTierTooltip } from "../models/pricing-tier-tooltip";
+import {
+  parsePricingTierDrafts,
+  PricingTierEditor,
+  pricingTierDraftsFromModel,
+  type PricingTierDraft,
+} from "./pricing-tier-editor";
 
 type ModelDraft = {
   clientId: string;
@@ -45,6 +52,7 @@ type ModelDraft = {
   name: string;
   inputPricePer1M: string;
   outputPricePer1M: string;
+  pricingTiers: PricingTierDraft[];
   contextWindow: string;
   maxOutputTokens: string;
   inputModalities: string;
@@ -146,6 +154,7 @@ function emptyModelDraft(): ModelDraft {
     name: "",
     inputPricePer1M: "0",
     outputPricePer1M: "0",
+    pricingTiers: [],
     contextWindow: "128000",
     maxOutputTokens: "4096",
     inputModalities: "text,image,pdf",
@@ -164,6 +173,7 @@ function draftFromModel(model: ProviderModel): ModelDraft {
     name: model.name,
     inputPricePer1M: String(model.inputPricePer1M),
     outputPricePer1M: String(model.outputPricePer1M),
+    pricingTiers: pricingTierDraftsFromModel(model.pricingTiers),
     contextWindow: String(model.contextWindow),
     maxOutputTokens: String(model.maxOutputTokens),
     inputModalities: model.inputModalities.join(","),
@@ -223,12 +233,15 @@ function parseModelDrafts(drafts: ModelDraft[]): CustomProviderModelInput[] | st
     if (!inputModalities.length || !outputModalities.length) {
       return "Each model needs at least one input and output modality.";
     }
+    const pricingTiers = parsePricingTierDrafts(draft.pricingTiers, contextWindow);
+    if (typeof pricingTiers === "string") return `${name}: ${pricingTiers}`;
 
     models.push({
       id,
       name,
       inputPricePer1M,
       outputPricePer1M,
+      pricingTiers,
       contextWindow,
       maxOutputTokens,
       inputModalities,
@@ -451,16 +464,18 @@ export function ProviderModelsPage({ provider }: { provider: string }) {
                       </div>
                     </TableCell>
                     <TableCell className="min-w-40 py-3">
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                        <span className="text-muted-foreground">Input</span>
-                        <span className="text-right font-medium tabular-nums">
-                          {formatPrice(model.inputPricePer1M)}
-                        </span>
-                        <span className="text-muted-foreground">Output</span>
-                        <span className="text-right font-medium tabular-nums">
-                          {formatPrice(model.outputPricePer1M)}
-                        </span>
-                      </div>
+                      <PricingTierTooltip model={model}>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                          <span className="text-muted-foreground">Input</span>
+                          <span className="text-right font-medium tabular-nums">
+                            {formatPrice(model.inputPricePer1M)}
+                          </span>
+                          <span className="text-muted-foreground">Output</span>
+                          <span className="text-right font-medium tabular-nums">
+                            {formatPrice(model.outputPricePer1M)}
+                          </span>
+                        </div>
+                      </PricingTierTooltip>
                     </TableCell>
                     <TableCell className="min-w-44 whitespace-normal py-3">
                       <div className="grid gap-2 text-xs">
@@ -660,6 +675,11 @@ function ModelDraftEditor({
           onChange={(value) => onChange({ outputModalities: value })}
         />
       </div>
+      <PricingTierEditor
+        idPrefix={`${draft.clientId}-pricing-tier`}
+        tiers={draft.pricingTiers}
+        onChange={(pricingTiers) => onChange({ pricingTiers })}
+      />
       <div className="grid gap-3 md:grid-cols-[1fr_1fr_1fr_10rem] md:items-center">
         <CapabilitySwitch
           id={`${draft.clientId}-reasoning`}

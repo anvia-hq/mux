@@ -121,6 +121,8 @@ export interface ChatCompletionResponse {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /** Internal selector count; adapters must not serialize this field to clients. */
+    pricing_input_tokens?: number;
   };
 }
 
@@ -141,6 +143,8 @@ export interface ChatCompletionChunk {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
+    /** Internal selector count; adapters must not serialize this field to clients. */
+    pricing_input_tokens?: number;
   };
 }
 
@@ -471,6 +475,15 @@ export function mergeProviderRequestHeaders(
   return headers;
 }
 
+export type ModelPricingTier = {
+  /** Higher tier applies when the request input token count exceeds this value. */
+  inputTokenThreshold: number;
+  /** Price per 1M input tokens in USD once this tier is selected. */
+  inputPricePer1M: number;
+  /** Price per 1M output tokens in USD once this tier is selected. */
+  outputPricePer1M: number;
+};
+
 export interface Model {
   id: string;
   name: string;
@@ -480,6 +493,8 @@ export interface Model {
   inputPricePer1M: number;
   /** Price per 1M output (completion) tokens in USD. */
   outputPricePer1M: number;
+  /** Optional whole-request price tiers selected by input token count. */
+  pricingTiers?: ModelPricingTier[];
   /** Total context window in tokens. */
   contextWindow: number;
   /** Maximum output tokens. */

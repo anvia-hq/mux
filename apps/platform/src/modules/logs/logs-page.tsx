@@ -23,6 +23,12 @@ import {
   TableHeader,
   TableRow,
 } from "@repo/ui/components/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@repo/ui/components/tooltip";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useApiKeysQuery } from "../api-keys/hooks";
@@ -77,7 +83,8 @@ export function LogsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Request logs</h1>
         <p className="text-sm text-muted-foreground">
-          Every chat completion that flows through the gateway is logged with cost and latency.
+          Each logged row reports cost and provider-attempt latency. Streaming latency is measured
+          to the first upstream chunk or byte.
         </p>
       </div>
 
@@ -202,7 +209,7 @@ export function LogsPage() {
               <TableHead>Provider</TableHead>
               <TableHead>Model</TableHead>
               <TableHead>Key</TableHead>
-              <TableHead className="text-right">Latency</TableHead>
+              <TableHead className="text-right">Provider latency</TableHead>
               <TableHead className="text-right">Input</TableHead>
               <TableHead className="text-right">Output</TableHead>
               <TableHead className="text-right">Cost</TableHead>
@@ -227,7 +234,7 @@ export function LogsPage() {
                     {row.completionTokens?.toLocaleString() ?? "—"}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    ${row.estimatedCost?.toFixed(4) ?? "—"}
+                    <PricingAuditCost row={row} />
                   </TableCell>
                   <TableCell className="text-right">
                     <StatusBadge status={row.statusCode} />
@@ -268,6 +275,40 @@ export function LogsPage() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function PricingAuditCost({ row }: { row: RequestLog }) {
+  const label = row.estimatedCost === null ? "—" : `$${row.estimatedCost.toFixed(4)}`;
+  if (
+    row.pricingInputTokens === null ||
+    row.appliedInputPricePer1M === null ||
+    row.appliedOutputPricePer1M === null
+  ) {
+    return label;
+  }
+
+  const tierLabel =
+    row.appliedPricingTierThreshold === null
+      ? "Base pricing"
+      : `Long-context tier above ${row.appliedPricingTierThreshold.toLocaleString()} input tokens`;
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-4">
+          {label}
+        </TooltipTrigger>
+        <TooltipContent className="grid gap-1 text-xs">
+          <span className="font-medium">{tierLabel}</span>
+          <span>{row.pricingInputTokens.toLocaleString()} tokens used for tier selection</span>
+          <span>
+            ${row.appliedInputPricePer1M.toLocaleString()}/M input · $
+            {row.appliedOutputPricePer1M.toLocaleString()}/M output
+          </span>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

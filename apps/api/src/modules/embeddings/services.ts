@@ -55,7 +55,6 @@ export async function handleEmbedding(
       requireBillableUsage: options.requireBillableUsage,
       requestContext: options.requestContext,
       rawBody: options.rawBody,
-      startTime: Date.now(),
     },
   );
 }
@@ -69,12 +68,12 @@ async function createEmbeddingWithFallback(
     requireBillableUsage?: boolean;
     requestContext?: ChannelOverrideRequestContext;
     rawBody?: string;
-    startTime: number;
   },
 ): Promise<EmbeddingResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
+    let attemptStartTime: number | undefined;
     try {
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         { ...request, model: target.upstreamModelId ?? target.modelId },
@@ -85,10 +84,11 @@ async function createEmbeddingWithFallback(
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
       );
+      attemptStartTime = Date.now();
       const response = providerOptions
         ? await target.provider.createEmbedding(prepared.body, providerOptions)
         : await target.provider.createEmbedding(prepared.body);
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = Date.now() - attemptStartTime;
       const estimatedCost = estimateCost(target.publicModelId, response.usage?.prompt_tokens, 0);
 
       if (options.requireBillableUsage && estimatedCost === undefined) {
@@ -148,7 +148,7 @@ async function createEmbeddingWithFallback(
       }
 
       lastError = error;
-      const latencyMs = Date.now() - options.startTime;
+      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
       await logRequest({

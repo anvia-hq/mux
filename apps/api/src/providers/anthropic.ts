@@ -411,6 +411,16 @@ export class UpstreamAnthropicMessagesApiError extends Error {
   }
 }
 
+function withPricingInputTokens<
+  T extends { prompt_tokens: number; completion_tokens: number; total_tokens: number },
+>(usage: T, pricingInputTokens: number): T & { pricing_input_tokens?: number } {
+  Object.defineProperty(usage, "pricing_input_tokens", {
+    value: pricingInputTokens,
+    enumerable: false,
+  });
+  return usage;
+}
+
 export class AnthropicAdapter implements ProviderAdapter {
   name = "anthropic";
   capabilities = anthropicCapabilities;
@@ -554,7 +564,12 @@ export class AnthropicAdapter implements ProviderAdapter {
         | { type: "tool_use"; id: string; name: string; input: unknown }
       )[];
       stop_reason: string | null;
-      usage: { input_tokens: number; output_tokens: number };
+      usage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
     };
 
     const content = data.content ?? [];
@@ -592,11 +607,16 @@ export class AnthropicAdapter implements ProviderAdapter {
           finish_reason: data.stop_reason === "tool_use" ? "tool_calls" : data.stop_reason,
         },
       ],
-      usage: {
-        prompt_tokens: data.usage.input_tokens,
-        completion_tokens: data.usage.output_tokens,
-        total_tokens: data.usage.input_tokens + data.usage.output_tokens,
-      },
+      usage: withPricingInputTokens(
+        {
+          prompt_tokens: data.usage.input_tokens,
+          completion_tokens: data.usage.output_tokens,
+          total_tokens: data.usage.input_tokens + data.usage.output_tokens,
+        },
+        data.usage.input_tokens +
+          (data.usage.cache_creation_input_tokens ?? 0) +
+          (data.usage.cache_read_input_tokens ?? 0),
+      ),
     };
   }
 
@@ -624,6 +644,8 @@ export class AnthropicAdapter implements ProviderAdapter {
     let messageId = `anthropic-${Date.now()}`;
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
+    let cacheCreationTokens: number | undefined;
+    let cacheReadTokens: number | undefined;
     const toolCallIds = new Map<number, string>();
     const toolCallNames = new Map<number, string>();
 
@@ -642,7 +664,12 @@ export class AnthropicAdapter implements ProviderAdapter {
             id?: string;
             message?: {
               id?: string;
-              usage?: { input_tokens?: number; output_tokens?: number };
+              usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_creation_input_tokens?: number;
+                cache_read_input_tokens?: number;
+              };
             };
             index?: number;
             content_block?: {
@@ -673,6 +700,12 @@ export class AnthropicAdapter implements ProviderAdapter {
           }
           if (typeof data.message?.usage?.output_tokens === "number") {
             completionTokens = data.message.usage.output_tokens;
+          }
+          if (typeof data.message?.usage?.cache_creation_input_tokens === "number") {
+            cacheCreationTokens = data.message.usage.cache_creation_input_tokens;
+          }
+          if (typeof data.message?.usage?.cache_read_input_tokens === "number") {
+            cacheReadTokens = data.message.usage.cache_read_input_tokens;
           }
           if (typeof data.usage?.output_tokens === "number") {
             completionTokens = data.usage.output_tokens;
@@ -757,11 +790,14 @@ export class AnthropicAdapter implements ProviderAdapter {
               ],
               usage:
                 promptTokens !== undefined || completionTokens !== undefined
-                  ? {
-                      prompt_tokens: promptTokens ?? 0,
-                      completion_tokens: completionTokens ?? 0,
-                      total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
-                    }
+                  ? withPricingInputTokens(
+                      {
+                        prompt_tokens: promptTokens ?? 0,
+                        completion_tokens: completionTokens ?? 0,
+                        total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
+                      },
+                      (promptTokens ?? 0) + (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0),
+                    )
                   : undefined,
             };
           } else if (data.type === "error") {

@@ -18,6 +18,7 @@ vi.mock("../../src/modules/providers/crypto", () => ({ decrypt: mockDecrypt }));
 import {
   clearProviderCacheForE2e,
   estimateCost,
+  selectModelPricingRates,
   initProviders,
   listPublicModels,
   resolveAnthropicMessageTokenCountAccessModelId,
@@ -661,5 +662,38 @@ describe("estimateCost", () => {
 
   it("returns undefined for a model id that does not parse as provider:model", () => {
     expect(estimateCost("not-a-model", 100, 100, 50)).toBeUndefined();
+  });
+});
+
+describe("selectModelPricingRates", () => {
+  const pricing = {
+    inputPricePer1M: 1,
+    outputPricePer1M: 4,
+    pricingTiers: [
+      { inputTokenThreshold: 200_000, inputPricePer1M: 2, outputPricePer1M: 6 },
+      { inputTokenThreshold: 500_000, inputPricePer1M: 3, outputPricePer1M: 8 },
+    ],
+  };
+
+  it("uses base pricing below and exactly at the first threshold", () => {
+    expect(selectModelPricingRates(pricing, 199_999)).toEqual({
+      inputPricePer1M: 1,
+      outputPricePer1M: 4,
+      threshold: null,
+    });
+    expect(selectModelPricingRates(pricing, 200_000).threshold).toBeNull();
+  });
+
+  it("selects the highest threshold crossed regardless of input order", () => {
+    expect(selectModelPricingRates(pricing, 200_001)).toEqual({
+      inputPricePer1M: 2,
+      outputPricePer1M: 6,
+      threshold: 200_000,
+    });
+    expect(selectModelPricingRates(pricing, 700_000)).toEqual({
+      inputPricePer1M: 3,
+      outputPricePer1M: 8,
+      threshold: 500_000,
+    });
   });
 });

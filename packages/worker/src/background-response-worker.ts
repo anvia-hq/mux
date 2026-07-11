@@ -64,6 +64,7 @@ type BackgroundJobRecord = {
   response: unknown;
   inputPricePer1M?: number | null;
   outputPricePer1M?: number | null;
+  pricingTiers?: unknown;
 };
 
 type UpstreamResponse = {
@@ -158,8 +159,10 @@ export async function processBackgroundPollJob(
     if (upstreamStatus === "completed") {
       const usage = upstreamResponse.usage;
       let estimatedCost: number | undefined;
+      let pricingDetails: ReturnType<typeof computeCostDetails>;
       if (usage?.input_tokens || usage?.output_tokens) {
-        estimatedCost = computeCost(usage.input_tokens, usage.output_tokens, row);
+        pricingDetails = computeCostDetails(usage.input_tokens, usage.output_tokens, row);
+        estimatedCost = pricingDetails?.estimatedCost;
         if (estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost > 0) {
           try {
             const apiKey = await prismaClient.apiKey.findUnique({
@@ -207,6 +210,10 @@ export async function processBackgroundPollJob(
         totalTokens: upstreamResponse.usage?.total_tokens,
         reasoningTokens: readReasoningTokens(upstreamResponse.usage),
         estimatedCost,
+        pricingInputTokens: pricingDetails?.pricingInputTokens,
+        appliedInputPricePer1M: pricingDetails?.appliedInputPricePer1M,
+        appliedOutputPricePer1M: pricingDetails?.appliedOutputPricePer1M,
+        appliedPricingTierThreshold: pricingDetails?.appliedPricingTierThreshold ?? undefined,
         statusCode: 200,
       } satisfies RequestLogJob);
     }
@@ -295,11 +302,25 @@ function buildUpstreamGetUrl(row: BackgroundJobRecord): string {
   return `https://api.openai.com/v1/responses/${encodeURIComponent(row.id)}`;
 }
 
-function computeCost(
+type PricingTier = {
+  inputTokenThreshold: number;
+  inputPricePer1M: number;
+  outputPricePer1M: number;
+};
+
+function computeCostDetails(
   inputTokens: number | undefined,
   outputTokens: number | undefined,
   row: BackgroundJobRecord,
-): number | undefined {
+):
+  | {
+      estimatedCost: number;
+      pricingInputTokens: number;
+      appliedInputPricePer1M: number;
+      appliedOutputPricePer1M: number;
+      appliedPricingTierThreshold: number | null;
+    }
+  | undefined {
   const { inputPricePer1M, outputPricePer1M } = row;
   if (
     typeof inputPricePer1M !== "number" ||
@@ -309,9 +330,35 @@ function computeCost(
   ) {
     return undefined;
   }
-  const inputCost = ((inputTokens ?? 0) * inputPricePer1M) / 1_000_000;
-  const outputCost = ((outputTokens ?? 0) * outputPricePer1M) / 1_000_000;
-  return inputCost + outputCost;
+  const pricingInputTokens = inputTokens ?? 0;
+  const selectedTier = readPricingTiers(row.pricingTiers)
+    .filter((tier) => pricingInputTokens > tier.inputTokenThreshold)
+    .at(-1);
+  const appliedInputPricePer1M = selectedTier?.inputPricePer1M ?? inputPricePer1M;
+  const appliedOutputPricePer1M = selectedTier?.outputPricePer1M ?? outputPricePer1M;
+  const inputCost = (pricingInputTokens * appliedInputPricePer1M) / 1_000_000;
+  const outputCost = ((outputTokens ?? 0) * appliedOutputPricePer1M) / 1_000_000;
+  return {
+    estimatedCost: inputCost + outputCost,
+    pricingInputTokens,
+    appliedInputPricePer1M,
+    appliedOutputPricePer1M,
+    appliedPricingTierThreshold: selectedTier?.inputTokenThreshold ?? null,
+  };
+}
+
+function readPricingTiers(value: unknown): PricingTier[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(
+      (tier): tier is PricingTier =>
+        Boolean(tier) &&
+        typeof tier === "object" &&
+        typeof (tier as PricingTier).inputTokenThreshold === "number" &&
+        typeof (tier as PricingTier).inputPricePer1M === "number" &&
+        typeof (tier as PricingTier).outputPricePer1M === "number",
+    )
+    .sort((left, right) => left.inputTokenThreshold - right.inputTokenThreshold);
 }
 
 function readReasoningTokens(usage: unknown): number | undefined {

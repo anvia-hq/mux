@@ -46,7 +46,7 @@ export type AudioProxyStreamResult = {
   model: string;
   channelId?: string;
   channelName?: string;
-  startTime: number;
+  latencyMs: number;
 };
 
 export async function handleAudioTranscription(
@@ -67,7 +67,7 @@ export async function handleAudioTranscription(
     resolved.targets,
     "/v1/audio/transcriptions",
     (target, request) => target.provider.createAudioTranscription(request),
-    { recordSpend: options.recordSpend, startTime: Date.now() },
+    { recordSpend: options.recordSpend },
   );
 }
 
@@ -88,7 +88,6 @@ export async function handleAudioTranscriptionStream(
     resolved.targets,
     "/v1/audio/transcriptions",
     (target, request) => target.provider.createAudioTranscriptionStream(request),
-    Date.now(),
   );
 }
 
@@ -110,7 +109,7 @@ export async function handleAudioTranslation(
     resolved.targets,
     "/v1/audio/translations",
     (target, request) => target.provider.createAudioTranslation(request),
-    { recordSpend: options.recordSpend, startTime: Date.now() },
+    { recordSpend: options.recordSpend },
   );
 }
 
@@ -126,7 +125,6 @@ export async function handleAudioSpeech(
 
   return createAudioSpeechWithFallback(request, apiKeyId, resolved.targets, {
     recordSpend: options.recordSpend,
-    startTime: Date.now(),
   });
 }
 
@@ -139,7 +137,7 @@ export async function handleAudioSpeechStream(
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  return createAudioSpeechStreamWithFallback(request, apiKeyId, resolved.targets, Date.now());
+  return createAudioSpeechStreamWithFallback(request, apiKeyId, resolved.targets);
 }
 
 async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTarget>(
@@ -149,16 +147,18 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
   targets: TTarget[],
   endpoint: AudioEndpoint,
   createAudio: (target: TTarget, request: AudioMultipartRequest) => Promise<AudioProxyResponse>,
-  options: { recordSpend?: boolean; startTime: number },
+  options: { recordSpend?: boolean },
 ): Promise<AudioProxyResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
+    const attemptStartTime = Date.now();
     try {
       const response = await createAudio(target, {
         model: targetUpstreamModelId(target),
         formData,
       });
+      const latencyMs = Date.now() - attemptStartTime;
       await recordSuccessfulAudioRequest(
         response,
         apiKeyId,
@@ -167,7 +167,7 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
         target.channelId,
         target.channelName,
         endpoint,
-        options,
+        { recordSpend: options.recordSpend, latencyMs },
       );
       return response;
     } catch (error) {
@@ -187,7 +187,7 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
         target.channelId,
         target.channelName,
         endpoint,
-        options.startTime,
+        attemptStartTime,
       );
     }
   }
@@ -205,25 +205,26 @@ async function createAudioMultipartStreamWithFallback<TTarget extends AudioMulti
     target: TTarget,
     request: AudioMultipartRequest,
   ) => Promise<AudioProxyStreamResponse>,
-  startTime: number,
 ): Promise<AudioProxyStreamResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    const attemptStartTime = Date.now();
     try {
       const response = await createAudio(target, {
         model: targetUpstreamModelId(target),
         formData,
       });
 
+      const stream = await prefetchFirstStreamChunk(response.stream);
       return {
-        stream: await prefetchFirstStreamChunk(response.stream),
+        stream,
         contentType: response.contentType,
         provider: target.providerName,
         model: target.publicModelId,
         channelId: target.channelId,
         channelName: target.channelName,
-        startTime,
+        latencyMs: Date.now() - attemptStartTime,
       };
     } catch (error) {
       if (
@@ -242,7 +243,7 @@ async function createAudioMultipartStreamWithFallback<TTarget extends AudioMulti
         target.channelId,
         target.channelName,
         endpoint,
-        startTime,
+        attemptStartTime,
       );
     }
   }
@@ -254,16 +255,18 @@ async function createAudioSpeechWithFallback(
   request: AudioSpeechRequest,
   apiKeyId: string,
   targets: ResolvedAudioSpeechProviderModel[],
-  options: { recordSpend?: boolean; startTime: number },
+  options: { recordSpend?: boolean },
 ): Promise<AudioProxyResponse> {
   let lastError: unknown;
 
   for (const target of targets) {
+    const attemptStartTime = Date.now();
     try {
       const response = await target.provider.createAudioSpeech({
         ...request,
         model: targetUpstreamModelId(target),
       });
+      const latencyMs = Date.now() - attemptStartTime;
       await recordSuccessfulAudioRequest(
         response,
         apiKeyId,
@@ -272,7 +275,7 @@ async function createAudioSpeechWithFallback(
         target.channelId,
         target.channelName,
         "/v1/audio/speech",
-        options,
+        { recordSpend: options.recordSpend, latencyMs },
       );
       return response;
     } catch (error) {
@@ -292,7 +295,7 @@ async function createAudioSpeechWithFallback(
         target.channelId,
         target.channelName,
         "/v1/audio/speech",
-        options.startTime,
+        attemptStartTime,
       );
     }
   }
@@ -304,19 +307,20 @@ async function createAudioSpeechStreamWithFallback(
   request: AudioSpeechRequest,
   apiKeyId: string,
   targets: ResolvedAudioSpeechStreamProviderModel[],
-  startTime: number,
 ): Promise<AudioProxyStreamResult> {
   let lastError: unknown;
 
   for (const target of targets) {
+    const attemptStartTime = Date.now();
     try {
       const response = await target.provider.createAudioSpeechStream({
         ...request,
         model: targetUpstreamModelId(target),
       });
 
+      const stream = await prefetchFirstStreamChunk(response.stream);
       return {
-        stream: await prefetchFirstStreamChunk(response.stream),
+        stream,
         contentType:
           response.contentType ??
           (request.stream_format === "audio" ? "application/octet-stream" : undefined),
@@ -324,7 +328,7 @@ async function createAudioSpeechStreamWithFallback(
         model: target.publicModelId,
         channelId: target.channelId,
         channelName: target.channelName,
-        startTime,
+        latencyMs: Date.now() - attemptStartTime,
       };
     } catch (error) {
       if (
@@ -343,7 +347,7 @@ async function createAudioSpeechStreamWithFallback(
         target.channelId,
         target.channelName,
         "/v1/audio/speech",
-        startTime,
+        attemptStartTime,
       );
     }
   }
@@ -359,9 +363,8 @@ async function recordSuccessfulAudioRequest(
   channelId: string | undefined,
   channelName: string | undefined,
   endpoint: AudioEndpoint,
-  options: { recordSpend?: boolean; startTime: number },
+  options: { recordSpend?: boolean; latencyMs: number },
 ): Promise<void> {
-  const latencyMs = Date.now() - options.startTime;
   const usage = extractAudioUsage(response.usage, endpoint);
   const estimatedCost = estimateCost(model, usage.promptTokens, usage.completionTokens);
 
@@ -376,7 +379,7 @@ async function recordSuccessfulAudioRequest(
     channelId,
     channelName,
     endpoint,
-    latencyMs,
+    latencyMs: options.latencyMs,
     promptTokens: usage.promptTokens,
     completionTokens: usage.completionTokens,
     totalTokens: usage.totalTokens,
@@ -393,9 +396,9 @@ async function logFailedAudioRequest(
   channelId: string | undefined,
   channelName: string | undefined,
   endpoint: AudioEndpoint,
-  startTime: number,
+  attemptStartTime: number,
 ): Promise<void> {
-  const latencyMs = Date.now() - startTime;
+  const latencyMs = Date.now() - attemptStartTime;
   const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
   await logRequest({

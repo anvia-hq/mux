@@ -11,6 +11,10 @@ export type RequestLog = {
   completionTokens: number | null;
   totalTokens: number | null;
   estimatedCost: number | null;
+  pricingInputTokens: number | null;
+  appliedInputPricePer1M: number | null;
+  appliedOutputPricePer1M: number | null;
+  appliedPricingTierThreshold: number | null;
   statusCode: number;
   errorMessage: string | null;
   createdAt: string;

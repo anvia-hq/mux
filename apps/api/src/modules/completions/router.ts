@@ -70,7 +70,7 @@ completionsRouter.post("/", async (c) => {
     });
 
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, channelId, channelName, startTime } = result;
+      const { stream: streamIterable, provider, model, channelId, channelName, latencyMs } = result;
       const logId = await logStreamStart({
         apiKeyId,
         provider,
@@ -97,7 +97,6 @@ completionsRouter.post("/", async (c) => {
           if (streamLogFinalized) return;
           streamLogFinalized = true;
 
-          const latencyMs = Date.now() - startTime;
           const estimatedCost = estimateCost(model, promptTokens, completionTokens);
 
           if (isLimitedKey && estimatedCost !== undefined) {
@@ -139,7 +138,6 @@ completionsRouter.post("/", async (c) => {
             console.error("Failed to finalize request log:", logError);
           }
         } catch (streamError) {
-          const latencyMs = Date.now() - startTime;
           const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
 
           try {

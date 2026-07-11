@@ -246,20 +246,49 @@ export const updateProviderChannelSchema = z
 
 const modelIdSchema = z.string().trim().min(1).max(256);
 
-export const customProviderModelSchema = z.object({
-  id: modelIdSchema,
-  name: z.string().trim().min(1).max(160),
+const modelPricingTierSchema = z.object({
+  inputTokenThreshold: z.number().int().positive(),
   inputPricePer1M: z.number().finite().nonnegative(),
   outputPricePer1M: z.number().finite().nonnegative(),
-  contextWindow: z.number().int().nonnegative(),
-  maxOutputTokens: z.number().int().nonnegative(),
-  inputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
-  outputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
-  reasoning: z.boolean().default(true),
-  toolCall: z.boolean().default(true),
-  structuredOutput: z.boolean().default(true),
-  weights: z.enum(["open", "closed"]),
 });
+
+export const customProviderModelSchema = z
+  .object({
+    id: modelIdSchema,
+    name: z.string().trim().min(1).max(160),
+    inputPricePer1M: z.number().finite().nonnegative(),
+    outputPricePer1M: z.number().finite().nonnegative(),
+    pricingTiers: z.array(modelPricingTierSchema).max(10).default([]),
+    contextWindow: z.number().int().nonnegative(),
+    maxOutputTokens: z.number().int().nonnegative(),
+    inputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
+    outputModalities: z.array(z.string().trim().min(1).max(32)).min(1).max(8),
+    reasoning: z.boolean().default(true),
+    toolCall: z.boolean().default(true),
+    structuredOutput: z.boolean().default(true),
+    weights: z.enum(["open", "closed"]),
+  })
+  .superRefine((model, ctx) => {
+    const thresholds = new Set<number>();
+    for (const [index, tier] of model.pricingTiers.entries()) {
+      if (thresholds.has(tier.inputTokenThreshold)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `duplicate pricing threshold: ${tier.inputTokenThreshold}`,
+          path: ["pricingTiers", index, "inputTokenThreshold"],
+        });
+      }
+      thresholds.add(tier.inputTokenThreshold);
+
+      if (model.contextWindow > 0 && tier.inputTokenThreshold >= model.contextWindow) {
+        ctx.addIssue({
+          code: "custom",
+          message: "pricing threshold must be below the model context window",
+          path: ["pricingTiers", index, "inputTokenThreshold"],
+        });
+      }
+    }
+  });
 
 const customProviderModelsSchema = z
   .array(customProviderModelSchema)
