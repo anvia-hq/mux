@@ -71,10 +71,7 @@ const navGroups: NavGroup[] = [
   },
   {
     label: "Docs",
-    items: [
-      { to: "/docs/services", label: "Service Docs", icon: BookOpen01Icon },
-      { to: "/docs/coding-harness", label: "Coding Harness", icon: BookOpen01Icon },
-    ],
+    items: [{ to: "/docs", label: "Documentation", icon: BookOpen01Icon }],
   },
   {
     items: [{ to: "/settings", label: "Account Settings", icon: Settings01Icon }],

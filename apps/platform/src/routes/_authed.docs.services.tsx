@@ -1,6 +1,10 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { ServiceDocsPage } from "../modules/docs/docs-page";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_authed/docs/services")({
-  component: ServiceDocsPage,
+  beforeLoad: ({ location }) => {
+    throw redirect({
+      to: "/docs",
+      ...(location.hash ? { hash: location.hash.replace(/^#/, "") } : {}),
+    });
+  },
 });

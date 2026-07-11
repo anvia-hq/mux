@@ -128,16 +128,13 @@ describe("AppShell", () => {
     );
   });
 
-  it("shows documentation navigation pages", () => {
+  it("shows the unified documentation navigation", () => {
     mockUser.data.role = "USER";
 
     render(React.createElement(AppShell));
 
-    expect(screen.getByRole("link", { name: "Service Docs" }).getAttribute("href")).toBe(
-      "/docs/services",
-    );
-    expect(screen.getByRole("link", { name: "Coding Harness" }).getAttribute("href")).toBe(
-      "/docs/coding-harness",
-    );
+    expect(screen.getByRole("link", { name: "Documentation" }).getAttribute("href")).toBe("/docs");
+    expect(screen.queryByRole("link", { name: "Service Docs" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Coding Harness" })).toBeNull();
   });
 });

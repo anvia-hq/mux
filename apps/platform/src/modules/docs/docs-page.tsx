@@ -1,11 +1,17 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { CodeIcon, ComputerTerminal01Icon, Copy01Icon } from "@hugeicons/core-free-icons";
+import {
+  ArrowDown01Icon,
+  CodeIcon,
+  ComputerTerminal01Icon,
+  Copy01Icon,
+} from "@hugeicons/core-free-icons";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
 import { Card, CardDescription, CardTitle } from "@repo/ui/components/card";
+import { Alert, AlertDescription, AlertTitle } from "@repo/ui/components/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@repo/ui/components/tabs";
 import { useCopyFeedback } from "../../lib/use-copy-feedback";
 
@@ -553,12 +559,15 @@ function CodeTabs({ samples }: { samples: CodeSample[] }) {
                 margin: 0,
                 background: "transparent",
                 backgroundColor: "transparent",
-                padding: "2rem 1.5rem",
+                padding: "1.5rem",
                 paddingRight: "6.5rem",
                 fontSize: "0.875rem",
                 lineHeight: 1.75,
               }}
-              codeTagProps={{ className: "font-mono", style: { background: "transparent" } }}
+              codeTagProps={{
+                className: "font-mono",
+                style: { background: "transparent", padding: 0, fontSize: "inherit" },
+              }}
             >
               {resolveCode(sample.code)}
             </SyntaxHighlighter>
@@ -573,11 +582,122 @@ function docsSampleCopyId(value: string) {
   return `docs-sample:${value}`;
 }
 
+const documentationNavigation = [
+  {
+    id: "getting-started",
+    label: "Getting started",
+    items: [
+      { id: "overview", label: "Overview" },
+      { id: "setup", label: "Setup" },
+      { id: "authentication", label: "Authentication" },
+    ],
+  },
+  {
+    id: "api-reference",
+    label: "API reference",
+    items: [
+      { id: "list-models", label: "List models" },
+      { id: "chat-completions", label: "Chat completions" },
+      { id: "responses", label: "Responses API" },
+      { id: "fallback-groups", label: "Fallback groups" },
+      { id: "streaming", label: "Streaming" },
+      { id: "errors", label: "Errors" },
+    ],
+  },
+  {
+    id: "tool-integrations",
+    label: "Tool integrations",
+    items: [
+      { id: "prerequisites", label: "Tool setup" },
+      { id: "generic-openai-compatible", label: "Generic tools" },
+      { id: "opencode", label: "OpenCode" },
+      { id: "pi-agent", label: "Pi Agent" },
+      { id: "claude-code", label: "Claude Code" },
+      { id: "troubleshooting", label: "Troubleshooting" },
+    ],
+  },
+] as const;
+
+function DocumentationNavigationLinks({ className = "" }: { className?: string }) {
+  return (
+    <nav aria-label="Documentation sections" className={`grid gap-5 ${className}`}>
+      {documentationNavigation.map((group) => (
+        <div key={group.id} className="grid gap-2">
+          <a
+            href={`#${group.id}`}
+            className="text-sm font-medium text-foreground hover:underline hover:underline-offset-4"
+          >
+            {group.label}
+          </a>
+          <div className="grid gap-1 border-l pl-3">
+            {group.items.map((item) => (
+              <a
+                key={item.id}
+                href={`#${item.id}`}
+                className="py-0.5 text-sm leading-5 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {item.label}
+              </a>
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function DocumentationNavigation() {
+  return (
+    <>
+      <Card className="gap-0 p-0 xl:hidden">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+            On this page
+            <HugeiconsIcon
+              icon={ArrowDown01Icon}
+              className="size-4 text-muted-foreground transition-transform group-open:rotate-180"
+            />
+          </summary>
+          <div className="border-t p-4">
+            <DocumentationNavigationLinks className="sm:grid-cols-3" />
+          </div>
+        </details>
+      </Card>
+      <Card className="hidden gap-5 p-4 xl:flex">
+        <div className="text-sm font-semibold">On this page</div>
+        <DocumentationNavigationLinks />
+      </Card>
+    </>
+  );
+}
+
+function DocumentationGroup({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section id={id} className="grid gap-8 scroll-mt-24">
+      <div className="grid gap-2 border-b pb-5">
+        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+        <p className="max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
     <section id={id} className="grid gap-4 scroll-mt-24">
       <div className="grid gap-1">
-        <h2 className="text-xl font-semibold">{title}</h2>
+        <h3 className="text-xl font-semibold">{title}</h3>
       </div>
       <div className="grid gap-4 text-sm leading-6 text-muted-foreground [&_a]:underline [&_a]:underline-offset-4 [&_code]:rounded [&_code]:bg-muted [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-xs [&_strong]:font-medium [&_strong]:text-foreground">
         {children}
@@ -586,49 +706,22 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-export function ServiceDocsPage() {
-  const gatewayBaseUrl = getGatewayBaseUrl();
-
+function ServiceDocumentationContent() {
   return (
-    <div className="grid gap-8">
-      <Card className="overflow-hidden p-0">
-        <div className="p-6 lg:p-8">
-          <div className="grid max-w-3xl gap-4">
-            <Badge variant="secondary" className="w-fit rounded-md">
-              OpenAI-compatible gateway
-            </Badge>
-            <div className="grid gap-3">
-              <h1 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
-                API reference for routing LLM traffic through Mux Gateway
-              </h1>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Use one endpoint for OpenAI, Anthropic, Google Gemini, and Mistral. Requests stay
-                compatible with OpenAI SDK clients and are logged with provider latency, token
-                usage, and estimated cost.
-              </p>
-            </div>
-            <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <HugeiconsIcon icon={ComputerTerminal01Icon} className="size-4" />
-                <span>Base URL</span>
-              </div>
-              <code className="min-w-0 truncate font-mono text-xs text-foreground">
-                {gatewayBaseUrl}
-              </code>
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid gap-8">
-        <div className="grid w-full gap-8">
+    <>
+      <DocumentationGroup
+        id="getting-started"
+        title="Getting started"
+        description="Connect an SDK or HTTP client, create an API key, and send traffic through the gateway."
+      >
+        <div className="grid gap-8">
           <Section id="overview" title="Overview">
             <p>
               Mux Gateway is a self-hosted, unified API for LLM providers. It exposes an{" "}
               <strong>OpenAI-compatible</strong> endpoint so existing SDK clients work without a
               custom adapter.
             </p>
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-2">
               {[
                 ["Unified route", "Send requests to one endpoint and let the gateway dispatch."],
                 ["Normalized output", "Responses follow the OpenAI shape across providers."],
@@ -680,7 +773,15 @@ export function ServiceDocsPage() {
               />
             </Card>
           </Section>
+        </div>
+      </DocumentationGroup>
 
+      <DocumentationGroup
+        id="api-reference"
+        title="API reference"
+        description="Use OpenAI-compatible endpoints for model discovery, generation, streaming, and resilient provider routing."
+      >
+        <div className="grid gap-8">
           <Section id="list-models" title="List models">
             <p>
               Retrieve all enabled models across configured providers. Each model includes an{" "}
@@ -828,8 +929,8 @@ export function ServiceDocsPage() {
             <CodeTabs samples={errorSamples} />
           </Section>
         </div>
-      </div>
-    </div>
+      </DocumentationGroup>
+    </>
   );
 }
 
@@ -951,41 +1052,17 @@ claude`,
   },
 ];
 
-export function CodingHarnessDocsPage() {
+function ToolIntegrationDocumentation() {
   const gatewayBaseUrl = getGatewayBaseUrl();
 
   return (
-    <div className="grid gap-8">
-      <Card className="overflow-hidden p-0">
-        <div className="p-6 lg:p-8">
-          <div className="grid max-w-3xl gap-4">
-            <Badge variant="secondary" className="w-fit rounded-md">
-              Coding harness setup
-            </Badge>
-            <div className="grid gap-3">
-              <h1 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
-                Connect coding agents to Mux Gateway
-              </h1>
-              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                Use Mux Gateway as the OpenAI-compatible endpoint for coding tools that let you
-                bring a custom provider, base URL, API key, and model id.
-              </p>
-            </div>
-            <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <HugeiconsIcon icon={ComputerTerminal01Icon} className="size-4" />
-                <span>Base URL</span>
-              </div>
-              <code className="min-w-0 truncate font-mono text-xs text-foreground">
-                {gatewayBaseUrl}
-              </code>
-            </div>
-          </div>
-        </div>
-      </Card>
-
+    <DocumentationGroup
+      id="tool-integrations"
+      title="Tool integrations"
+      description="Connect coding agents and other tools that support custom OpenAI-compatible providers."
+    >
       <div className="grid gap-8">
-        <Section id="prerequisites" title="Prerequisites">
+        <Section id="prerequisites" title="Tool setup">
           <p>
             Create or reveal a key from the{" "}
             <Link to="/api-keys" className="text-foreground">
@@ -1028,12 +1105,15 @@ export function CodingHarnessDocsPage() {
         </Section>
 
         <Section id="claude-code" title="Claude Code">
-          <p>
-            Claude Code uses Anthropic's gateway variables and expects an Anthropic-compatible
-            Messages API. The current Mux Gateway service docs expose OpenAI-compatible endpoints,
-            so do not point Claude Code directly at <code>{gatewayBaseUrl}</code> unless an
-            Anthropic-compatible adapter is in front of Mux or Mux adds that surface.
-          </p>
+          <Alert>
+            <AlertTitle>Anthropic-compatible adapter required</AlertTitle>
+            <AlertDescription>
+              <p>
+                Claude Code expects an Anthropic-compatible Messages API. Do not point it directly
+                at <code>{gatewayBaseUrl}</code>; place a compatible adapter in front of Mux first.
+              </p>
+            </AlertDescription>
+          </Alert>
           <CodeTabs samples={claudeCodeSamples} />
         </Section>
 
@@ -1064,6 +1144,52 @@ export function CodingHarnessDocsPage() {
             ))}
           </div>
         </Section>
+      </div>
+    </DocumentationGroup>
+  );
+}
+
+export function DocumentationPage() {
+  const gatewayBaseUrl = getGatewayBaseUrl();
+
+  return (
+    <div className="grid w-full gap-8">
+      <Card className="overflow-hidden p-0">
+        <div className="p-6 lg:p-8">
+          <div className="grid max-w-3xl gap-4">
+            <Badge variant="secondary" className="w-fit rounded-md">
+              OpenAI-compatible gateway
+            </Badge>
+            <div className="grid gap-3">
+              <h1 className="text-3xl font-semibold leading-tight text-balance md:text-4xl">
+                Mux Gateway documentation
+              </h1>
+              <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                Connect clients, route models across providers, and configure coding tools through
+                one OpenAI-compatible gateway.
+              </p>
+            </div>
+            <div className="flex w-fit max-w-full items-center gap-3 rounded-lg border bg-background/50 px-3 py-2 text-sm">
+              <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                <HugeiconsIcon icon={ComputerTerminal01Icon} className="size-4" />
+                <span>Base URL</span>
+              </div>
+              <code className="min-w-0 truncate font-mono text-xs text-foreground">
+                {gatewayBaseUrl}
+              </code>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid items-start gap-8 xl:grid-cols-[15rem_minmax(0,1fr)] xl:gap-12">
+        <div className="order-2 grid min-w-0 gap-14">
+          <ServiceDocumentationContent />
+          <ToolIntegrationDocumentation />
+        </div>
+        <aside className="order-1 xl:sticky xl:top-0">
+          <DocumentationNavigation />
+        </aside>
       </div>
     </div>
   );
