@@ -75,6 +75,7 @@ import {
   createApiKey,
   freezeLegacyApiKeyModelAccess,
   generateApiKey,
+  getActiveUserModelAccess,
   getApiKeySpentUsd,
   listApiKeys,
   revealApiKey,
@@ -452,6 +453,62 @@ describe("keys services", () => {
   });
 
   describe("model access updates", () => {
+    it("combines model access across active keys owned by a user", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([
+        {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o", "mux:fast"],
+        },
+        {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["mux:fast", "anthropic:claude"],
+        },
+      ]);
+
+      await expect(getActiveUserModelAccess("user-1")).resolves.toEqual({
+        allowAllModels: false,
+        includeFutureModels: false,
+        allowedModelIds: ["openai:gpt-4o", "mux:fast", "anthropic:claude"],
+      });
+      expect(mockPrisma.apiKey.findMany).toHaveBeenCalledWith({
+        where: { createdBy: "user-1", isActive: true },
+        select: {
+          allowAllModels: true,
+          includeFutureModels: true,
+          allowedModelIds: true,
+        },
+      });
+    });
+
+    it("allows all models when any active key allows all models", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([
+        {
+          allowAllModels: false,
+          includeFutureModels: false,
+          allowedModelIds: ["openai:gpt-4o"],
+        },
+        {
+          allowAllModels: true,
+          includeFutureModels: true,
+          allowedModelIds: [],
+        },
+      ]);
+
+      await expect(getActiveUserModelAccess("user-1")).resolves.toEqual({
+        allowAllModels: true,
+        includeFutureModels: true,
+        allowedModelIds: [],
+      });
+    });
+
+    it("returns null when the user has no active keys", async () => {
+      mockPrisma.apiKey.findMany.mockResolvedValueOnce([]);
+
+      await expect(getActiveUserModelAccess("user-1")).resolves.toBeNull();
+    });
+
     it("updates model access and invalidates cache", async () => {
       mockListPublicModels.mockResolvedValueOnce([{ id: "gpt-4o", provider: "openai" }]);
       mockPrisma.apiKey.update.mockResolvedValueOnce({ key: "hashed-key" });

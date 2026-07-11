@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@repo/ui/components/badge";
 import { Card } from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
@@ -14,6 +15,7 @@ import { useModelsQuery, type Model } from "./hooks";
 import { ModelIdCopyButton } from "./model-id-copy-button";
 import { ModalityIcons } from "./modality-icons";
 import { PROVIDER_LABELS, providerLabel } from "../providers/hooks";
+import { meQueryOptions } from "../auth/hooks/use-auth";
 
 function formatTokens(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -83,7 +85,9 @@ function matchesSearch(model: Model, query: string) {
 }
 
 export function ModelsPage() {
-  const query = useModelsQuery();
+  const userQuery = useQuery(meQueryOptions);
+  const user = userQuery.data;
+  const query = useModelsQuery({ viewer: user });
   const models = query.data?.data ?? [];
   const [search, setSearch] = useState("");
   const filteredModels = useMemo(
@@ -97,7 +101,9 @@ export function ModelsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Available models</h1>
           <p className="text-sm text-muted-foreground">
-            Aggregated across every provider that has an API key configured.
+            {user?.role === "USER"
+              ? "Models available to your account. If you have no active API key, the global catalog is shown."
+              : "Aggregated across every provider that has an API key configured."}
           </p>
         </div>
         <div className="w-full lg:w-80">
@@ -110,13 +116,17 @@ export function ModelsPage() {
         </div>
       </div>
 
-      {query.isLoading ? (
+      {userQuery.isLoading || query.isLoading ? (
         <p className="text-sm text-muted-foreground">Loading...</p>
       ) : !models.length ? (
         <div className="flex flex-col items-center justify-center rounded-md border py-12">
-          <p className="text-sm font-medium">No providers configured</p>
+          <p className="text-sm font-medium">
+            {user?.role === "USER" ? "No models available" : "No providers configured"}
+          </p>
           <p className="mt-1 text-sm text-muted-foreground">
-            Save a provider key from the Providers page to enable models.
+            {user?.role === "USER"
+              ? "Your account does not currently have any available models."
+              : "Save a provider key from the Providers page to enable models."}
           </p>
         </div>
       ) : (
@@ -152,13 +162,6 @@ export function ModelsPage() {
                           <span className="text-xs text-muted-foreground">
                             {m.fallbackTargets?.length ?? 0} targets
                           </span>
-                        </div>
-                      ) : null}
-                      {m.type === "alias" ? (
-                        <div className="mt-1 flex flex-wrap items-center gap-1">
-                          <Badge variant="outline" className="rounded-md">
-                            Alias
-                          </Badge>
                         </div>
                       ) : null}
                     </TableCell>

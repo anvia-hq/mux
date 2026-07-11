@@ -1,4 +1,5 @@
 import { type Context, Hono, type Next } from "hono";
+import type { User } from "../../utils/prisma";
 import { apiKeyAuth, readApiKeyModelAccess } from "../../middleware/api-key";
 import {
   listPublicModels,
@@ -6,7 +7,7 @@ import {
   toPublicModelIdForModel,
 } from "../../providers/registry";
 import { getCurrentUser } from "../auth/services";
-import { isModelAllowedForApiKey } from "../keys/services";
+import { getActiveUserModelAccess, isModelAllowedForApiKey } from "../keys/services";
 
 /**
  * Formats a provider model into the OpenAI `GET /v1/models` response shape.
@@ -61,13 +62,20 @@ modelsRouter.get("/", async (c) => {
  * cookie (any logged-in user), not an API key, so the UI can render the
  * catalog without having to mint a dummy bearer token.
  */
-export const modelsDashboardRouter = new Hono();
+type ModelsDashboardRouterEnv = {
+  Variables: {
+    user: User;
+  };
+};
 
-async function requireUser(c: Context, next: Next) {
+export const modelsDashboardRouter = new Hono<ModelsDashboardRouterEnv>();
+
+async function requireUser(c: Context<ModelsDashboardRouterEnv>, next: Next) {
   const user = await getCurrentUser(c);
   if (!user) {
     return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("user", user);
   await next();
 }
 
@@ -75,7 +83,15 @@ modelsDashboardRouter.use("*", requireUser);
 
 modelsDashboardRouter.get("/", async (c) => {
   try {
-    const models = await listPublicModels();
+    const user = c.get("user");
+    const publicModels = await listPublicModels();
+    const userModelAccess = user.role === "USER" ? await getActiveUserModelAccess(user.id) : null;
+    const models =
+      user.role === "USER" && userModelAccess
+        ? publicModels.filter((model) =>
+            isModelAllowedForApiKey(toPublicModelIdForModel(model), userModelAccess),
+          )
+        : publicModels;
     return c.json({
       data: models.map(toDashboardModel),
     });

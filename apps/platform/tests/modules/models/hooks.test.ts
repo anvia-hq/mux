@@ -10,10 +10,13 @@ vi.mock("../../../src/lib/api-client", () => ({
 import { apiFetch } from "../../../src/lib/api-client";
 import { useModelTargetsQuery, useModelsQuery } from "../../../src/modules/models/hooks";
 
-const wrapper = ({ children }: { children: React.ReactNode }) => {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return React.createElement(QueryClientProvider, { client: qc }, children);
-};
+function createWrapper(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  return {
+    qc,
+    wrapper: ({ children }: { children: React.ReactNode }) =>
+      React.createElement(QueryClientProvider, { client: qc }, children),
+  };
+}
 
 describe("models hooks", () => {
   afterEach(() => {
@@ -25,9 +28,22 @@ describe("models hooks", () => {
       vi.mocked(apiFetch).mockResolvedValueOnce({
         data: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
       });
-      const { result } = renderHook(() => useModelsQuery(), { wrapper });
+      const { qc, wrapper } = createWrapper();
+      const viewer = { id: "admin-1", role: "ADMIN" as const };
+      const { result } = renderHook(() => useModelsQuery({ viewer }), { wrapper });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(apiFetch).toHaveBeenCalledWith("/dashboard/models");
+      expect(qc.getQueryData(["dashboard", "models", "admin-1", "ADMIN"])).toEqual({
+        data: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
+      });
+    });
+
+    it("does not fetch until the authenticated viewer is available", () => {
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useModelsQuery({ viewer: undefined }), { wrapper });
+
+      expect(result.current.fetchStatus).toBe("idle");
+      expect(apiFetch).not.toHaveBeenCalled();
     });
   });
 
@@ -36,6 +52,7 @@ describe("models hooks", () => {
       vi.mocked(apiFetch).mockResolvedValueOnce({
         data: [{ id: "openai:gpt-4", name: "GPT-4", provider: "openai" }],
       });
+      const { wrapper } = createWrapper();
       const { result } = renderHook(() => useModelTargetsQuery(), { wrapper });
       await waitFor(() => expect(result.current.isSuccess).toBe(true));
       expect(apiFetch).toHaveBeenCalledWith("/dashboard/models/targets");

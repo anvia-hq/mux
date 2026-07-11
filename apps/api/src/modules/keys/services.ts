@@ -183,6 +183,37 @@ export function isModelAllowedForApiKey(modelId: string, access: ApiKeyModelAcce
   return access.allowAllModels || access.allowedModelIds.includes(modelId);
 }
 
+/**
+ * Combines model access across every active API key owned by a user.
+ * Returns null when the user has no active keys so callers can apply their
+ * own fallback behavior.
+ */
+export async function getActiveUserModelAccess(userId: string): Promise<ApiKeyModelAccess | null> {
+  const apiKeys = await prisma.apiKey.findMany({
+    where: { createdBy: userId, isActive: true },
+    select: {
+      allowAllModels: true,
+      includeFutureModels: true,
+      allowedModelIds: true,
+    },
+  });
+
+  if (apiKeys.length === 0) {
+    return null;
+  }
+
+  const modelAccess = apiKeys.map(normalizeApiKeyModelAccess);
+  if (modelAccess.some((access) => access.allowAllModels)) {
+    return { allowAllModels: true, includeFutureModels: true, allowedModelIds: [] };
+  }
+
+  return {
+    allowAllModels: false,
+    includeFutureModels: false,
+    allowedModelIds: Array.from(new Set(modelAccess.flatMap((access) => access.allowedModelIds))),
+  };
+}
+
 export function assertApiKeyModelAllowed(modelId: string, access: ApiKeyModelAccess): void {
   if (!isModelAllowedForApiKey(modelId, access)) {
     throw new ApiKeyModelAccessDeniedError(modelId);

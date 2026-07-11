@@ -79,6 +79,7 @@ export function ApiKeysPage() {
   const [editSelectedModelIds, setEditSelectedModelIds] = useState<string[]>([]);
   const [editModelSearch, setEditModelSearch] = useState("");
   const modelsQuery = useModelsQuery({
+    viewer: user,
     enabled:
       modelAccessMode === "filtered" || (Boolean(editingKey) && editModelAccessMode === "filtered"),
   });

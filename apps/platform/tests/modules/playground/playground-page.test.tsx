@@ -8,6 +8,7 @@ const {
   mockUseApiKeysQuery,
   mockUseLocalRuntime,
   mockUseModelsQuery,
+  mockUseQuery,
   mockUseThread,
 } = vi.hoisted(() => ({
   mockFetchEventStream: vi.fn(),
@@ -15,6 +16,7 @@ const {
   mockUseApiKeysQuery: vi.fn(),
   mockUseLocalRuntime: vi.fn((adapter) => ({ adapter })),
   mockUseModelsQuery: vi.fn(),
+  mockUseQuery: vi.fn(() => ({ data: { id: "admin-1", role: "ADMIN" } })),
   mockUseThread: vi.fn((selector?: (state: { isRunning: boolean }) => unknown) => {
     const state = { isRunning: false };
     return selector ? selector(state) : state;
@@ -33,6 +35,10 @@ function renderAsChild(element: keyof React.JSX.IntrinsicElements, props: Record
 
 vi.mock("@anvia/react", () => ({
   fetchEventStream: mockFetchEventStream,
+}));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-query")>()),
+  useQuery: mockUseQuery,
 }));
 vi.mock("@assistant-ui/react", () => ({
   AssistantRuntimeProvider: ({ children }: { children: React.ReactNode }) =>

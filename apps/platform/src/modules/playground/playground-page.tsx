@@ -21,6 +21,7 @@ import { uiMessagesToCoreMessages, type UIMessage } from "@anvia/core/ui";
 import { fetchEventStream } from "@anvia/react";
 import { PlayIcon, Refresh01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import remarkGfm from "remark-gfm";
 import { Alert, AlertDescription, AlertTitle } from "@repo/ui/components/alert";
@@ -36,6 +37,7 @@ import {
 } from "@repo/ui/components/select";
 import { apiBase } from "../../lib/api-client";
 import { useApiKeysQuery, type ApiKey } from "../api-keys/hooks";
+import { meQueryOptions } from "../auth/hooks/use-auth";
 import { useModelsQuery, type Model } from "../models/hooks";
 
 type PlaygroundCompletionRequest = {
@@ -72,8 +74,9 @@ const starterPrompts = [
 ];
 
 export function PlaygroundPage() {
+  const user = useQuery(meQueryOptions).data;
   const apiKeysQuery = useApiKeysQuery();
-  const modelsQuery = useModelsQuery();
+  const modelsQuery = useModelsQuery({ viewer: user });
   const [selectedApiKeyId, setSelectedApiKeyId] = useState("");
   const [selectedModelId, setSelectedModelId] = useState("");
   const [threadKey, setThreadKey] = useState(0);

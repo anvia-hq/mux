@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../lib/api-client";
+import type { AuthUser } from "../auth/types";
 
 export interface Model {
   id: string;
@@ -25,11 +26,16 @@ export interface Model {
   aliasTargetModelId?: string;
 }
 
-export function useModelsQuery(options: { enabled?: boolean } = {}) {
+type ModelsQueryOptions = {
+  enabled?: boolean;
+  viewer: Pick<AuthUser, "id" | "role"> | undefined;
+};
+
+export function useModelsQuery(options: ModelsQueryOptions) {
   return useQuery({
-    queryKey: ["dashboard", "models"] as const,
+    queryKey: ["dashboard", "models", options.viewer?.id, options.viewer?.role] as const,
     queryFn: () => apiFetch<{ data: Model[] }>("/dashboard/models"),
-    enabled: options.enabled ?? true,
+    enabled: Boolean(options.viewer) && (options.enabled ?? true),
   });
 }
 
