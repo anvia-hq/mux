@@ -67,6 +67,7 @@ describe("logs services", () => {
           where: expect.objectContaining({
             apiKeyId: "key-1",
             apiKey: { createdBy: "user-1" },
+            OR: [{ requestedModel: "gpt-4" }, { requestedModel: null, model: "gpt-4" }],
           }),
         }),
       );
@@ -172,7 +173,7 @@ describe("logs services", () => {
         where: expect.objectContaining({
           apiKeyId: "key-1",
           provider: "openai",
-          model: "gpt-4",
+          OR: [{ requestedModel: "gpt-4" }, { requestedModel: null, model: "gpt-4" }],
           apiKey: { createdBy: "user-1" },
         }),
       });

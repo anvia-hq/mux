@@ -53,6 +53,7 @@ function makeRow(
     apiKeyId: string;
     provider: string;
     model: string;
+    request: unknown;
     status: string;
     response: unknown;
     inputPricePer1M: number | null;
@@ -67,6 +68,7 @@ function makeRow(
     apiKeyId: "key-1",
     provider: "openai",
     model: "openai:gpt-5",
+    request: { model: "fast-chat" },
     status: "queued",
     response: null,
     channelId: null,
@@ -274,6 +276,7 @@ describe("processBackgroundPollJob", () => {
         apiKeyId: "key-1",
         provider: "openai",
         model: "openai:gpt-5",
+        requestedModel: "fast-chat",
         endpoint: "/v1/responses",
         promptTokens: 100,
         completionTokens: 200,

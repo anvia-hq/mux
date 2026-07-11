@@ -23,6 +23,7 @@ export function toRequestLogCreateInput(entry: RequestLogPayload) {
     apiKeyId: entry.apiKeyId,
     provider: entry.provider,
     model: entry.model,
+    requestedModel: entry.requestedModel,
     channelId: entry.channelId,
     channelName: entry.channelName,
     endpoint: entry.endpoint,
@@ -46,6 +47,7 @@ export function toRequestLogFinalizeInput(entry: RequestLogPayload) {
   return {
     provider: entry.provider,
     model: entry.model,
+    requestedModel: entry.requestedModel ?? null,
     channelId: entry.channelId ?? null,
     channelName: entry.channelName ?? null,
     endpoint: entry.endpoint,

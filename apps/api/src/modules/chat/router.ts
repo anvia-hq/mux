@@ -113,12 +113,21 @@ chatRouter.post("/completions", async (c) => {
 
     // Streaming response: pipe provider chunks to the client as SSE.
     if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, channelId, channelName, latencyMs } = result;
+      const {
+        stream: streamIterable,
+        provider,
+        model,
+        responseModel,
+        channelId,
+        channelName,
+        latencyMs,
+      } = result;
       const includeStreamUsage = body.stream_options?.include_usage ?? true;
       const logId = await logStreamStart({
         apiKeyId,
         provider,
         model,
+        requestedModel: responseModel,
         channelId,
         channelName,
         endpoint: "/v1/chat/completions",
@@ -163,6 +172,7 @@ chatRouter.post("/completions", async (c) => {
             apiKeyId,
             provider,
             model,
+            requestedModel: responseModel,
             channelId,
             channelName,
             endpoint: "/v1/chat/completions",
@@ -216,6 +226,7 @@ chatRouter.post("/completions", async (c) => {
                 apiKeyId,
                 provider,
                 model,
+                requestedModel: responseModel,
                 channelId,
                 channelName,
                 endpoint: "/v1/chat/completions",

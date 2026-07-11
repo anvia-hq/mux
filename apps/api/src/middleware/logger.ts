@@ -7,6 +7,7 @@ export interface LogEntry {
   apiKeyId: string;
   provider: string;
   model: string;
+  requestedModel?: string;
   channelId?: string;
   channelName?: string;
   endpoint: string;

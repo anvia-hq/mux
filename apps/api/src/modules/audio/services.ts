@@ -44,6 +44,7 @@ export type AudioProxyStreamResult = {
   contentType?: string;
   provider: string;
   model: string;
+  requestedModel: string;
   channelId?: string;
   channelName?: string;
   latencyMs: number;
@@ -123,9 +124,15 @@ export async function handleAudioSpeech(
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  return createAudioSpeechWithFallback(request, apiKeyId, resolved.targets, {
-    recordSpend: options.recordSpend,
-  });
+  return createAudioSpeechWithFallback(
+    request,
+    apiKeyId,
+    resolved.requestedModelId,
+    resolved.targets,
+    {
+      recordSpend: options.recordSpend,
+    },
+  );
 }
 
 export async function handleAudioSpeechStream(
@@ -137,7 +144,12 @@ export async function handleAudioSpeechStream(
     throw new Error(`No provider found for model: ${request.model}`);
   }
 
-  return createAudioSpeechStreamWithFallback(request, apiKeyId, resolved.targets);
+  return createAudioSpeechStreamWithFallback(
+    request,
+    apiKeyId,
+    resolved.requestedModelId,
+    resolved.targets,
+  );
 }
 
 async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTarget>(
@@ -163,6 +175,7 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
         response,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -183,6 +196,7 @@ async function createAudioMultipartWithFallback<TTarget extends AudioMultipartTa
         error,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -222,6 +236,7 @@ async function createAudioMultipartStreamWithFallback<TTarget extends AudioMulti
         contentType: response.contentType,
         provider: target.providerName,
         model: target.publicModelId,
+        requestedModel,
         channelId: target.channelId,
         channelName: target.channelName,
         latencyMs: Date.now() - attemptStartTime,
@@ -239,6 +254,7 @@ async function createAudioMultipartStreamWithFallback<TTarget extends AudioMulti
         error,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -254,6 +270,7 @@ async function createAudioMultipartStreamWithFallback<TTarget extends AudioMulti
 async function createAudioSpeechWithFallback(
   request: AudioSpeechRequest,
   apiKeyId: string,
+  requestedModel: string,
   targets: ResolvedAudioSpeechProviderModel[],
   options: { recordSpend?: boolean },
 ): Promise<AudioProxyResponse> {
@@ -271,6 +288,7 @@ async function createAudioSpeechWithFallback(
         response,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -291,6 +309,7 @@ async function createAudioSpeechWithFallback(
         error,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -306,6 +325,7 @@ async function createAudioSpeechWithFallback(
 async function createAudioSpeechStreamWithFallback(
   request: AudioSpeechRequest,
   apiKeyId: string,
+  requestedModel: string,
   targets: ResolvedAudioSpeechStreamProviderModel[],
 ): Promise<AudioProxyStreamResult> {
   let lastError: unknown;
@@ -326,6 +346,7 @@ async function createAudioSpeechStreamWithFallback(
           (request.stream_format === "audio" ? "application/octet-stream" : undefined),
         provider: target.providerName,
         model: target.publicModelId,
+        requestedModel,
         channelId: target.channelId,
         channelName: target.channelName,
         latencyMs: Date.now() - attemptStartTime,
@@ -343,6 +364,7 @@ async function createAudioSpeechStreamWithFallback(
         error,
         apiKeyId,
         target.publicModelId,
+        requestedModel,
         target.providerName,
         target.channelId,
         target.channelName,
@@ -359,6 +381,7 @@ async function recordSuccessfulAudioRequest(
   response: AudioProxyResponse,
   apiKeyId: string,
   model: string,
+  requestedModel: string,
   provider: string,
   channelId: string | undefined,
   channelName: string | undefined,
@@ -376,6 +399,7 @@ async function recordSuccessfulAudioRequest(
     apiKeyId,
     provider,
     model,
+    requestedModel,
     channelId,
     channelName,
     endpoint,
@@ -392,6 +416,7 @@ async function logFailedAudioRequest(
   error: unknown,
   apiKeyId: string,
   model: string,
+  requestedModel: string,
   provider: string,
   channelId: string | undefined,
   channelName: string | undefined,
@@ -405,6 +430,7 @@ async function logFailedAudioRequest(
     apiKeyId,
     provider,
     model,
+    requestedModel,
     channelId,
     channelName,
     endpoint,

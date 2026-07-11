@@ -155,11 +155,12 @@ model RequestLog {
   apiKeyId String
   apiKey   ApiKey @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
 
-  provider    String
-  model       String
-  channelId   String?
-  channelName String?
-  endpoint    String
+  provider       String
+  model          String
+  requestedModel String?
+  channelId      String?
+  channelName    String?
+  endpoint       String
 
   latencyMs         Int
   providerLatencyMs Int?

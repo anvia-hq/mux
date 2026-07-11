@@ -281,7 +281,7 @@ describe("chat services", () => {
     );
   });
 
-  it("uses concrete target pricing while returning the requested alias", async () => {
+  it("uses concrete target pricing while returning and logging the requested alias", async () => {
     const chatCompletion = vi.fn().mockResolvedValueOnce({
       id: "chat-1",
       model: "gpt-4",
@@ -305,7 +305,11 @@ describe("chat services", () => {
     expect(mockGetModelPricing).toHaveBeenCalledWith("openai:gpt-4");
     expect(mockEstimateCost).toHaveBeenCalledWith("openai:gpt-4", 10, 20, undefined, undefined);
     expect(mockLogRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ model: "openai:gpt-4", statusCode: 200 }),
+      expect.objectContaining({
+        model: "openai:gpt-4",
+        requestedModel: "fast-chat",
+        statusCode: 200,
+      }),
     );
   });
 

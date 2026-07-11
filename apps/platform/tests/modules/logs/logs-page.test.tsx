@@ -37,7 +37,8 @@ describe("LogsPage", () => {
           {
             id: "log-1",
             provider: "secret-provider",
-            model: "gpt-4o",
+            model: "openai:gpt-4o",
+            requestedModel: "fast-chat",
             endpoint: "/v1/chat/completions",
             latencyMs: 123,
             promptTokens: 10,
@@ -87,7 +88,8 @@ describe("LogsPage", () => {
     expect(screen.queryByText(/provider/i)).toBeNull();
     expect(screen.queryByText("secret-provider")).toBeNull();
     expect(screen.getByRole("columnheader", { name: "Upstream latency" })).toBeDefined();
-    expect(screen.getByText("gpt-4o")).toBeDefined();
+    expect(screen.getByText("fast-chat")).toBeDefined();
+    expect(screen.queryByText("openai:gpt-4o")).toBeNull();
     expect(screen.getByText("Primary key")).toBeDefined();
     expect(screen.getByText("123 ms")).toBeDefined();
     expect(screen.getAllByText("$0.0123")).toHaveLength(2);

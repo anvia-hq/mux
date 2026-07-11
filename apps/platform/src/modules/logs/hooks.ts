@@ -5,6 +5,7 @@ export type RequestLog = {
   id: string;
   provider: string;
   model: string;
+  requestedModel: string | null;
   endpoint: string;
   latencyMs: number;
   promptTokens: number | null;

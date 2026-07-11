@@ -58,6 +58,7 @@ type BackgroundJobRecord = {
   apiKeyId: string;
   provider: string;
   model: string;
+  request?: unknown;
   channelId?: string | null;
   channelName?: string | null;
   status: string;
@@ -201,6 +202,7 @@ export async function processBackgroundPollJob(
         apiKeyId: row.apiKeyId,
         provider: row.provider,
         model: row.model,
+        requestedModel: readRequestedModel(row.request),
         channelId: row.channelId ?? undefined,
         channelName: row.channelName ?? undefined,
         endpoint: "/v1/responses",
@@ -229,6 +231,12 @@ export async function processBackgroundPollJob(
   });
 
   await enqueue(job.jobId, job.attempt + 1, backoffMs(job.attempt + 1));
+}
+
+function readRequestedModel(request: unknown): string | undefined {
+  if (!request || typeof request !== "object") return undefined;
+  const model = (request as { model?: unknown }).model;
+  return typeof model === "string" ? model : undefined;
 }
 
 async function fetchUpstream(

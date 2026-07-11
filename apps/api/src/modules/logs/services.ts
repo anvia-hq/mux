@@ -62,7 +62,9 @@ function buildLogWhere(filters: LogFilters): Prisma.RequestLogWhereInput {
   if (filters.apiKeyId) where.apiKeyId = filters.apiKeyId;
   if (filters.ownerUserId) where.apiKey = { createdBy: filters.ownerUserId };
   if (filters.provider) where.provider = filters.provider;
-  if (filters.model) where.model = filters.model;
+  if (filters.model) {
+    where.OR = [{ requestedModel: filters.model }, { requestedModel: null, model: filters.model }];
+  }
   if (filters.startDate || filters.endDate) {
     where.createdAt = {};
     if (filters.startDate) where.createdAt.gte = filters.startDate;
@@ -93,6 +95,7 @@ export async function getLogs(filters: LogFilters) {
         apiKeyId: true,
         provider: true,
         model: true,
+        requestedModel: true,
         endpoint: true,
         latencyMs: true,
         providerLatencyMs: true,
@@ -172,7 +175,9 @@ function buildStatsWhere(filters: StatsFilters, startDate: Date, endDate: Date) 
 
   if (filters.apiKeyId) where.apiKeyId = filters.apiKeyId;
   if (filters.provider) where.provider = filters.provider;
-  if (filters.model) where.model = filters.model;
+  if (filters.model) {
+    where.OR = [{ requestedModel: filters.model }, { requestedModel: null, model: filters.model }];
+  }
   if (filters.ownerUserId) where.apiKey = { createdBy: filters.ownerUserId };
 
   return where;
@@ -241,7 +246,9 @@ export async function getStats(filters: StatsFilters): Promise<Stats> {
   const providerFilter = filters.provider
     ? Prisma.sql`AND "provider" = ${filters.provider}`
     : Prisma.empty;
-  const modelFilter = filters.model ? Prisma.sql`AND "model" = ${filters.model}` : Prisma.empty;
+  const modelFilter = filters.model
+    ? Prisma.sql`AND COALESCE("requestedModel", "model") = ${filters.model}`
+    : Prisma.empty;
   const apiKeyFilter = filters.apiKeyId
     ? Prisma.sql`AND "apiKeyId" = ${filters.apiKeyId}`
     : Prisma.empty;

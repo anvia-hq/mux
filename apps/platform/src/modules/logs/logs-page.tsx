@@ -190,7 +190,9 @@ export function LogsPage() {
                   <TableCell className="text-xs text-muted-foreground">
                     {new Date(row.createdAt).toLocaleString()}
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{row.model}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {row.requestedModel ?? row.model}
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{row.apiKey.name}</TableCell>
                   <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
                   <TableCell className="text-right tabular-nums">

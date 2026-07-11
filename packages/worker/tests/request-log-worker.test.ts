@@ -23,6 +23,18 @@ describe("request-log-worker toRequestLogCreateInput", () => {
     });
   });
 
+  it("forwards the requested model separately from the concrete model", () => {
+    const input = toRequestLogCreateInput({
+      ...baseEntry,
+      requestedModel: "fast-chat",
+    });
+
+    expect(input).toMatchObject({
+      model: "openai:gpt-4o",
+      requestedModel: "fast-chat",
+    });
+  });
+
   it("forwards applied pricing audit fields", () => {
     const input = toRequestLogCreateInput({
       ...baseEntry,
@@ -54,6 +66,7 @@ describe("request-log-worker toRequestLogCreateInput", () => {
       ...baseEntry,
       latencyMs: 250,
       promptTokens: 10,
+      requestedModel: "fast-chat",
       totalTokens: 18,
       statusCode: 200,
     });
@@ -61,6 +74,7 @@ describe("request-log-worker toRequestLogCreateInput", () => {
     expect(input).toMatchObject({
       latencyMs: 250,
       promptTokens: 10,
+      requestedModel: "fast-chat",
       completionTokens: null,
       totalTokens: 18,
       statusCode: 200,

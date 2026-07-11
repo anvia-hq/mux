@@ -105,7 +105,7 @@ describe("logs router", () => {
         where: expect.objectContaining({
           apiKey: { createdBy: "user-1" },
           provider: "openai",
-          model: "gpt-4",
+          OR: [{ requestedModel: "gpt-4" }, { requestedModel: null, model: "gpt-4" }],
           createdAt: expect.objectContaining({ gte: new Date("2026-01-01") }),
         }),
       }),
@@ -193,7 +193,7 @@ describe("logs router", () => {
     expect(mockPrisma.requestLog.count).toHaveBeenCalledWith({
       where: expect.objectContaining({
         provider: "openai",
-        model: "gpt-4",
+        OR: [{ requestedModel: "gpt-4" }, { requestedModel: null, model: "gpt-4" }],
         apiKey: { createdBy: "user-1" },
       }),
     });
