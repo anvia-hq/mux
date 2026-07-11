@@ -98,14 +98,16 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Users" }).getAttribute("href")).toBe("/users");
   });
 
-  it("hides Users navigation for regular users", () => {
+  it("hides admin navigation and shows Playground for regular users", () => {
     mockUser.data.role = "USER";
 
     render(React.createElement(AppShell));
 
     expect(screen.getByRole("link", { name: "API keys" }).getAttribute("href")).toBe("/api-keys");
     expect(screen.queryByRole("link", { name: "Users" })).toBeNull();
-    expect(screen.queryByRole("link", { name: "Playground" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Playground" }).getAttribute("href")).toBe(
+      "/playground",
+    );
   });
 
   it("shows Playground navigation for admins", () => {

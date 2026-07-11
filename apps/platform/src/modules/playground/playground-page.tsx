@@ -82,7 +82,10 @@ export function PlaygroundPage() {
   const [threadKey, setThreadKey] = useState(0);
 
   const apiKeys = apiKeysQuery.data?.keys ?? [];
-  const selectableApiKeys = useMemo(() => apiKeys.filter((key) => key.isActive), [apiKeys]);
+  const selectableApiKeys = useMemo(
+    () => apiKeys.filter((key) => key.isActive && key.createdBy === user?.id),
+    [apiKeys, user?.id],
+  );
   const selectedApiKey =
     selectableApiKeys.find((key) => key.id === selectedApiKeyId) ?? selectableApiKeys[0] ?? null;
   const models = modelsQuery.data?.data ?? [];

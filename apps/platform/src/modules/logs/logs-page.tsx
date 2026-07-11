@@ -1,12 +1,6 @@
 import { Badge } from "@repo/ui/components/badge";
 import { Button } from "@repo/ui/components/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@repo/ui/components/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@repo/ui/components/card";
 import { Input } from "@repo/ui/components/input";
 import {
   Select,
@@ -47,7 +41,6 @@ const PAGE_SIZE = 25;
 
 export function LogsPage() {
   const currentUser = useQuery(meQueryOptions).data;
-  const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [userId, setUserId] = useState("");
   const [apiKeyId, setApiKeyId] = useState("");
@@ -66,13 +59,11 @@ export function LogsPage() {
     days,
     userId: isAdmin ? userId || undefined : undefined,
     apiKeyId: isAdmin ? apiKeyId || undefined : undefined,
-    provider: provider || undefined,
     model: model || undefined,
   });
   const logs = useLogsQuery({
     userId: isAdmin ? userId || undefined : undefined,
     apiKeyId: isAdmin ? apiKeyId || undefined : undefined,
-    provider: provider || undefined,
     model: model || undefined,
     limit: PAGE_SIZE,
     offset,
@@ -83,7 +74,7 @@ export function LogsPage() {
       <div>
         <h1 className="text-2xl font-semibold">Request logs</h1>
         <p className="text-sm text-muted-foreground">
-          Each logged row reports cost and provider-attempt latency. Streaming latency is measured
+          Each logged row reports cost and upstream-attempt latency. Streaming latency is measured
           to the first upstream chunk or byte.
         </p>
       </div>
@@ -153,28 +144,6 @@ export function LogsPage() {
             </>
           ) : null}
           <div className="grid gap-1.5">
-            <span className="text-xs text-muted-foreground">Provider</span>
-            <Select
-              value={provider || "all"}
-              onValueChange={(value) => {
-                setProvider(value === "all" ? "" : value);
-                setOffset(0);
-              }}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All providers</SelectItem>
-                {(stats.data?.byProvider ?? []).map((p) => (
-                  <SelectItem key={p.provider} value={p.provider}>
-                    {p.provider}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid gap-1.5">
             <span className="text-xs text-muted-foreground">Model</span>
             <Input
               value={model}
@@ -191,7 +160,6 @@ export function LogsPage() {
             onClick={() => {
               setUserId("");
               setApiKeyId("");
-              setProvider("");
               setModel("");
               setOffset(0);
             }}
@@ -202,14 +170,13 @@ export function LogsPage() {
       </Card>
 
       <Card className="gap-0 overflow-hidden p-0">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[860px]">
           <TableHeader>
             <TableRow>
               <TableHead>When</TableHead>
-              <TableHead>Provider</TableHead>
               <TableHead>Model</TableHead>
               <TableHead>Key</TableHead>
-              <TableHead className="text-right">Provider latency</TableHead>
+              <TableHead className="text-right">Upstream latency</TableHead>
               <TableHead className="text-right">Input</TableHead>
               <TableHead className="text-right">Output</TableHead>
               <TableHead className="text-right">Cost</TableHead>
@@ -223,7 +190,6 @@ export function LogsPage() {
                   <TableCell className="text-xs text-muted-foreground">
                     {new Date(row.createdAt).toLocaleString()}
                   </TableCell>
-                  <TableCell>{row.provider}</TableCell>
                   <TableCell className="font-mono text-xs">{row.model}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{row.apiKey.name}</TableCell>
                   <TableCell className="text-right tabular-nums">{row.latencyMs} ms</TableCell>
@@ -243,7 +209,7 @@ export function LogsPage() {
               ))
             ) : (
               <TableRow>
-                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
                   {logs.isLoading ? "Loading..." : "No requests match the current filters."}
                 </TableCell>
               </TableRow>
@@ -324,7 +290,7 @@ function formatUserOption(user: DashboardUser) {
 
 function StatsRow({ stats }: { stats: LogsStats | undefined }) {
   return (
-    <div className="grid gap-4 md:grid-cols-5">
+    <div className="grid gap-4 md:grid-cols-4">
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">Requests</CardTitle>
@@ -356,17 +322,6 @@ function StatsRow({ stats }: { stats: LogsStats | undefined }) {
         <CardContent className="text-2xl font-semibold tabular-nums">
           ${stats?.totalCost.toFixed(4) ?? "—"}
         </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">Providers</CardTitle>
-        </CardHeader>
-        <CardContent className="text-2xl font-semibold tabular-nums">
-          {stats?.byProvider.length ?? 0}
-        </CardContent>
-        <CardDescription className="text-xs">
-          {stats?.byProvider.map((p) => p.provider).join(", ") || "None"}
-        </CardDescription>
       </Card>
     </div>
   );

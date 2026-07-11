@@ -6,12 +6,13 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { createPlaygroundApiKeyToken } from "../../middleware/api-key";
+import type { User } from "../../utils/prisma";
 import {
   ApiKeyModelAccessDeniedError,
   assertApiKeyModelAllowed,
   getActiveApiKeyForAuth,
 } from "../keys/services";
-import { requireRole } from "../auth/services";
+import { getCurrentUser } from "../auth/services";
 import { authValidationHook } from "../auth/utils";
 
 const playgroundChatSchema = z.object({
@@ -21,13 +22,20 @@ const playgroundChatSchema = z.object({
   stream: z.literal(true),
 });
 
-export const playgroundRouter = new Hono();
+type PlaygroundRouterEnv = {
+  Variables: {
+    user: User;
+  };
+};
+
+export const playgroundRouter = new Hono<PlaygroundRouterEnv>();
 
 playgroundRouter.use("*", async (c, next) => {
-  const user = await requireRole(c, "ADMIN");
+  const user = await getCurrentUser(c);
   if (!user) {
-    return c.json({ error: "admin access required" }, 403);
+    return c.json({ error: "unauthorized" }, 401);
   }
+  c.set("user", user);
   await next();
 });
 
@@ -36,9 +44,10 @@ playgroundRouter.post(
   zValidator("json", playgroundChatSchema, authValidationHook),
   async (c) => {
     const body = c.req.valid("json");
+    const user = c.get("user");
     const apiKey = await getActiveApiKeyForAuth(body.apiKeyId);
 
-    if (!apiKey) {
+    if (!apiKey || apiKey.createdBy !== user.id) {
       return c.json({ error: "API key not found or revoked" }, 404);
     }
 

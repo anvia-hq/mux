@@ -243,6 +243,7 @@ describe("PlaygroundPage", () => {
           {
             id: "limited-key",
             name: "limited",
+            createdBy: "admin-1",
             isActive: true,
             spendLimitUsd: 1,
             allowAllModels: false,
@@ -252,7 +253,8 @@ describe("PlaygroundPage", () => {
           },
           {
             id: "key-1",
-            name: "admin-key",
+            name: "other-user-key",
+            createdBy: "user-2",
             isActive: true,
             spendLimitUsd: null,
             allowAllModels: false,
@@ -305,6 +307,7 @@ describe("PlaygroundPage", () => {
           {
             id: "key-1",
             name: "admin-key",
+            createdBy: "admin-1",
             isActive: true,
             spendLimitUsd: null,
             allowAllModels: true,
@@ -336,6 +339,7 @@ describe("PlaygroundPage", () => {
           {
             id: "key-1",
             name: "admin-key",
+            createdBy: "admin-1",
             isActive: true,
             spendLimitUsd: null,
             allowAllModels: true,
@@ -361,6 +365,36 @@ describe("PlaygroundPage", () => {
     );
   });
 
+  it("does not offer active API keys owned by another user", () => {
+    mockUseApiKeysQuery.mockReturnValue({
+      isLoading: false,
+      data: {
+        keys: [
+          {
+            id: "other-key",
+            name: "other-user-key",
+            createdBy: "user-2",
+            isActive: true,
+            spendLimitUsd: null,
+            allowAllModels: true,
+            includeFutureModels: true,
+            allowedModelIds: null,
+            canReveal: true,
+          },
+        ],
+      },
+    });
+    mockUseModelsQuery.mockReturnValue({
+      isLoading: false,
+      data: { data: [{ id: "e2e:e2e-chat", name: "E2E Chat", provider: "e2e" }] },
+    });
+
+    render(React.createElement(PlaygroundPage));
+
+    expect(screen.getByText("No active API keys")).not.toBeNull();
+    expect(screen.queryByRole("combobox", { name: "API key" })).toBeNull();
+  });
+
   it("shows a setup message without an active API key", () => {
     mockUseApiKeysQuery.mockReturnValue({
       isLoading: false,
@@ -369,6 +403,7 @@ describe("PlaygroundPage", () => {
           {
             id: "limited-key",
             name: "limited",
+            createdBy: "admin-1",
             isActive: false,
             spendLimitUsd: 1,
             allowAllModels: true,

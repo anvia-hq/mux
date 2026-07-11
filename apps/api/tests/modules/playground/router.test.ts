@@ -10,7 +10,7 @@ const {
   mockCreatePlaygroundApiKeyToken,
   mockGetActiveApiKeyForAuth,
   mockOpenAIClient,
-  mockRequireRole,
+  mockGetCurrentUser,
 } = vi.hoisted(() => {
   class ApiKeyModelAccessDeniedError extends Error {
     constructor(modelId: string) {
@@ -31,7 +31,7 @@ const {
     mockOpenAIClient: vi.fn().mockImplementation(function (this: { completionModel: unknown }) {
       this.completionModel = completionModel;
     }),
-    mockRequireRole: vi.fn(),
+    mockGetCurrentUser: vi.fn(),
   };
 });
 
@@ -41,7 +41,7 @@ vi.mock("@anvia/server", () => ({ createEventStream: mockCreateEventStream }));
 vi.mock("../../../src/middleware/api-key", () => ({
   createPlaygroundApiKeyToken: mockCreatePlaygroundApiKeyToken,
 }));
-vi.mock("../../../src/modules/auth/services", () => ({ requireRole: mockRequireRole }));
+vi.mock("../../../src/modules/auth/services", () => ({ getCurrentUser: mockGetCurrentUser }));
 vi.mock("../../../src/modules/keys/services", () => ({
   ApiKeyModelAccessDeniedError: MockApiKeyModelAccessDeniedError,
   assertApiKeyModelAllowed: mockAssertApiKeyModelAllowed,
@@ -72,8 +72,8 @@ describe("playground router", () => {
     delete process.env.API_PORT;
   });
 
-  it("requires admin access", async () => {
-    mockRequireRole.mockResolvedValueOnce(null);
+  it("requires an authenticated user", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce(null);
 
     const res = await createApp().request("/playground/chat/completions", {
       method: "POST",
@@ -81,12 +81,12 @@ describe("playground router", () => {
       body: JSON.stringify(requestBody()),
     });
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(401);
     expect(mockGetActiveApiKeyForAuth).not.toHaveBeenCalled();
   });
 
   it("returns 404 for missing or revoked keys", async () => {
-    mockRequireRole.mockResolvedValueOnce({ id: "admin-1" });
+    mockGetCurrentUser.mockResolvedValueOnce({ id: "admin-1", role: "ADMIN" });
     mockGetActiveApiKeyForAuth.mockResolvedValueOnce(null);
 
     const res = await createApp().request("/playground/chat/completions", {
@@ -98,10 +98,35 @@ describe("playground router", () => {
     expect(res.status).toBe(404);
   });
 
-  it("accepts spend-limited keys", async () => {
-    mockRequireRole.mockResolvedValueOnce({ id: "admin-1" });
+  it.each([
+    { id: "user-1", role: "USER" },
+    { id: "admin-1", role: "ADMIN" },
+  ])("returns 404 when a $role selects another user's key", async (viewer) => {
+    mockGetCurrentUser.mockResolvedValueOnce(viewer);
     mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
       id: "key-1",
+      createdBy: "other-user",
+      spendLimitUsd: null,
+      allowAllModels: true,
+      allowedModelIds: [],
+    });
+
+    const res = await createApp().request("/playground/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody()),
+    });
+
+    expect(res.status).toBe(404);
+    expect(mockAssertApiKeyModelAllowed).not.toHaveBeenCalled();
+    expect(mockCreatePlaygroundApiKeyToken).not.toHaveBeenCalled();
+  });
+
+  it("accepts spend-limited keys", async () => {
+    mockGetCurrentUser.mockResolvedValueOnce({ id: "admin-1", role: "ADMIN" });
+    mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
+      id: "key-1",
+      createdBy: "admin-1",
       spendLimitUsd: 10,
       allowAllModels: true,
       allowedModelIds: [],
@@ -126,9 +151,10 @@ describe("playground router", () => {
   });
 
   it("rejects models outside the selected key access", async () => {
-    mockRequireRole.mockResolvedValueOnce({ id: "admin-1" });
+    mockGetCurrentUser.mockResolvedValueOnce({ id: "user-1", role: "USER" });
     mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
       id: "key-1",
+      createdBy: "user-1",
       spendLimitUsd: null,
       allowAllModels: false,
       allowedModelIds: ["openai:gpt-4o"],
@@ -149,9 +175,10 @@ describe("playground router", () => {
 
   it("streams a completion through the OpenAI-compatible gateway", async () => {
     process.env.API_PORT = "8010";
-    mockRequireRole.mockResolvedValueOnce({ id: "admin-1" });
+    mockGetCurrentUser.mockResolvedValueOnce({ id: "user-1", role: "USER" });
     mockGetActiveApiKeyForAuth.mockResolvedValueOnce({
       id: "key-1",
+      createdBy: "user-1",
       spendLimitUsd: null,
       allowAllModels: true,
       allowedModelIds: [],
