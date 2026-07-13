@@ -437,12 +437,21 @@ export class AnthropicAdapter implements ProviderAdapter {
       .map((m) => contentToText(m.content))
       .filter(Boolean)
       .join("\n\n");
-    const nonSystem = messages
-      .filter((m) => m.role !== "system")
-      .map((message) => ({
-        role: message.role === "assistant" ? "assistant" : "user",
-        content: this.convertMessageContent(message),
-      }));
+    const nonSystem: { role: "assistant" | "user"; content: unknown[] | string }[] = [];
+    for (const message of messages) {
+      if (message.role === "system") continue;
+      const role = message.role === "assistant" ? "assistant" : "user";
+      const content = this.convertMessageContent(message);
+      const previous = nonSystem.at(-1);
+      if (message.role === "tool" && previous?.role === "user") {
+        const previousContent = Array.isArray(previous.content)
+          ? previous.content
+          : [{ type: "text", text: previous.content }];
+        previous.content = [...previousContent, ...(Array.isArray(content) ? content : [content])];
+      } else {
+        nonSystem.push({ role, content });
+      }
+    }
     return { system, messages: nonSystem };
   }
 
@@ -524,8 +533,8 @@ export class AnthropicAdapter implements ProviderAdapter {
         input_schema: tool.function.parameters ?? { type: "object", properties: {} },
       }));
     }
-    if (request.tool_choice !== undefined) {
-      body.tool_choice = toAnthropicToolChoice(request.tool_choice);
+    if (request.tool_choice !== undefined || request.parallel_tool_calls !== undefined) {
+      body.tool_choice = toAnthropicToolChoice(request.tool_choice, request.parallel_tool_calls);
     }
     return JSON.stringify(body);
   }
@@ -604,7 +613,7 @@ export class AnthropicAdapter implements ProviderAdapter {
             content: text,
             tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
           },
-          finish_reason: data.stop_reason === "tool_use" ? "tool_calls" : data.stop_reason,
+          finish_reason: data.stop_reason ? toOpenAIFinishReason(data.stop_reason) : null,
         },
       ],
       usage: withPricingInputTokens(
@@ -645,8 +654,22 @@ export class AnthropicAdapter implements ProviderAdapter {
     let completionTokens: number | undefined;
     let cacheCreationTokens: number | undefined;
     let cacheReadTokens: number | undefined;
-    const toolCallIds = new Map<number, string>();
-    const toolCallNames = new Map<number, string>();
+    const toolCallIndexes = new Map<number, number>();
+    let nextToolCallIndex = 0;
+    let stopReason: string | undefined;
+    let finishEmitted = false;
+
+    const usageChunk = (): ChatCompletionChunk["usage"] | undefined =>
+      promptTokens !== undefined || completionTokens !== undefined
+        ? withPricingInputTokens(
+            {
+              prompt_tokens: promptTokens ?? 0,
+              completion_tokens: completionTokens ?? 0,
+              total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
+            },
+            (promptTokens ?? 0) + (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0),
+          )
+        : undefined;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -675,8 +698,14 @@ export class AnthropicAdapter implements ProviderAdapter {
               type?: string;
               id?: string;
               name?: string;
+              text?: string;
             };
-            delta?: { type?: string; text?: string; partial_json?: string };
+            delta?: {
+              type?: string;
+              text?: string;
+              partial_json?: string;
+              stop_reason?: string | null;
+            };
             usage?: { output_tokens?: number };
             error?: { type?: string; message?: string };
           };
@@ -710,12 +739,27 @@ export class AnthropicAdapter implements ProviderAdapter {
             completionTokens = data.usage.output_tokens;
           }
 
-          // Convert Anthropic events to OpenAI format
-          if (data.type === "content_block_start" && data.content_block?.type === "tool_use") {
-            const index = data.index ?? 0;
-            const toolCallId = data.content_block.id ?? `toolu_${index}`;
-            toolCallIds.set(index, toolCallId);
-            if (data.content_block.name) toolCallNames.set(index, data.content_block.name);
+          if (data.type === "message_start") {
+            yield {
+              id: messageId,
+              model: request.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
+                },
+              ],
+            };
+          } else if (
+            data.type === "content_block_start" &&
+            data.content_block?.type === "tool_use"
+          ) {
+            const contentBlockIndex = data.index ?? 0;
+            const toolCallIndex = nextToolCallIndex;
+            nextToolCallIndex += 1;
+            toolCallIndexes.set(contentBlockIndex, toolCallIndex);
+            const toolCallId = data.content_block.id ?? `toolu_${toolCallIndex}`;
             yield {
               id: messageId,
               model: request.model,
@@ -725,7 +769,7 @@ export class AnthropicAdapter implements ProviderAdapter {
                   delta: {
                     tool_calls: [
                       {
-                        index,
+                        index: toolCallIndex,
                         id: toolCallId,
                         type: "function",
                         function: { name: data.content_block.name ?? "", arguments: "" },
@@ -737,10 +781,27 @@ export class AnthropicAdapter implements ProviderAdapter {
               ],
             };
           } else if (
+            data.type === "content_block_start" &&
+            data.content_block?.type === "text" &&
+            data.content_block.text
+          ) {
+            yield {
+              id: messageId,
+              model: request.model,
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: data.content_block.text },
+                  finish_reason: null,
+                },
+              ],
+            };
+          } else if (
             data.type === "content_block_delta" &&
             data.delta?.type === "input_json_delta"
           ) {
-            const index = data.index ?? 0;
+            const contentBlockIndex = data.index ?? 0;
+            const toolCallIndex = toolCallIndexes.get(contentBlockIndex) ?? 0;
             yield {
               id: messageId,
               model: request.model,
@@ -750,11 +811,8 @@ export class AnthropicAdapter implements ProviderAdapter {
                   delta: {
                     tool_calls: [
                       {
-                        index,
-                        id: toolCallIds.get(index),
-                        type: "function",
+                        index: toolCallIndex,
                         function: {
-                          name: toolCallNames.get(index) ?? "",
                           arguments: data.delta.partial_json ?? "",
                         },
                       },
@@ -764,7 +822,10 @@ export class AnthropicAdapter implements ProviderAdapter {
                 },
               ],
             };
-          } else if (data.type === "content_block_delta") {
+          } else if (
+            data.type === "content_block_delta" &&
+            (data.delta?.type === "text_delta" || typeof data.delta?.text === "string")
+          ) {
             yield {
               id: messageId,
               model: request.model,
@@ -776,29 +837,51 @@ export class AnthropicAdapter implements ProviderAdapter {
                 },
               ],
             };
+          } else if (data.type === "message_delta") {
+            if (data.delta?.stop_reason && !finishEmitted) {
+              stopReason = data.delta.stop_reason;
+              finishEmitted = true;
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    finish_reason: toOpenAIFinishReason(stopReason),
+                  },
+                ],
+              };
+            }
           } else if (data.type === "message_stop") {
-            yield {
-              id: messageId,
-              model: request.model,
-              choices: [
-                {
-                  index: 0,
-                  delta: {},
-                  finish_reason: request.tools?.length ? "tool_calls" : "stop",
-                },
-              ],
-              usage:
-                promptTokens !== undefined || completionTokens !== undefined
-                  ? withPricingInputTokens(
-                      {
-                        prompt_tokens: promptTokens ?? 0,
-                        completion_tokens: completionTokens ?? 0,
-                        total_tokens: (promptTokens ?? 0) + (completionTokens ?? 0),
-                      },
-                      (promptTokens ?? 0) + (cacheCreationTokens ?? 0) + (cacheReadTokens ?? 0),
-                    )
-                  : undefined,
-            };
+            if (!finishEmitted) {
+              finishEmitted = true;
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [
+                  {
+                    index: 0,
+                    delta: {},
+                    finish_reason:
+                      stopReason !== undefined
+                        ? toOpenAIFinishReason(stopReason)
+                        : toolCallIndexes.size > 0
+                          ? "tool_calls"
+                          : "stop",
+                  },
+                ],
+              };
+            }
+            const usage = usageChunk();
+            if (usage) {
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [],
+                usage,
+              };
+            }
           } else if (data.type === "error") {
             const message = data.error?.message ?? "Unknown Anthropic stream error";
             throw new Error(`Anthropic stream error: ${message}`);
@@ -924,12 +1007,28 @@ function imageUrlToAnthropicSource(
   return { type: "base64", media_type: match[1] ?? "image/png", data: match[2] ?? "" };
 }
 
-function toAnthropicToolChoice(toolChoice: ChatCompletionRequest["tool_choice"]): unknown {
-  if (toolChoice === "auto") return { type: "auto" };
-  if (toolChoice === "required") return { type: "any" };
-  if (toolChoice === "none") return { type: "none" };
+function toAnthropicToolChoice(
+  toolChoice: ChatCompletionRequest["tool_choice"],
+  parallelToolCalls?: boolean,
+): unknown {
+  let result: Record<string, unknown> | undefined;
+  if (toolChoice === "auto") result = { type: "auto" };
+  if (toolChoice === "required") result = { type: "any" };
+  if (toolChoice === "none") result = { type: "none" };
   if (toolChoice && typeof toolChoice === "object") {
-    return { type: "tool", name: toolChoice.function.name };
+    result = { type: "tool", name: toolChoice.function.name };
   }
-  return undefined;
+  if (!result && parallelToolCalls !== undefined) result = { type: "auto" };
+  if (result && result.type !== "none" && parallelToolCalls !== undefined) {
+    result.disable_parallel_tool_use = !parallelToolCalls;
+  }
+  return result;
+}
+
+function toOpenAIFinishReason(reason: string): string {
+  if (reason === "tool_use") return "tool_calls";
+  if (reason === "max_tokens") return "length";
+  if (reason === "refusal") return "content_filter";
+  if (reason === "end_turn" || reason === "stop_sequence") return "stop";
+  return reason;
 }

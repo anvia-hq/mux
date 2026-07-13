@@ -9,6 +9,7 @@ import type {
 import { mergeProviderRequestHeaders } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
 import { throwOpenAICompatibleError } from "./openai-compatible-error";
+import { normalizeMistralToolCallIds } from "./tool-calls";
 
 const MODELS: Model[] = [
   {
@@ -476,7 +477,7 @@ export class MistralAdapter implements ProviderAdapter {
   }
 
   private buildRequestBody(request: ChatCompletionRequest, stream: boolean): string {
-    return buildOpenAICompatibleRequestBody(request, stream);
+    return buildOpenAICompatibleRequestBody(normalizeMistralToolCallIds(request), stream);
   }
 
   private buildHeaders(options?: ProviderRequestOptions): Record<string, string> {
@@ -531,7 +532,8 @@ export class MistralAdapter implements ProviderAdapter {
     if (message.role !== "assistant") {
       throw new Error("Mistral API response 'choices[0].message.role' must be 'assistant'");
     }
-    if (typeof message.content !== "string") {
+    const hasToolCalls = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+    if (typeof message.content !== "string" && !(message.content === null && hasToolCalls)) {
       throw new Error("Mistral API response missing string 'choices[0].message.content'");
     }
     if (firstChoice.finish_reason !== null && typeof firstChoice.finish_reason !== "string") {

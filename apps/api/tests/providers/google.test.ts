@@ -22,7 +22,7 @@ vi.stubGlobal("fetch", mockFetch);
 
 function makeJsonStream(chunks: string[]) {
   const encoder = new TextEncoder();
-  const data = chunks.map((chunk) => encoder.encode(chunk));
+  const data = chunks.map((chunk) => encoder.encode(`data: ${chunk}\n\n`));
   let index = 0;
 
   return new Response(
@@ -36,6 +36,7 @@ function makeJsonStream(chunks: string[]) {
         controller.close();
       },
     }),
+    { headers: { "Content-Type": "text/event-stream" } },
   );
 }
 
@@ -108,6 +109,7 @@ describe("GoogleAdapter", () => {
       completion_tokens: 6,
       total_tokens: 10,
     });
+    expect(String(mockFetch.mock.calls[0]?.[0])).toContain("streamGenerateContent?alt=sse&key=");
   });
 
   it("translates tools and JSON schema to Gemini format", async () => {
@@ -165,5 +167,164 @@ describe("GoogleAdapter", () => {
     expect(response.choices[0]?.message.tool_calls?.[0]).toMatchObject({
       function: { name: "lookup", arguments: '{"q":"hi"}' },
     });
+    expect(response.choices[0]?.message.tool_calls?.[0]?.id).toMatch(/^call_[0-9a-f-]{36}$/);
+    expect(response.choices[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  it("resolves and groups unnamed parallel tool results from assistant history", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "done" }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      }),
+    );
+
+    const adapter = new GoogleAdapter("sk-test");
+    await adapter.chatCompletion({
+      model: "gemini-test",
+      messages: [
+        { role: "user", content: "compare" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_lookup",
+              type: "function",
+              function: { name: "lookup", arguments: '{"q":"one"}' },
+            },
+            {
+              id: "call_weather",
+              type: "function",
+              function: { name: "weather", arguments: '{"city":"Jakarta"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_lookup", content: '{"result":1}' },
+        { role: "tool", tool_call_id: "call_weather", content: "[30]" },
+      ],
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.contents).toHaveLength(3);
+    expect(requestBody.contents[2]).toMatchObject({
+      role: "user",
+      parts: [
+        { functionResponse: { name: "lookup", response: { result: 1 } } },
+        { functionResponse: { name: "weather", response: { result: [30] } } },
+      ],
+    });
+  });
+
+  it("converts every non-streaming candidate and function call", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: "checking" },
+                { functionCall: { name: "lookup", args: { q: "one" } } },
+                { functionCall: { name: "weather", args: { city: "Jakarta" } } },
+              ],
+            },
+            finishReason: "STOP",
+          },
+          { content: { parts: [{ text: "alternate" }] }, finishReason: "MAX_TOKENS" },
+        ],
+        usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3, totalTokenCount: 5 },
+      }),
+    );
+
+    const response = await new GoogleAdapter("sk-test").chatCompletion({
+      model: "gemini-test",
+      messages: [{ role: "user", content: "compare" }],
+    });
+
+    expect(response.choices).toHaveLength(2);
+    expect(response.choices[0]?.message.tool_calls).toHaveLength(2);
+    expect(response.choices[0]?.message.tool_calls?.[0]?.id).not.toBe(
+      response.choices[0]?.message.tool_calls?.[1]?.id,
+    );
+    expect(response.choices[0]?.finish_reason).toBe("tool_calls");
+    expect(response.choices[1]?.finish_reason).toBe("length");
+  });
+
+  it("streams all text and parallel tool parts with OpenAI delta semantics", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeJsonStream([
+        JSON.stringify({
+          id: "gemini-stream-1",
+          candidates: [
+            {
+              index: 0,
+              content: {
+                parts: [
+                  { text: "checking" },
+                  { functionCall: { name: "lookup", args: { q: "one" } } },
+                  { functionCall: { name: "weather", args: { city: "Jakarta" } } },
+                ],
+              },
+              finishReason: "STOP",
+            },
+            {
+              index: 1,
+              content: { parts: [{ text: "alternate" }] },
+              finishReason: "MAX_TOKENS",
+            },
+          ],
+          usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 6, totalTokenCount: 10 },
+        }),
+      ]),
+    );
+
+    const chunks = [];
+    for await (const chunk of new GoogleAdapter("sk-test").chatCompletionStream({
+      model: "gemini-test",
+      messages: [{ role: "user", content: "compare" }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks[0]?.choices[0]?.delta).toEqual({ role: "assistant", content: "" });
+    expect(chunks.some((chunk) => chunk.choices[0]?.delta.content === "checking")).toBe(true);
+    const metadata = chunks.flatMap(
+      (chunk) => chunk.choices[0]?.delta.tool_calls?.filter((call) => call.id !== undefined) ?? [],
+    );
+    const argumentsDeltas = chunks.flatMap(
+      (chunk) => chunk.choices[0]?.delta.tool_calls?.filter((call) => call.id === undefined) ?? [],
+    );
+    expect(metadata.map((call) => call.index)).toEqual([0, 1]);
+    expect(metadata[0]?.id).not.toBe(metadata[1]?.id);
+    expect(metadata.every((call) => call.function?.arguments === "")).toBe(true);
+    expect(argumentsDeltas.map((call) => call.index)).toEqual([0, 1]);
+    expect(argumentsDeltas.every((call) => call.function?.name === undefined)).toBe(true);
+    expect(
+      chunks.find((chunk) => chunk.choices[0]?.index === 0 && chunk.choices[0].finish_reason)
+        ?.choices[0]?.finish_reason,
+    ).toBe("tool_calls");
+    expect(
+      chunks.find((chunk) => chunk.choices[0]?.index === 1 && chunk.choices[0].finish_reason)
+        ?.choices[0]?.finish_reason,
+    ).toBe("length");
+    expect(chunks.at(-1)).toMatchObject({
+      choices: [],
+      usage: { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 },
+    });
+  });
+
+  it("fails malformed streaming JSON instead of silently dropping it", async () => {
+    mockFetch.mockResolvedValueOnce(makeJsonStream(["unexpected"]));
+
+    const consume = async () => {
+      for await (const _chunk of new GoogleAdapter("sk-test").chatCompletionStream({
+        model: "gemini-test",
+        messages: [{ role: "user", content: "hi" }],
+      })) {
+        // Drain stream.
+      }
+    };
+
+    await expect(consume()).rejects.toThrow("Failed to parse Google stream chunk");
   });
 });

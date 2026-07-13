@@ -106,4 +106,82 @@ describe("MistralAdapter", () => {
       stream_options: { include_usage: true },
     });
   });
+
+  it("normalizes tool call IDs consistently across assistant calls and results", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chatcmpl-1",
+        model: "mistral-test",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "done" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const request = {
+      model: "mistral-test",
+      messages: [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_needs_rewriting",
+              type: "function" as const,
+              function: { name: "lookup", arguments: "{}" },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_needs_rewriting", content: "ok" },
+      ],
+    };
+
+    await new MistralAdapter("sk-test").chatCompletion(request);
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    const toolCallId = requestBody.messages[0].tool_calls[0].id;
+    expect(toolCallId).toMatch(/^[a-zA-Z0-9]{9}$/);
+    expect(requestBody.messages[1].tool_call_id).toBe(toolCallId);
+    expect(request.messages[0]?.tool_calls?.[0]?.id).toBe("call_needs_rewriting");
+  });
+
+  it("accepts tool-call-only responses with nullable content", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "chatcmpl-1",
+        model: "mistral-test",
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "Abc123xyz",
+                  type: "function",
+                  function: { name: "lookup", arguments: "{}" },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    );
+
+    const response = await new MistralAdapter("sk-test").chatCompletion({
+      model: "mistral-test",
+      messages: [{ role: "user", content: "lookup" }],
+    });
+
+    expect(response.choices[0]?.message.content).toBeNull();
+    expect(response.choices[0]?.message.tool_calls?.[0]?.function.name).toBe("lookup");
+  });
 });
