@@ -662,6 +662,9 @@ export type ResolvedProviderModel = {
   paramOverride?: Record<string, unknown>;
   headerOverride?: Record<string, unknown>;
   apiKey?: string;
+  priority?: number;
+  weight?: number;
+  fallbackPosition?: number;
 };
 
 export type ResolvedFallbackGroup = {
@@ -764,6 +767,8 @@ function resolveProviderModelTargets(model: string): ResolvedProviderModel[] {
       paramOverride: channel.paramOverride,
       headerOverride: channel.headerOverride,
       apiKey: channel.apiKey,
+      priority: channel.priority,
+      weight: channel.weight,
     });
   }
   return resolved;
@@ -798,7 +803,9 @@ export async function resolveFallbackGroupModel(
   }
 
   const targets = group.targets.flatMap((target) =>
-    resolveEnabledProviderModel(toPublicModelId(target.provider, target.modelId), disabled),
+    resolveEnabledProviderModel(toPublicModelId(target.provider, target.modelId), disabled).map(
+      (resolved) => ({ ...resolved, fallbackPosition: target.position }),
+    ),
   );
 
   if (targets.length === 0) {

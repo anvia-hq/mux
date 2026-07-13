@@ -453,6 +453,7 @@ export interface ProviderCapabilities {
 export type ProviderRequestOptions = {
   headers?: Record<string, string>;
   rawBody?: string;
+  signal?: AbortSignal;
 };
 
 export function mergeProviderRequestHeaders(

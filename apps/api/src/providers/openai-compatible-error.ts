@@ -3,14 +3,22 @@ export class UpstreamOpenAICompatibleError extends Error {
   readonly status: number;
   readonly body: string;
   readonly contentType?: string;
+  readonly retryAfter?: string;
 
-  constructor(input: { provider: string; status: number; body: string; contentType?: string }) {
+  constructor(input: {
+    provider: string;
+    status: number;
+    body: string;
+    contentType?: string;
+    retryAfter?: string;
+  }) {
     super(`${input.provider} OpenAI-compatible API error: ${input.status} - ${input.body}`);
     this.name = "UpstreamOpenAICompatibleError";
     this.provider = input.provider;
     this.status = input.status;
     this.body = input.body;
     this.contentType = input.contentType;
+    this.retryAfter = input.retryAfter;
   }
 
   get jsonError(): unknown | null {
@@ -32,6 +40,7 @@ export async function throwOpenAICompatibleError(
     status: response.status,
     body: await response.text(),
     contentType: response.headers.get("content-type") ?? undefined,
+    retryAfter: response.headers.get("retry-after") ?? undefined,
   });
 }
 

@@ -15,6 +15,7 @@ import type {
 } from "./types";
 import { mergeProviderRequestHeaders } from "./types";
 import { anthropicCapabilities } from "./chat-compat";
+import { throwOpenAICompatibleError } from "./openai-compatible-error";
 
 const MODELS: Model[] = [
   {
@@ -548,12 +549,11 @@ export class AnthropicAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Anthropic", response);
     }
 
     const data = (await response.json()) as {
@@ -628,12 +628,11 @@ export class AnthropicAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Anthropic", response);
     }
 
     const reader = response.body?.getReader();

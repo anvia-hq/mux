@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { mergeProviderRequestHeaders } from "./types";
 import { buildOpenAICompatibleRequestBody, openAICompatibleCapabilities } from "./chat-compat";
+import { throwOpenAICompatibleError } from "./openai-compatible-error";
 
 const MODELS: Model[] = [
   {
@@ -496,12 +497,11 @@ export class MistralAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Mistral API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Mistral", response);
     }
 
     const data: unknown = await response.json();
@@ -558,12 +558,11 @@ export class MistralAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Mistral API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Mistral", response);
     }
 
     const reader = response.body?.getReader();

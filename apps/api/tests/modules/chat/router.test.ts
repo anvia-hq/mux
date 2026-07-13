@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -5,15 +6,18 @@ const {
   mockAssertApiKeyCanSpend,
   mockEstimateCost,
   mockHandleChatCompletion,
+  mockCheckChatRateLimit,
   mockLogStreamFinal,
   mockLogStreamStart,
   mockModelAccess,
   mockSpendLimit,
+  mockRecordChatRateLimitSuccess,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockAssertApiKeyCanSpend: vi.fn(),
   mockEstimateCost: vi.fn(),
   mockHandleChatCompletion: vi.fn(),
+  mockCheckChatRateLimit: vi.fn(),
   mockLogStreamFinal: vi.fn(),
   mockLogStreamStart: vi.fn(),
   mockModelAccess: {
@@ -22,6 +26,7 @@ const {
     allowedModelIds: [] as string[],
   },
   mockSpendLimit: { value: null as number | null },
+  mockRecordChatRateLimitSuccess: vi.fn(),
 }));
 
 vi.mock("../../../src/modules/chat/services", () => {
@@ -34,15 +39,42 @@ vi.mock("../../../src/modules/chat/services", () => {
     }
   }
 
-  return { ApiKeyUnbillableUsageError, handleChatCompletion: mockHandleChatCompletion };
+  return {
+    ApiKeyUnbillableUsageError,
+    handleChatCompletion: async (...args: unknown[]) => {
+      const result = await mockHandleChatCompletion(...args);
+      if (result?.kind !== "stream") return result;
+      return {
+        abort: vi.fn(),
+        finalizeSpend:
+          result.finalizeSpend ??
+          (async (usage: {
+            prompt_tokens?: number;
+            completion_tokens?: number;
+            pricing_input_tokens?: number;
+          }) =>
+            mockEstimateCost(
+              result.model,
+              usage.prompt_tokens,
+              usage.completion_tokens,
+              undefined,
+              usage.pricing_input_tokens,
+            )),
+        ...result,
+      };
+    },
+  };
 });
 vi.mock("../../../src/middleware/api-key", () => ({
-  apiKeyAuth: vi
+  openAIApiKeyAuth: vi
     .fn()
     .mockImplementation(
       async (c: { set: (key: string, value: unknown) => void }, next: () => void) => {
         c.set("apiKeyId", "key-1");
         c.set("apiKeySpendLimitUsd", mockSpendLimit.value);
+        c.set("apiKeyOwnSpendLimitUsd", mockSpendLimit.value);
+        c.set("apiKeyOwnerId", "user-1");
+        c.set("apiKeyOwnerSpendLimitUsd", null);
         c.set("apiKeyAllowAllModels", mockModelAccess.allowAllModels);
         c.set("apiKeyIncludeFutureModels", mockModelAccess.includeFutureModels);
         c.set("apiKeyAllowedModelIds", mockModelAccess.allowedModelIds);
@@ -51,6 +83,18 @@ vi.mock("../../../src/middleware/api-key", () => ({
     ),
   readApiKeyModelAccess: vi.fn(() => mockModelAccess),
 }));
+vi.mock("../../../src/modules/chat/relay/rate-limit", () => {
+  class ChatRateLimitExceededError extends Error {
+    retryAfterSeconds = 60;
+  }
+  class ChatRateLimitUnavailableError extends Error {}
+  return {
+    ChatRateLimitExceededError,
+    ChatRateLimitUnavailableError,
+    checkChatRateLimit: mockCheckChatRateLimit,
+    recordChatRateLimitSuccess: mockRecordChatRateLimitSuccess,
+  };
+});
 vi.mock("../../../src/middleware/logger", () => {
   class RequestLoggingUnavailableError extends Error {
     constructor() {
@@ -160,6 +204,11 @@ import {
   ApiKeySpendLimitExceededError,
 } from "../../../src/modules/keys/services";
 import { UnsupportedChatFeatureError } from "../../../src/providers/chat-compat";
+import { UpstreamOpenAICompatibleError } from "../../../src/providers/openai-compatible-error";
+import {
+  ChatRateLimitExceededError,
+  ChatRateLimitUnavailableError,
+} from "../../../src/modules/chat/relay/rate-limit";
 
 describe("chat router", () => {
   beforeEach(() => {
@@ -178,8 +227,13 @@ describe("chat router", () => {
 
   it("POST /completions 400 invalid json", async () => {
     const app = new Hono().route("/v1/chat", chatRouter);
-    const res = await app.request("/v1/chat/completions", { method: "POST", body: "bad" });
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "bad",
+    });
     expect(res.status).toBe(400);
+    expect(res.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
     await expect(res.json()).resolves.toEqual({
       error: expect.objectContaining({
         message: "invalid JSON body",
@@ -187,6 +241,88 @@ describe("chat router", () => {
         code: "bad_request_body",
       }),
     });
+  });
+
+  it("POST /completions 415 for a non-JSON content type", async () => {
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(415);
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({ code: "unsupported_media_type" }),
+    });
+    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("POST /completions does not accept JSON-like content type prefixes", async () => {
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/jsonp" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(415);
+  });
+
+  it("POST /completions decompresses a gzip JSON request", async () => {
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "c1",
+        model: "gpt-4",
+        choices: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      },
+    });
+    const rawBody = JSON.stringify({
+      model: "gpt-4",
+      messages: [{ role: "user", content: "compressed" }],
+    });
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Encoding": "gzip" },
+      body: new Uint8Array(gzipSync(rawBody)),
+    });
+    expect(res.status).toBe(200);
+    expect(mockHandleChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ role: "user", content: "compressed" }] }),
+      "key-1",
+      expect.objectContaining({ rawBody }),
+    );
+  });
+
+  it("POST /completions returns Retry-After when the request rate limit is exhausted", async () => {
+    mockCheckChatRateLimit.mockRejectedValueOnce(new ChatRateLimitExceededError(60));
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("60");
+    await expect(res.json()).resolves.toEqual({
+      error: expect.objectContaining({ type: "rate_limit_error", code: "rate_limit_exceeded" }),
+    });
+    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it("POST /completions fails closed when an enabled request limiter is unavailable", async () => {
+    mockCheckChatRateLimit.mockRejectedValueOnce(
+      new ChatRateLimitUnavailableError(new Error("redis offline")),
+    );
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(503);
+    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
   });
 
   it("POST /completions 400 missing model", async () => {
@@ -413,6 +549,38 @@ describe("chat router", () => {
     );
   });
 
+  it("POST /completions sanitizes structured upstream errors", async () => {
+    mockHandleChatCompletion.mockRejectedValueOnce(
+      new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 429,
+        retryAfter: "7",
+        body: JSON.stringify({
+          error: {
+            message: "authorization: Bearer sk-supersecret rejected",
+            type: "rate_limit_error",
+            code: "rate_limit",
+          },
+        }),
+      }),
+    );
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(429);
+    expect(res.headers.get("retry-after")).toBe("7");
+    const requestId = res.headers.get("x-request-id");
+    const payload = (await res.json()) as {
+      error: { message: string; type: string; code: string };
+    };
+    expect(payload.error).toMatchObject({ type: "rate_limit_error", code: "rate_limit" });
+    expect(payload.error.message).toContain(`[REDACTED] rejected (request_id: ${requestId})`);
+    expect(payload.error.message).not.toContain("sk-supersecret");
+  });
+
   it("POST /completions 403 when the API key cannot access the model", async () => {
     mockModelAccess.allowAllModels = false;
     mockModelAccess.includeFutureModels = false;
@@ -438,7 +606,7 @@ describe("chat router", () => {
     expect(mockHandleChatCompletion).not.toHaveBeenCalled();
   });
 
-  it("POST /completions checks spend limit before limited request", async () => {
+  it("POST /completions passes independent spend limits to the relay", async () => {
     mockSpendLimit.value = 10;
     mockHandleChatCompletion.mockResolvedValueOnce({
       kind: "complete",
@@ -456,17 +624,24 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(200);
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
     expect(mockHandleChatCompletion).toHaveBeenCalledWith(
       expect.anything(),
       "key-1",
-      expect.objectContaining({ requireBillableUsage: true }),
+      expect.objectContaining({
+        requireBillableUsage: true,
+        billing: expect.objectContaining({
+          apiKeyId: "key-1",
+          ownerId: "user-1",
+          apiKeyLimitUsd: 10,
+          ownerLimitUsd: null,
+        }),
+      }),
     );
   });
 
   it("POST /completions 429 when spend limit is exhausted", async () => {
     mockSpendLimit.value = 10;
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
+    mockHandleChatCompletion.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
@@ -474,12 +649,12 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(429);
-    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+    expect(mockHandleChatCompletion).toHaveBeenCalled();
   });
 
   it("POST /completions 429 when spend limit is exhausted before streaming", async () => {
     mockSpendLimit.value = 10;
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
+    mockHandleChatCompletion.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {
       method: "POST",
@@ -491,7 +666,7 @@ describe("chat router", () => {
       }),
     });
     expect(res.status).toBe(429);
-    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+    expect(mockHandleChatCompletion).toHaveBeenCalled();
   });
 
   it("POST /completions checks and bills limited streaming requests", async () => {
@@ -527,13 +702,11 @@ describe("chat router", () => {
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
     expect(mockHandleChatCompletion).toHaveBeenCalledWith(
       expect.anything(),
       "key-1",
-      expect.objectContaining({ requireBillableUsage: false }),
+      expect.objectContaining({ requireBillableUsage: true, billing: expect.any(Object) }),
     );
-    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         estimatedCost: 0.01,
@@ -751,8 +924,6 @@ describe("chat router", () => {
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         estimatedCost: undefined,
@@ -761,7 +932,56 @@ describe("chat router", () => {
     );
   });
 
-  it("POST /completions 503 when request logging is unavailable", async () => {
+  it("POST /completions emits a sanitized SSE error without DONE after a committed failure", async () => {
+    async function* chunks() {
+      yield {
+        id: "chunk-1",
+        model: "gpt-4",
+        choices: [{ index: 0, delta: { content: "partial" }, finish_reason: null }],
+      };
+      throw new UpstreamOpenAICompatibleError({
+        provider: "openai",
+        status: 429,
+        body: JSON.stringify({
+          error: {
+            message: "authorization: Bearer sk-streamsecret failed",
+            type: "rate_limit_error",
+          },
+        }),
+      });
+    }
+
+    mockHandleChatCompletion.mockResolvedValueOnce({
+      kind: "stream",
+      stream: chunks(),
+      provider: "openai",
+      model: "gpt-4",
+      responseModel: "gpt-4",
+      latencyMs: 25,
+    });
+
+    const app = new Hono().route("/v1/chat", chatRouter);
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('"content":"partial"');
+    expect(text).toContain('"type":"rate_limit_error"');
+    expect(text).toContain("[REDACTED] failed");
+    expect(text).not.toContain("sk-streamsecret");
+    expect(text).not.toContain("[DONE]");
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 429 }));
+  });
+
+  it("POST /completions treats an unexpected service logging error as internal", async () => {
     mockHandleChatCompletion.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
     const app = new Hono().route("/v1/chat", chatRouter);
     const res = await app.request("/v1/chat/completions", {
@@ -769,12 +989,12 @@ describe("chat router", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(503);
+    expect(res.status).toBe(500);
   });
 
   it("POST /completions 503 when spend ledger is unavailable", async () => {
     mockSpendLimit.value = 10;
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(
+    mockHandleChatCompletion.mockRejectedValueOnce(
       new ApiKeySpendLedgerUnavailableError(new Error()),
     );
     const app = new Hono().route("/v1/chat", chatRouter);
@@ -784,7 +1004,7 @@ describe("chat router", () => {
       body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "hi" }] }),
     });
     expect(res.status).toBe(503);
-    expect(mockHandleChatCompletion).not.toHaveBeenCalled();
+    expect(mockHandleChatCompletion).toHaveBeenCalled();
   });
 
   it("POST /completions 422 when requested features are unsupported", async () => {
