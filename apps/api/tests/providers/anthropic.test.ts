@@ -158,6 +158,153 @@ describe("AnthropicAdapter", () => {
     expect(response.choices[0]?.finish_reason).toBe("tool_calls");
   });
 
+  it("groups parallel tool results and maps parallel tool choice", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "msg-1",
+        model: "claude-test",
+        content: [{ type: "text", text: "done" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 5, output_tokens: 2 },
+      }),
+    );
+
+    const response = await new AnthropicAdapter("sk-test").chatCompletion({
+      model: "claude-test",
+      messages: [
+        { role: "user", content: "compare" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call_lookup",
+              type: "function",
+              function: { name: "lookup", arguments: '{"q":"one"}' },
+            },
+            {
+              id: "call_weather",
+              type: "function",
+              function: { name: "weather", arguments: '{"city":"Jakarta"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_lookup", content: '{"result":1}' },
+        { role: "tool", tool_call_id: "call_weather", content: '{"temperature":30}' },
+      ],
+      tools: [
+        { type: "function", function: { name: "lookup" } },
+        { type: "function", function: { name: "weather" } },
+      ],
+      parallel_tool_calls: false,
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.messages).toHaveLength(3);
+    expect(requestBody.messages[2]).toMatchObject({
+      role: "user",
+      content: [
+        { type: "tool_result", tool_use_id: "call_lookup" },
+        { type: "tool_result", tool_use_id: "call_weather" },
+      ],
+    });
+    expect(requestBody.tool_choice).toEqual({
+      type: "auto",
+      disable_parallel_tool_use: true,
+    });
+    expect(response.choices[0]?.finish_reason).toBe("stop");
+  });
+
+  it("does not attach parallel settings to a none tool choice", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "msg-1",
+        model: "claude-test",
+        content: [{ type: "text", text: "done" }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+    );
+
+    await new AnthropicAdapter("sk-test").chatCompletion({
+      model: "claude-test",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "lookup" } }],
+      tool_choice: "none",
+      parallel_tool_calls: true,
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.tool_choice).toEqual({ type: "none" });
+  });
+
+  it("streams dense parallel tool indexes, fragmented arguments, finish reason, and usage", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'data: {"type":"message_start","message":{"id":"msg-tools","usage":{"input_tokens":7,"output_tokens":1}}}\n\n',
+        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"checking"}}\n\n',
+        'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_lookup","name":"lookup"}}\n\n',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":"}}\n\n',
+        'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"one\\"}"}}\n\n',
+        'data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_weather","name":"weather"}}\n\n',
+        'data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\\"city\\":\\"Jakarta\\"}"}}\n\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":8}}\n\n',
+        'data: {"type":"message_stop"}\n\n',
+      ]),
+    );
+
+    const chunks = [];
+    for await (const chunk of new AnthropicAdapter("sk-test").chatCompletionStream({
+      model: "claude-test",
+      messages: [{ role: "user", content: "compare" }],
+      tools: [
+        { type: "function", function: { name: "lookup" } },
+        { type: "function", function: { name: "weather" } },
+      ],
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks[0]?.choices[0]?.delta).toEqual({ role: "assistant", content: "" });
+    expect(chunks.some((chunk) => chunk.choices[0]?.delta.content === "checking")).toBe(true);
+    const toolDeltas = chunks.flatMap((chunk) => chunk.choices[0]?.delta.tool_calls ?? []);
+    const metadata = toolDeltas.filter((call) => call.id !== undefined);
+    const argumentsDeltas = toolDeltas.filter((call) => call.id === undefined);
+    expect(metadata.map((call) => call.index)).toEqual([0, 1]);
+    expect(argumentsDeltas.map((call) => call.index)).toEqual([0, 0, 1]);
+    expect(argumentsDeltas.every((call) => call.type === undefined)).toBe(true);
+    expect(argumentsDeltas.every((call) => call.function?.name === undefined)).toBe(true);
+    expect(chunks.at(-2)?.choices[0]?.finish_reason).toBe("tool_calls");
+    expect(chunks.at(-1)).toMatchObject({
+      choices: [],
+      usage: { prompt_tokens: 7, completion_tokens: 8, total_tokens: 15 },
+    });
+  });
+
+  it("uses the upstream stop reason when tools were offered but not called", async () => {
+    mockFetch.mockResolvedValueOnce(
+      makeSSEStream([
+        'data: {"type":"message_start","message":{"id":"msg-text","usage":{"input_tokens":2,"output_tokens":0}}}\n\n',
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+        'data: {"type":"message_stop"}\n\n',
+      ]),
+    );
+
+    const chunks = [];
+    for await (const chunk of new AnthropicAdapter("sk-test").chatCompletionStream({
+      model: "claude-test",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "lookup" } }],
+    })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks.find((chunk) => chunk.choices[0]?.finish_reason)?.choices[0]?.finish_reason).toBe(
+      "stop",
+    );
+  });
+
   it("proxies native Anthropic Messages requests without OpenAI conversion", async () => {
     const upstream = {
       id: "msg-1",

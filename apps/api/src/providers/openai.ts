@@ -1115,12 +1115,11 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? this.buildRequestBody(request, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     return (await response.json()) as ChatCompletionResponse;
@@ -1134,12 +1133,11 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? this.buildRequestBody(request, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     const reader = response.body?.getReader();

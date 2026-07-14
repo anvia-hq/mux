@@ -3,6 +3,8 @@ import {
   applyRuntimeCapabilities,
   assertChatFeaturesSupported,
   buildOpenAICompatibleRequestBody,
+  googleCapabilities,
+  openAICompatibleCapabilities,
   requestedChatFeatures,
   unsupportedChatFeatures,
   unsupportedNativeCapabilities,
@@ -58,7 +60,10 @@ describe("chat compatibility", () => {
       tools: [{ type: "function", function: { name: "lookup" } }],
       tool_choice: "auto",
       parallel_tool_calls: true,
-      response_format: { type: "json_schema", json_schema: { name: "answer" } },
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "answer", schema: { type: "object" } },
+      },
       modalities: ["audio"],
       audio: { voice: "alloy", format: "mp3" },
       reasoning_effort: "low",
@@ -111,6 +116,34 @@ describe("chat compatibility", () => {
         "tools",
       ]),
     );
+  });
+
+  it("rejects provider-specific response formats for native translators", () => {
+    const request = {
+      model: "google:gemini-test",
+      messages: [{ role: "user", content: "hi" }],
+      response_format: { type: "xml" },
+    } as unknown as ChatCompletionRequest;
+
+    expect(unsupportedChatFeatures(request, model, googleCapabilities)).toContain(
+      "structuredOutput",
+    );
+    expect(unsupportedChatFeatures(request, model, openAICompatibleCapabilities)).not.toContain(
+      "structuredOutput",
+    );
+  });
+
+  it("preserves provider-specific response formats for OpenAI-compatible upstreams", () => {
+    const request = {
+      model: "compatible:model",
+      messages: [{ role: "user", content: "hi" }],
+      response_format: { type: "xml", root: "answer" },
+    } as unknown as ChatCompletionRequest;
+
+    expect(validateChatCompletionRequestShape(request)).toBeNull();
+    expect(JSON.parse(buildOpenAICompatibleRequestBody(request, false))).toMatchObject({
+      response_format: { type: "xml", root: "answer" },
+    });
   });
 
   it("throws a typed error when asserted features are unsupported", () => {
@@ -377,6 +410,68 @@ describe("chat compatibility", () => {
         "max_tokens is invalid",
       ],
       [{ model: "m1", messages: "bad" }, "messages must be an array"],
+      [
+        { model: "m1", messages: [{ role: "user" }], response_format: null },
+        "response_format must be an object",
+      ],
+      [
+        { model: "m1", messages: [{ role: "user" }], response_format: [] },
+        "response_format must be an object",
+      ],
+      [
+        { model: "m1", messages: [{ role: "user" }], response_format: {} },
+        "response_format.type must be a non-empty string",
+      ],
+      [
+        { model: "m1", messages: [{ role: "user" }], response_format: { type: "" } },
+        "response_format.type must be a non-empty string",
+      ],
+      [
+        {
+          model: "m1",
+          messages: [{ role: "user" }],
+          response_format: { type: "json_schema" },
+        },
+        "response_format.json_schema must be an object",
+      ],
+      [
+        {
+          model: "m1",
+          messages: [{ role: "user" }],
+          response_format: { type: "json_schema", json_schema: { schema: {} } },
+        },
+        "response_format.json_schema.name must be a non-empty string",
+      ],
+      [
+        {
+          model: "m1",
+          messages: [{ role: "user" }],
+          response_format: { type: "json_schema", json_schema: { name: "answer" } },
+        },
+        "response_format.json_schema.schema must be an object",
+      ],
+      [
+        {
+          model: "m1",
+          messages: [{ role: "user" }],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "answer", schema: {}, description: 1 },
+          },
+        },
+        "response_format.json_schema.description must be a string",
+      ],
+      [
+        {
+          model: "m1",
+          messages: [{ role: "user" }],
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "answer", schema: {}, strict: "yes" },
+          },
+        },
+        "response_format.json_schema.strict must be a boolean",
+      ],
       [{ model: "m1", messages: [null] }, "messages[0] must be an object"],
       [
         {
@@ -390,6 +485,30 @@ describe("chat compatibility", () => {
 
     for (const [request, message] of invalidRequests) {
       expect(validateChatCompletionRequestShape(request)).toBe(message);
+    }
+  });
+
+  it("accepts standard response formats", () => {
+    for (const responseFormat of [
+      { type: "text" },
+      { type: "json_object" },
+      {
+        type: "json_schema",
+        json_schema: {
+          name: "answer",
+          description: "An answer",
+          schema: { type: "object" },
+          strict: true,
+        },
+      },
+    ]) {
+      expect(
+        validateChatCompletionRequestShape({
+          model: "m1",
+          messages: [{ role: "user", content: "hi" }],
+          response_format: responseFormat,
+        }),
+      ).toBeNull();
     }
   });
 

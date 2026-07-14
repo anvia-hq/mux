@@ -11,6 +11,9 @@ import type {
 } from "./types";
 import { mergeProviderRequestHeaders } from "./types";
 import { googleCapabilities } from "./chat-compat";
+import { throwOpenAICompatibleError } from "./openai-compatible-error";
+import { createToolCallId } from "./tool-calls";
+import { SseBlockParser } from "./responses-stream";
 
 const MODELS: Model[] = [
   {
@@ -362,16 +365,27 @@ export class GoogleAdapter implements ProviderAdapter {
 
   private getApiUrl(model: string, stream: boolean): string {
     const endpoint = stream ? "streamGenerateContent" : "generateContent";
-    return `${GOOGLE_API_BASE_URL}/${model}:${endpoint}?key=${this.apiKey}`;
+    const query = stream ? `alt=sse&key=${this.apiKey}` : `key=${this.apiKey}`;
+    return `${GOOGLE_API_BASE_URL}/${model}:${endpoint}?${query}`;
   }
 
   private convertMessages(messages: ChatCompletionRequest["messages"]) {
-    const contents = messages
-      .filter((m) => m.role !== "system")
-      .map((m) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: this.convertMessageParts(m),
-      }));
+    const toolNames = new Map<string, string>();
+    const contents: { role: string; parts: unknown[] }[] = [];
+    for (const message of messages) {
+      if (message.role === "system") continue;
+      for (const toolCall of message.tool_calls ?? []) {
+        toolNames.set(toolCall.id, toolCall.function.name);
+      }
+      const role = message.role === "assistant" ? "model" : "user";
+      const parts = this.convertMessageParts(message, toolNames);
+      const previous = contents.at(-1);
+      if (message.role === "tool" && previous?.role === "user") {
+        previous.parts.push(...parts);
+      } else {
+        contents.push({ role, parts });
+      }
+    }
 
     const systemInstruction = messages.find((m) => m.role === "system");
 
@@ -383,13 +397,16 @@ export class GoogleAdapter implements ProviderAdapter {
     };
   }
 
-  private convertMessageParts(message: ChatMessage): unknown[] {
+  private convertMessageParts(message: ChatMessage, toolNames: Map<string, string>): unknown[] {
     if (message.role === "tool") {
       return [
         {
           functionResponse: {
-            name: message.name ?? message.tool_call_id ?? "tool",
-            response: safeJsonObject(contentToText(message.content)),
+            name:
+              message.name ??
+              (message.tool_call_id ? toolNames.get(message.tool_call_id) : undefined) ??
+              "",
+            response: googleToolResult(contentToText(message.content)),
           },
         },
       ];
@@ -454,7 +471,9 @@ export class GoogleAdapter implements ProviderAdapter {
     }
     if (request.response_format?.type === "json_schema") {
       generationConfig.responseMimeType = "application/json";
-      generationConfig.responseSchema = request.response_format.json_schema.schema;
+      generationConfig.responseSchema = sanitizeGoogleResponseSchema(
+        request.response_format.json_schema.schema,
+      );
     }
 
     const body: Record<string, unknown> = {
@@ -498,17 +517,17 @@ export class GoogleAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Google API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Google", response);
     }
 
     const data = (await response.json()) as {
       id?: string;
       candidates?: {
+        index?: number;
         content?: { parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[] };
         finishReason?: string;
       }[];
@@ -519,41 +538,42 @@ export class GoogleAdapter implements ProviderAdapter {
       };
     };
 
-    const candidate = data.candidates?.[0];
-    const parts = candidate?.content?.parts ?? [];
-    const content = parts
-      .filter((part): part is { text: string } => typeof part.text === "string")
-      .map((part) => part.text)
-      .join("");
-    const toolCalls = parts
-      .filter((part): part is { functionCall: { name: string; args?: unknown } } =>
-        Boolean(part.functionCall?.name),
-      )
-      .map(
-        (part, index): ToolCall => ({
-          id: `call_${index}`,
-          type: "function",
-          function: {
-            name: part.functionCall.name,
-            arguments: JSON.stringify(part.functionCall.args ?? {}),
-          },
-        }),
-      );
+    const choices = (data.candidates ?? []).map((candidate, choiceIndex) => {
+      const parts = candidate.content?.parts ?? [];
+      const content = parts
+        .filter((part): part is { text: string } => typeof part.text === "string")
+        .map((part) => part.text)
+        .join("");
+      const toolCalls = parts
+        .filter((part): part is { functionCall: { name: string; args?: unknown } } =>
+          Boolean(part.functionCall?.name),
+        )
+        .map(
+          (part): ToolCall => ({
+            id: createToolCallId(),
+            type: "function",
+            function: {
+              name: part.functionCall.name,
+              arguments: JSON.stringify(part.functionCall.args ?? {}),
+            },
+          }),
+        );
+
+      return {
+        index: candidate.index ?? choiceIndex,
+        message: {
+          role: "assistant",
+          content,
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+        },
+        finish_reason: toOpenAIFinishReason(candidate.finishReason, toolCalls.length > 0),
+      };
+    });
 
     return {
       id: data.id ?? `google-${Date.now()}`,
       model: request.model,
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: "assistant",
-            content,
-            tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
-          },
-          finish_reason: toolCalls.length > 0 ? "tool_calls" : (candidate?.finishReason ?? "stop"),
-        },
-      ],
+      choices,
       usage: {
         prompt_tokens: data.usageMetadata?.promptTokenCount ?? 0,
         completion_tokens: data.usageMetadata?.candidatesTokenCount ?? 0,
@@ -570,182 +590,238 @@ export class GoogleAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Google API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("Google", response);
     }
 
     const reader = response.body?.getReader();
     if (!reader) throw new Error("No response body");
 
     const decoder = new TextDecoder();
-    let buffer = "";
+    let messageId = `google-${Date.now()}`;
+    let latestUsage: ChatCompletionChunk["usage"];
+    const startedChoices = new Set<number>();
+    const finishedChoices = new Set<number>();
+    const choicesWithToolCalls = new Set<number>();
+    const nextToolCallIndex = new Map<number, number>();
 
-    // Google streams JSON objects (each chunk is a separate JSON object, sometimes wrapped in arrays).
-    // Extract each complete top-level JSON object from the buffer and yield it.
-    function* processBuffer(): Generator<ChatCompletionChunk> {
-      while (buffer.length > 0) {
-        const trimmed = buffer.trimStart();
-        if (trimmed.length === 0) {
-          buffer = "";
-          break;
-        }
+    function* processPayload(jsonText: string): Generator<ChatCompletionChunk> {
+      if (!jsonText || jsonText === "[DONE]") return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (err) {
+        throw new SyntaxError(
+          `Failed to parse Google stream chunk: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
 
-        const ch = trimmed[0];
-        if (ch !== "[" && ch !== "{") {
-          // Unexpected leading character; drop it to avoid infinite loop
-          buffer = trimmed.slice(1);
-          continue;
-        }
-
-        // Find the matching closing bracket while respecting string nesting.
-        let depth = 0;
-        let inString = false;
-        let escaped = false;
-        let closeIdx = -1;
-        for (let i = 0; i < trimmed.length; i++) {
-          const c = trimmed[i];
-          if (inString) {
-            if (escaped) {
-              escaped = false;
-            } else if (c === "\\") {
-              escaped = true;
-            } else if (c === '"') {
-              inString = false;
-            }
-            continue;
-          }
-          if (c === '"') {
-            inString = true;
-          } else if (c === "{" || c === "[") {
-            depth++;
-          } else if (c === "}" || c === "]") {
-            depth--;
-            if (depth === 0) {
-              closeIdx = i;
-              break;
-            }
-          }
-        }
-
-        if (closeIdx === -1) {
-          // Incomplete JSON; wait for more data
-          buffer = trimmed;
-          break;
-        }
-
-        const jsonText = trimmed.slice(0, closeIdx + 1);
-        buffer = trimmed.slice(closeIdx + 1);
-
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(jsonText);
-        } catch (err) {
-          // Skip non-fatal parse failures to keep the stream alive on a bad chunk
-          console.warn(
-            `Failed to parse Google stream chunk, skipping: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-          continue;
-        }
-
-        const chunks = Array.isArray(parsed) ? parsed : [parsed];
-        for (const chunk of chunks) {
-          const c = chunk as {
-            id?: string;
-            candidates?: {
-              content?: {
-                parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[];
-              };
-              finishReason?: string;
-            }[];
-            usageMetadata?: {
-              promptTokenCount?: number;
-              candidatesTokenCount?: number;
-              totalTokenCount?: number;
+      const chunks = Array.isArray(parsed) ? parsed : [parsed];
+      for (const chunk of chunks) {
+        const c = chunk as {
+          id?: string;
+          candidates?: {
+            index?: number;
+            content?: {
+              parts?: { text?: string; functionCall?: { name: string; args?: unknown } }[];
             };
+            finishReason?: string;
+          }[];
+          usageMetadata?: {
+            promptTokenCount?: number;
+            candidatesTokenCount?: number;
+            totalTokenCount?: number;
           };
-          const candidate = c.candidates?.[0];
-          const text = candidate?.content?.parts?.find(
-            (part) => typeof part.text === "string",
-          )?.text;
-          if (text !== undefined) {
+        };
+        if (c.id) messageId = c.id;
+        for (const [candidateIndex, candidate] of (c.candidates ?? []).entries()) {
+          const choiceIndex = candidate.index ?? candidateIndex;
+          if (!startedChoices.has(choiceIndex)) {
+            startedChoices.add(choiceIndex);
             yield {
-              id: c.id ?? `google-${Date.now()}`,
+              id: messageId,
               model: request.model,
               choices: [
                 {
-                  index: 0,
-                  delta: { content: text },
-                  finish_reason: candidate?.finishReason ?? null,
+                  index: choiceIndex,
+                  delta: { role: "assistant", content: "" },
+                  finish_reason: null,
                 },
               ],
             };
           }
-          const functionCall = candidate?.content?.parts?.find(
-            (part) => part.functionCall,
-          )?.functionCall;
-          if (functionCall?.name) {
-            yield {
-              id: c.id ?? `google-${Date.now()}`,
-              model: request.model,
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: [
-                      {
-                        index: 0,
-                        id: "call_0",
-                        type: "function",
-                        function: {
-                          name: functionCall.name,
-                          arguments: JSON.stringify(functionCall.args ?? {}),
-                        },
-                      },
-                    ],
+
+          for (const part of candidate.content?.parts ?? []) {
+            if (typeof part.text === "string") {
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [
+                  {
+                    index: choiceIndex,
+                    delta: { content: part.text },
+                    finish_reason: null,
                   },
-                  finish_reason: "tool_calls",
+                ],
+              };
+            }
+
+            const functionCall = part.functionCall;
+            if (functionCall?.name) {
+              const toolIndex = nextToolCallIndex.get(choiceIndex) ?? 0;
+              nextToolCallIndex.set(choiceIndex, toolIndex + 1);
+              choicesWithToolCalls.add(choiceIndex);
+              const toolCallId = createToolCallId();
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [
+                  {
+                    index: choiceIndex,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: toolIndex,
+                          id: toolCallId,
+                          type: "function",
+                          function: { name: functionCall.name, arguments: "" },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              };
+              yield {
+                id: messageId,
+                model: request.model,
+                choices: [
+                  {
+                    index: choiceIndex,
+                    delta: {
+                      tool_calls: [
+                        {
+                          index: toolIndex,
+                          function: {
+                            arguments: JSON.stringify(functionCall.args ?? {}),
+                          },
+                        },
+                      ],
+                    },
+                    finish_reason: null,
+                  },
+                ],
+              };
+            }
+          }
+
+          if (candidate.finishReason && !finishedChoices.has(choiceIndex)) {
+            finishedChoices.add(choiceIndex);
+            yield {
+              id: messageId,
+              model: request.model,
+              choices: [
+                {
+                  index: choiceIndex,
+                  delta: {},
+                  finish_reason: toOpenAIFinishReason(
+                    candidate.finishReason,
+                    choicesWithToolCalls.has(choiceIndex),
+                  ),
                 },
               ],
             };
           }
-          if (c.usageMetadata) {
-            yield {
-              id: c.id ?? `google-${Date.now()}`,
-              model: request.model,
-              choices: [],
-              usage: {
-                prompt_tokens: c.usageMetadata.promptTokenCount ?? 0,
-                completion_tokens: c.usageMetadata.candidatesTokenCount ?? 0,
-                total_tokens: c.usageMetadata.totalTokenCount ?? 0,
-              },
-            };
-          }
+        }
+        if (c.usageMetadata) {
+          latestUsage = {
+            prompt_tokens: c.usageMetadata.promptTokenCount ?? 0,
+            completion_tokens: c.usageMetadata.candidatesTokenCount ?? 0,
+            total_tokens: c.usageMetadata.totalTokenCount ?? 0,
+          };
         }
       }
     }
 
+    const parser = new SseBlockParser();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      yield* processBuffer();
+      for (const block of parser.push(decoder.decode(value, { stream: true }))) {
+        yield* processPayload(block.data);
+      }
     }
 
-    // Flush any remaining bytes from the decoder and process any trailing JSON
-    buffer += decoder.decode();
-    yield* processBuffer();
+    for (const block of [...parser.push(decoder.decode()), ...parser.end()]) {
+      yield* processPayload(block.data);
+    }
+    for (const choiceIndex of startedChoices) {
+      if (finishedChoices.has(choiceIndex)) continue;
+      yield {
+        id: messageId,
+        model: request.model,
+        choices: [
+          {
+            index: choiceIndex,
+            delta: {},
+            finish_reason: choicesWithToolCalls.has(choiceIndex) ? "tool_calls" : "stop",
+          },
+        ],
+      };
+    }
+    if (latestUsage) {
+      yield { id: messageId, model: request.model, choices: [], usage: latestUsage };
+    }
   }
 
   listModels(): Model[] {
     return MODELS;
   }
+}
+
+const maxGoogleSchemaSanitizationDepth = 5;
+
+function sanitizeGoogleResponseSchema(schema: unknown, depth = 0): unknown {
+  if (depth >= maxGoogleSchemaSanitizationDepth || !isJsonObject(schema)) {
+    return schema;
+  }
+
+  const sanitized: Record<string, unknown> = { ...schema };
+  delete sanitized.title;
+  delete sanitized.$schema;
+
+  if (sanitized.type === "object") {
+    delete sanitized.additionalProperties;
+
+    if (isJsonObject(sanitized.properties)) {
+      sanitized.properties = Object.fromEntries(
+        Object.entries(sanitized.properties).map(([name, propertySchema]) => [
+          name,
+          sanitizeGoogleResponseSchema(propertySchema, depth + 1),
+        ]),
+      );
+    }
+
+    for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+      if (Array.isArray(sanitized[keyword])) {
+        sanitized[keyword] = sanitized[keyword].map((nestedSchema) =>
+          sanitizeGoogleResponseSchema(nestedSchema, depth + 1),
+        );
+      }
+    }
+  } else if (sanitized.type === "array" && isJsonObject(sanitized.items)) {
+    sanitized.items = sanitizeGoogleResponseSchema(sanitized.items, depth + 1);
+  }
+
+  return sanitized;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function contentToText(content: ChatMessage["content"]): string {
@@ -766,6 +842,17 @@ function safeJsonObject(value: string): Record<string, unknown> {
   } catch {
     return { content: value };
   }
+}
+
+function googleToolResult(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) return { result: parsed };
+    if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+  } catch {
+    // Plain text tool results are wrapped below.
+  }
+  return { content: value };
 }
 
 function dataUrlToInlineData(
@@ -789,4 +876,20 @@ function toGoogleToolConfig(toolChoice: ChatCompletionRequest["tool_choice"]): u
     };
   }
   return undefined;
+}
+
+function toOpenAIFinishReason(reason: string | undefined, hasToolCalls: boolean): string {
+  if (hasToolCalls) return "tool_calls";
+  if (reason === "MAX_TOKENS") return "length";
+  if (
+    reason === "SAFETY" ||
+    reason === "RECITATION" ||
+    reason === "BLOCKLIST" ||
+    reason === "PROHIBITED_CONTENT" ||
+    reason === "SPII" ||
+    reason === "OTHER"
+  ) {
+    return "content_filter";
+  }
+  return "stop";
 }

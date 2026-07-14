@@ -70,12 +70,11 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     return (await response.json()) as ChatCompletionResponse;
@@ -89,12 +88,11 @@ export class CustomOpenAICompatibleAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? buildOpenAICompatibleRequestBody(request, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     const reader = response.body?.getReader();

@@ -62,12 +62,27 @@ async function validatePlaygroundApiKeyToken(rawToken: string) {
   }
 }
 
-async function authenticateApiKey(c: Context, next: Next, key: string) {
+function openAIAuthError(c: Context, message: string) {
+  return c.json(
+    {
+      error: {
+        message,
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_api_key",
+      },
+    },
+    401,
+  );
+}
+
+async function authenticateApiKey(c: Context, next: Next, key: string, openAIError = false) {
   const apiKey = key.startsWith(playgroundTokenPrefix)
     ? await validatePlaygroundApiKeyToken(key)
     : await validateApiKey(key);
 
   if (!apiKey) {
+    if (openAIError) return openAIAuthError(c, "invalid or revoked API key");
     return c.json({ error: "invalid or revoked API key" }, 401);
   }
 
@@ -75,6 +90,9 @@ async function authenticateApiKey(c: Context, next: Next, key: string) {
   c.set("apiKeyId", apiKey.id);
   c.set("apiKeyName", apiKey.name);
   c.set("apiKeySpendLimitUsd", apiKey.spendLimitUsd ?? apiKey.ownerSpendLimitUsd);
+  c.set("apiKeyOwnSpendLimitUsd", apiKey.spendLimitUsd);
+  c.set("apiKeyOwnerId", apiKey.createdBy);
+  c.set("apiKeyOwnerSpendLimitUsd", apiKey.ownerSpendLimitUsd);
   c.set("apiKeyAllowAllModels", apiKey.allowAllModels);
   c.set("apiKeyIncludeFutureModels", apiKey.includeFutureModels);
   c.set("apiKeyAllowedModelIds", apiKey.allowedModelIds);
@@ -100,6 +118,12 @@ export async function apiKeyAuth(c: Context, next: Next) {
   }
 
   return authenticateApiKey(c, next, key);
+}
+
+export async function openAIApiKeyAuth(c: Context, next: Next) {
+  const key = readBearerApiKey(c);
+  if (!key) return openAIAuthError(c, "missing or invalid Authorization header");
+  return authenticateApiKey(c, next, key, true);
 }
 
 export async function apiKeyAuthWithAnthropicHeader(c: Context, next: Next) {

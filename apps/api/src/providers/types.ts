@@ -60,7 +60,7 @@ export type ChatResponseFormat =
       json_schema: {
         name: string;
         description?: string;
-        schema?: Record<string, unknown>;
+        schema: Record<string, unknown>;
         strict?: boolean;
       };
     };
@@ -390,6 +390,12 @@ export {
 export interface ProviderCapabilities {
   tools: boolean;
   structuredOutput: boolean;
+  /**
+   * Response-format types implemented by a native request translator. An
+   * omitted value means the adapter can pass provider-specific extensions
+   * through to an OpenAI-compatible upstream.
+   */
+  responseFormats?: readonly string[];
   multimodalInput: boolean;
   audioOutput: boolean;
   reasoning: boolean;
@@ -453,6 +459,7 @@ export interface ProviderCapabilities {
 export type ProviderRequestOptions = {
   headers?: Record<string, string>;
   rawBody?: string;
+  signal?: AbortSignal;
 };
 
 export function mergeProviderRequestHeaders(
