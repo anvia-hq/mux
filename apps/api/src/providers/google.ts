@@ -447,6 +447,10 @@ export class GoogleAdapter implements ProviderAdapter {
         },
       };
     }
+    if (part.type === "video_url") {
+      const inlineData = dataUrlToInlineData(part.video_url.url);
+      return inlineData ?? { fileData: { fileUri: part.video_url.url } };
+    }
     return part.file.file_data
       ? {
           inlineData: {
@@ -519,6 +523,7 @@ export class GoogleAdapter implements ProviderAdapter {
       body: options?.rawBody ?? this.buildRequestBody(request, false),
       signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       await throwOpenAICompatibleError("Google", response);
@@ -592,6 +597,7 @@ export class GoogleAdapter implements ProviderAdapter {
       body: options?.rawBody ?? this.buildRequestBody(request, true),
       signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       await throwOpenAICompatibleError("Google", response);
@@ -747,34 +753,43 @@ export class GoogleAdapter implements ProviderAdapter {
     }
 
     const parser = new SseBlockParser();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      for (const block of parser.push(decoder.decode(value, { stream: true }))) {
+        for (const block of parser.push(decoder.decode(value, { stream: true }))) {
+          yield* processPayload(block.data);
+        }
+      }
+
+      for (const block of [...parser.push(decoder.decode()), ...parser.end()]) {
         yield* processPayload(block.data);
       }
-    }
-
-    for (const block of [...parser.push(decoder.decode()), ...parser.end()]) {
-      yield* processPayload(block.data);
-    }
-    for (const choiceIndex of startedChoices) {
-      if (finishedChoices.has(choiceIndex)) continue;
-      yield {
-        id: messageId,
-        model: request.model,
-        choices: [
-          {
-            index: choiceIndex,
-            delta: {},
-            finish_reason: choicesWithToolCalls.has(choiceIndex) ? "tool_calls" : "stop",
-          },
-        ],
-      };
-    }
-    if (latestUsage) {
-      yield { id: messageId, model: request.model, choices: [], usage: latestUsage };
+      for (const choiceIndex of startedChoices) {
+        if (finishedChoices.has(choiceIndex)) continue;
+        yield {
+          id: messageId,
+          model: request.model,
+          choices: [
+            {
+              index: choiceIndex,
+              delta: {},
+              finish_reason: choicesWithToolCalls.has(choiceIndex) ? "tool_calls" : "stop",
+            },
+          ],
+        };
+      }
+      if (latestUsage) {
+        yield { id: messageId, model: request.model, choices: [], usage: latestUsage };
+      }
+    } finally {
+      try {
+        await reader.cancel();
+      } catch {
+        // The response body may already be closed or aborted.
+      }
+      reader.releaseLock();
     }
   }
 

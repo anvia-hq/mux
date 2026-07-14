@@ -66,7 +66,116 @@ describe("CustomOpenAICompatibleAdapter", () => {
     expect(adapter.capabilities.audioTranscriptionsApi).toBe(true);
     expect(adapter.capabilities.audioTranslationsApi).toBe(true);
     expect(adapter.capabilities.audioSpeechApi).toBe(true);
-    expect(adapter.capabilities.responsesApi).toBe(false);
+    expect(adapter.capabilities.responsesTransport).toBeUndefined();
+  });
+
+  it("advertises explicit native and chat-converted Responses modes", () => {
+    const native = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1",
+      models,
+      responsesMode: "native",
+    });
+    const viaChat = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1",
+      models,
+      responsesMode: "via_chat",
+    });
+
+    expect(native.capabilities.responsesTransport).toBe("native");
+    expect(viaChat.capabilities.responsesTransport).toBe("chat");
+  });
+
+  it("uses the configured native Responses endpoint and reports upstream metadata", async () => {
+    const upstream = Response.json(
+      {
+        id: "resp_1",
+        object: "response",
+        status: "completed",
+        model: "embed",
+        output: [],
+      },
+      { status: 201, headers: { "x-upstream": "yes" } },
+    );
+    mockFetch.mockResolvedValueOnce(upstream);
+    const onResponse = vi.fn();
+    const controller = new AbortController();
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1",
+      models,
+      responsesMode: "native",
+      responsesEndpoint: "https://responses.example/api/responses",
+    });
+
+    const response = await adapter.createResponse(
+      { model: "embed", input: "hello" },
+      { signal: controller.signal, onResponse },
+    );
+
+    expect(response.id).toBe("resp_1");
+    expect(onResponse).toHaveBeenCalledWith(upstream);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://responses.example/api/responses",
+      expect.objectContaining({
+        method: "POST",
+        signal: controller.signal,
+      }),
+    );
+  });
+
+  it("derives the native Responses endpoint from a chat-completions URL", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        id: "resp_1",
+        object: "response",
+        status: "completed",
+        model: "embed",
+        output: [],
+      }),
+    );
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1/chat/completions",
+      models,
+      responsesMode: "native",
+    });
+
+    await adapter.createResponse({ model: "embed", input: "hello" });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://custom.example/v1/responses",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("supports native input-token and input-item operations with endpoint query parameters", async () => {
+    mockFetch
+      .mockResolvedValueOnce(Response.json({ object: "response.input_tokens", input_tokens: 3 }))
+      .mockResolvedValueOnce(Response.json({ object: "list", data: [] }));
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1",
+      models,
+      responsesMode: "native",
+      responsesEndpoint: "https://responses.example/api/responses?api-version=preview",
+    });
+
+    await adapter.countResponseInputTokens?.({ model: "embed", input: "hello" });
+    await adapter.listResponseInputItems?.("resp/1", { limit: "10" });
+
+    expect(mockFetch.mock.calls[0]?.[0]).toBe(
+      "https://responses.example/api/responses/input_tokens?api-version=preview",
+    );
+    expect(String(mockFetch.mock.calls[1]?.[0])).toBe(
+      "https://responses.example/api/responses/resp%2F1/input_items?api-version=preview&limit=10",
+    );
   });
 
   it("creates embeddings through the derived OpenAI-compatible endpoint", async () => {

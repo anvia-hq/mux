@@ -804,20 +804,22 @@ function ServiceDocumentationContent() {
           <Section id="responses" title="Responses API">
             <p>
               Use <code>POST /v1/responses</code> for OpenAI Responses-compatible requests. This
-              surface accepts any direct provider model whose adapter advertises{" "}
-              <code>responsesApi: true</code> (OpenAI and Azure Cognitive Services today), and any
-              fallback group that includes at least one Responses-capable target. Both non-streaming
-              and <code>stream: true</code> requests are supported.
+              surface accepts native Responses providers, chat-converted providers, and fallback
+              groups that include an eligible target. OpenAI and Azure Cognitive Services use native
+              transport; Google uses chat conversion. Custom providers can explicitly enable either
+              mode from the Providers page. Both non-streaming and <code>stream: true</code>{" "}
+              requests are supported.
             </p>
             <CodeTabs samples={responseSamples} />
             <div className="grid gap-2 rounded-md border p-4">
               <div className="text-sm font-medium text-foreground">Current support</div>
               <div className="grid gap-2">
                 {[
-                  "Direct provider models with responsesApi: true (OpenAI, Azure Cognitive Services).",
-                  "Fallback groups whose first Responses-capable target is selected automatically.",
-                  "Streaming Responses events are passed through unchanged from the upstream provider.",
-                  "Background responses are tracked locally, polled by the worker, and can be retrieved, cancelled, or deleted by id.",
+                  "Native transport for OpenAI, Azure Cognitive Services, and explicitly configured custom providers.",
+                  "Stateless Responses requests can be translated through Google or a custom chat-completions provider.",
+                  "Fallback groups use the configured priority and weight, with retryable failures moving to another eligible target.",
+                  "Native streams pass through unchanged; chat streams are converted into Responses lifecycle events.",
+                  "Background mode requires native creation and retrieval support; spend is reserved until the worker reaches a terminal status.",
                 ].map((item) => (
                   <div key={item} className="flex gap-2">
                     <span className="mt-2 size-1.5 shrink-0 rounded-full bg-muted-foreground" />
@@ -832,9 +834,9 @@ function ServiceDocumentationContent() {
               Locally tracked background responses are returned from Mux first; other ids are
               retrieved from the upstream provider's Responses API. Query params such as{" "}
               <code>include[]</code> and <code>include_obfuscation</code> are forwarded verbatim.
-              Upstream errors are returned in OpenAI's{" "}
+              Upstream errors are sanitized and returned in OpenAI's{" "}
               <code>{`{ error: { message, type, param, code } }`}</code> shape with the original
-              status code.
+              status code and a request id.
             </p>
             <CodeTabs samples={responseRetrieveSamples} />
             <p>
@@ -856,10 +858,11 @@ function ServiceDocumentationContent() {
               Compact a long input window with <code>POST /v1/responses/compact</code>. The endpoint
               takes <code>model</code> (required) and <code>input</code> (optional, string or array
               of input items) and returns a compacted window with a token-usage block. The gateway
-              tries the resolved provider (and falls through to Azure Cognitive Services on a 404)
-              and bills the call against the API key the same way <code>POST /v1/responses</code>{" "}
-              does. Pass the returned <code>output</code> array into your next{" "}
-              <code>POST /v1/responses</code> call verbatim; do not prune it.
+              tries native compaction-capable targets from the resolved model or fallback group and
+              can fail over before a response is returned. Spend-limited keys reserve the maximum
+              liability before the upstream call and settle from actual usage. Pass the returned{" "}
+              <code>output</code> array into your next <code>POST /v1/responses</code> call
+              verbatim; do not prune it.
             </p>
             <CodeTabs samples={responseCompactSamples} />
             <p>
@@ -877,9 +880,8 @@ function ServiceDocumentationContent() {
               <code>POST /v1/responses/input_tokens</code>. The body shape matches{" "}
               <code>POST /v1/responses</code> (model, input, optional instructions and tools) and
               the response is <code>{`{ object: "response.input_tokens", input_tokens }`}</code>.
-              The gateway forwards the body verbatim, tries OpenAI first, and falls through to Azure
-              Cognitive Services on a 404. This is a free dry-run; the call does not bill the API
-              key and is not gated by spend limits.
+              The gateway uses native input-token support on eligible targets from the resolved
+              model or fallback group. This is a free dry-run; the call does not bill the API key.
             </p>
             <CodeTabs samples={responseInputTokensSamples} />
           </Section>

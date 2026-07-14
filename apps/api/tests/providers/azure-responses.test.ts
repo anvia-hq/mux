@@ -140,6 +140,20 @@ describe("AzureResponsesClient", () => {
     expect(mockFetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET" });
   });
 
+  it("forwards repeated retrieval query parameters", async () => {
+    mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_1" }));
+    const client = makeClient("https://example.openai.azure.com");
+
+    await client.getResponse("resp_1", {
+      include: ["reasoning.encrypted_content", "message.input_image.image_url"],
+      include_obfuscation: "true",
+    });
+
+    expect(mockFetch.mock.calls[0]?.[0]).toBe(
+      "https://example.openai.azure.com/openai/v1/responses/resp_1?api-version=2025-04-01-preview&include=reasoning.encrypted_content&include=message.input_image.image_url&include_obfuscation=true",
+    );
+  });
+
   it("returns the upstream body on getResponse", async () => {
     mockFetch.mockResolvedValueOnce(Response.json({ id: "resp_1", status: "completed" }));
     const client = makeClient("https://example.openai.azure.com");

@@ -153,6 +153,13 @@ Important production settings:
 | `MUX_RESPONSES_CACHE_TTL_SECONDS` | TTL for cached response retrieval bodies. Defaults to `300`. |
 | `AZURE_OPENAI_RESPONSES_ENDPOINT` | Azure Responses endpoint used by worker polling for Azure background jobs. |
 | `BACKGROUND_POLL_WORKER_CONCURRENCY` | Background response poll worker concurrency. Defaults to `5`. |
+| `RESPONSES_RETRY_COUNT` | Retry/failover attempts for `/v1/responses`. Defaults to `2`. |
+| `RESPONSES_RETRY_STATUS_CODES` | Retryable upstream HTTP statuses and ranges. |
+| `RESPONSES_FIRST_BYTE_TIMEOUT_MS` | Maximum wait for the first Responses stream event. |
+| `RESPONSES_STREAM_IDLE_TIMEOUT_MS` | Maximum idle time between Responses stream events. |
+| `RESPONSES_NON_STREAM_TIMEOUT_MS` | Timeout for non-streaming Responses operations. |
+| `RESPONSES_MAX_REQUEST_BODY_MB` | Maximum decompressed Responses request size. Defaults to `128`. |
+| `RESPONSES_RATE_LIMIT_*` | Optional per-key fixed-window total and successful Responses limits. |
 
 ## Current Boundaries
 

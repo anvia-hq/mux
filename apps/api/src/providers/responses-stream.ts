@@ -27,11 +27,18 @@ export type ResponseStreamEvent =
       content_index: number;
       delta: string;
     }
+  | {
+      type: "response.reasoning_summary_text.delta" | "response.function_call_arguments.delta";
+      delta: string;
+      output_index?: number;
+    }
   | { type: "response.completed"; response: ResponseObject }
+  | { type: "response.incomplete"; response: ResponseObject }
   | { type: "response.error"; code?: string | null; message: string; param?: string | null };
 
 export const TERMINAL_EVENT_TYPES: ReadonlySet<ResponseStreamEvent["type"]> = new Set([
   "response.completed",
+  "response.incomplete",
   "response.error",
 ]);
 
@@ -43,7 +50,7 @@ export async function findCompletedUsage(
   stream: AsyncIterable<ResponseStreamEvent>,
 ): Promise<ResponseUsage | undefined> {
   for await (const event of stream) {
-    if (event.type === "response.completed") {
+    if (event.type === "response.completed" || event.type === "response.incomplete") {
       return event.response.usage;
     }
   }
@@ -86,7 +93,8 @@ export function parseResponseStreamBlock(block: SseBlock): ResponseStreamEvent |
   switch (type) {
     case "response.created":
     case "response.in_progress":
-    case "response.completed": {
+    case "response.completed":
+    case "response.incomplete": {
       const response = payload.response as ResponseObject | undefined;
       if (!response) return null;
       return { type, response };
@@ -118,6 +126,15 @@ export function parseResponseStreamBlock(block: SseBlock): ResponseStreamEvent |
         output_index: payload.output_index,
         content_index: payload.content_index,
         delta: payload.delta,
+      };
+    }
+    case "response.reasoning_summary_text.delta":
+    case "response.function_call_arguments.delta": {
+      if (typeof payload.delta !== "string") return null;
+      return {
+        type,
+        delta: payload.delta,
+        output_index: typeof payload.output_index === "number" ? payload.output_index : undefined,
       };
     }
     case "response.error": {

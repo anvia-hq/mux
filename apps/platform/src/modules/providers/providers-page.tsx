@@ -40,6 +40,7 @@ import {
   useDeleteProviderKeyMutation,
   useProviderCatalogQuery,
   useSetProviderKeyMutation,
+  useUpdateCustomProviderMutation,
 } from "./hooks";
 import {
   parsePricingTierDrafts,
@@ -51,7 +52,7 @@ type ProviderFilter = "all" | "configured" | "needs-key" | "custom";
 
 type ProviderEditor =
   | {
-      mode: "key" | "remove-key" | "delete-custom";
+      mode: "key" | "remove-key" | "delete-custom" | "custom-responses";
       provider: ProviderCatalogRow;
     }
   | { mode: "custom-create" }
@@ -79,6 +80,8 @@ type CustomProviderDraft = {
   name: string;
   apiBase: string;
   apiKey: string;
+  responsesMode: "disabled" | "native" | "via_chat";
+  responsesEndpoint: string;
   models: ModelDraft[];
 };
 
@@ -123,6 +126,8 @@ function newCustomProviderDraft(): CustomProviderDraft {
     name: "",
     apiBase: "",
     apiKey: "",
+    responsesMode: "disabled",
+    responsesEndpoint: "",
     models: [newModelDraft()],
   };
 }
@@ -215,6 +220,7 @@ export function ProvidersList() {
   const setKey = useSetProviderKeyMutation();
   const deleteKey = useDeleteProviderKeyMutation();
   const createCustom = useCreateCustomProviderMutation();
+  const updateCustom = useUpdateCustomProviderMutation();
   const deleteCustom = useDeleteCustomProviderMutation();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ProviderFilter>("all");
@@ -251,7 +257,11 @@ export function ProvidersList() {
   const needsKeyCount = allProviders.filter((provider) => !provider.configured).length;
   const customCount = allProviders.filter((provider) => provider.type === "custom").length;
   const busy =
-    setKey.isPending || deleteKey.isPending || createCustom.isPending || deleteCustom.isPending;
+    setKey.isPending ||
+    deleteKey.isPending ||
+    createCustom.isPending ||
+    updateCustom.isPending ||
+    deleteCustom.isPending;
 
   const closeEditor = () => {
     setEditor(null);
@@ -261,6 +271,7 @@ export function ProvidersList() {
     setKey.reset();
     deleteKey.reset();
     createCustom.reset();
+    updateCustom.reset();
     deleteCustom.reset();
   };
 
@@ -270,7 +281,15 @@ export function ProvidersList() {
     setKey.reset();
     deleteKey.reset();
     createCustom.reset();
+    updateCustom.reset();
     deleteCustom.reset();
+    if (nextEditor?.mode === "custom-responses") {
+      setCustomDraft({
+        ...newCustomProviderDraft(),
+        responsesMode: nextEditor.provider.responsesMode ?? "disabled",
+        responsesEndpoint: nextEditor.provider.responsesEndpoint ?? "",
+      });
+    }
     setEditor(nextEditor);
   };
 
@@ -291,6 +310,20 @@ export function ProvidersList() {
   const onDeleteCustom = async () => {
     if (editor?.mode !== "delete-custom") return;
     await deleteCustom.mutateAsync(editor.provider.provider);
+    closeEditor();
+  };
+
+  const onUpdateCustomResponses = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (editor?.mode !== "custom-responses") return;
+    await updateCustom.mutateAsync({
+      id: editor.provider.provider,
+      responsesMode: customDraft.responsesMode,
+      responsesEndpoint:
+        customDraft.responsesMode === "native" && customDraft.responsesEndpoint.trim()
+          ? customDraft.responsesEndpoint.trim()
+          : null,
+    });
     closeEditor();
   };
 
@@ -316,6 +349,11 @@ export function ProvidersList() {
       name,
       apiBase,
       apiKey: customDraft.apiKey,
+      responsesMode: customDraft.responsesMode,
+      responsesEndpoint:
+        customDraft.responsesMode === "native" && customDraft.responsesEndpoint.trim()
+          ? customDraft.responsesEndpoint.trim()
+          : undefined,
       models,
     });
     closeEditor();
@@ -403,6 +441,7 @@ export function ProvidersList() {
                     busy={busy || (query.isFetching && !query.data)}
                     onEditKey={() => openEditor({ mode: "key", provider })}
                     onRemoveKey={() => openEditor({ mode: "remove-key", provider })}
+                    onEditResponses={() => openEditor({ mode: "custom-responses", provider })}
                     onDeleteCustom={() => openEditor({ mode: "delete-custom", provider })}
                   />
                 ))
@@ -436,6 +475,16 @@ export function ProvidersList() {
               error={deleteCustom.error?.message ?? null}
               onCancel={closeEditor}
               onConfirm={onDeleteCustom}
+            />
+          ) : editor?.mode === "custom-responses" ? (
+            <CustomResponsesDialog
+              provider={editor.provider}
+              draft={customDraft}
+              setDraft={setCustomDraft}
+              busy={busy}
+              error={updateCustom.error?.message ?? null}
+              onCancel={closeEditor}
+              onSubmit={onUpdateCustomResponses}
             />
           ) : editor?.mode === "remove-key" ? (
             <RemoveKeyDialog
@@ -535,12 +584,14 @@ function ProviderTableRow({
   busy,
   onEditKey,
   onRemoveKey,
+  onEditResponses,
   onDeleteCustom,
 }: {
   provider: ProviderCatalogRow;
   busy?: boolean;
   onEditKey: () => void;
   onRemoveKey: () => void;
+  onEditResponses: () => void;
   onDeleteCustom: () => void;
 }) {
   const label = providerLabel(provider.provider, provider.name);
@@ -572,6 +623,13 @@ function ProviderTableRow({
           {provider.type === "custom" ? (
             <Badge variant="outline" className="rounded-md">
               Custom
+            </Badge>
+          ) : null}
+          {provider.type === "custom" &&
+          provider.responsesMode &&
+          provider.responsesMode !== "disabled" ? (
+            <Badge variant="secondary" className="rounded-md">
+              Responses: {provider.responsesMode === "via_chat" ? "chat bridge" : "native"}
             </Badge>
           ) : null}
         </div>
@@ -625,6 +683,17 @@ function ProviderTableRow({
               type="button"
               size="sm"
               variant="outline"
+              onClick={onEditResponses}
+              disabled={busy}
+            >
+              Responses
+            </Button>
+          ) : null}
+          {provider.type === "custom" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
               aria-label={`Delete ${label} provider`}
               onClick={onDeleteCustom}
               disabled={busy}
@@ -636,6 +705,87 @@ function ProviderTableRow({
         </div>
       </TableCell>
     </TableRow>
+  );
+}
+
+function CustomResponsesDialog({
+  provider,
+  draft,
+  setDraft,
+  busy,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  provider: ProviderCatalogRow;
+  draft: CustomProviderDraft;
+  setDraft: React.Dispatch<React.SetStateAction<CustomProviderDraft>>;
+  busy: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <form onSubmit={onSubmit}>
+      <DialogHeader>
+        <DialogTitle>Responses support for {provider.name}</DialogTitle>
+        <DialogDescription>
+          Choose how this provider handles requests sent to the Responses API.
+        </DialogDescription>
+      </DialogHeader>
+      <div className="grid gap-4 py-2">
+        <div className="grid gap-2">
+          <Label htmlFor="edit-custom-provider-responses-mode">Responses API support</Label>
+          <NativeSelect
+            id="edit-custom-provider-responses-mode"
+            value={draft.responsesMode}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                responsesMode: event.target.value as CustomProviderDraft["responsesMode"],
+              }))
+            }
+          >
+            <NativeSelectOption value="disabled">Disabled</NativeSelectOption>
+            <NativeSelectOption value="native">Native Responses endpoint</NativeSelectOption>
+            <NativeSelectOption value="via_chat">
+              Translate through chat completions
+            </NativeSelectOption>
+          </NativeSelect>
+        </div>
+        {draft.responsesMode === "native" ? (
+          <div className="grid gap-2">
+            <Label htmlFor="edit-custom-provider-responses-url">
+              Responses endpoint <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <Input
+              id="edit-custom-provider-responses-url"
+              type="url"
+              value={draft.responsesEndpoint}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  responsesEndpoint: event.target.value,
+                }))
+              }
+              placeholder="https://api.example.com/v1/responses"
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              Leave blank to derive it from the provider base URL.
+            </p>
+          </div>
+        ) : null}
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      </div>
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={onCancel} disabled={busy}>
+          Cancel
+        </Button>
+        <Button type="submit" disabled={busy}>
+          {busy ? "Saving..." : "Save Responses support"}
+        </Button>
+      </DialogFooter>
+    </form>
   );
 }
 
@@ -682,7 +832,7 @@ function CustomProviderForm({
       <DialogHeader>
         <DialogTitle>New custom provider</DialogTitle>
         <DialogDescription>
-          Add an OpenAI-compatible chat completions provider and the models it exposes.
+          Add an OpenAI-compatible provider and the models it exposes.
         </DialogDescription>
       </DialogHeader>
       <div className="grid max-h-[70dvh] gap-4 overflow-y-auto py-2 pr-1">
@@ -736,6 +886,51 @@ function CustomProviderForm({
               required
             />
           </div>
+          <div className="grid gap-2 md:col-span-2">
+            <Label htmlFor="custom-provider-responses-mode">Responses API support</Label>
+            <NativeSelect
+              id="custom-provider-responses-mode"
+              value={draft.responsesMode}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  responsesMode: event.target.value as CustomProviderDraft["responsesMode"],
+                }))
+              }
+            >
+              <NativeSelectOption value="disabled">Disabled</NativeSelectOption>
+              <NativeSelectOption value="native">Native Responses endpoint</NativeSelectOption>
+              <NativeSelectOption value="via_chat">
+                Translate through chat completions
+              </NativeSelectOption>
+            </NativeSelect>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Native forwards Responses requests directly. Translation supports compatible,
+              stateless requests through the provider's chat completions endpoint.
+            </p>
+          </div>
+          {draft.responsesMode === "native" ? (
+            <div className="grid gap-2 md:col-span-2">
+              <Label htmlFor="custom-provider-responses-url">
+                Responses endpoint <span className="text-muted-foreground">(optional)</span>
+              </Label>
+              <Input
+                id="custom-provider-responses-url"
+                type="url"
+                value={draft.responsesEndpoint}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    responsesEndpoint: event.target.value,
+                  }))
+                }
+                placeholder="https://api.example.com/v1/responses"
+              />
+              <p className="text-xs leading-5 text-muted-foreground">
+                Leave blank to derive it from the provider base URL.
+              </p>
+            </div>
+          ) : null}
         </div>
 
         <div className="grid gap-3">

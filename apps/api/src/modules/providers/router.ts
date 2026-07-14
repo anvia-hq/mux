@@ -227,6 +227,8 @@ providersRouter.get("/catalog", async (c) => {
       updatedAt: key?.updatedAt ?? null,
       updater: key?.updater ?? null,
       apiBase: provider.apiBase,
+      responsesMode: (provider.responsesMode ?? "DISABLED").toLowerCase(),
+      responsesEndpoint: provider.responsesEndpoint,
       modelCount: provider.models.length,
     };
   });
@@ -282,6 +284,13 @@ providersRouter.post(
           id: body.id,
           name: body.name,
           apiBase: body.apiBase,
+          responsesMode:
+            body.responsesMode === "native"
+              ? "NATIVE"
+              : body.responsesMode === "via_chat"
+                ? "VIA_CHAT"
+                : "DISABLED",
+          responsesEndpoint: body.responsesEndpoint,
           createdBy: admin.id,
           models: { create: body.models.map(modelCreateData) },
         },
@@ -320,6 +329,8 @@ providersRouter.post(
           configured: true,
           lastFour: four,
           apiBase: provider.apiBase,
+          responsesMode: (provider.responsesMode ?? "DISABLED").toLowerCase(),
+          responsesEndpoint: provider.responsesEndpoint,
           modelCount: provider.models.length,
         },
       },
@@ -342,9 +353,44 @@ providersRouter.put(
       return c.json({ error: `custom provider not found: ${id}` }, 404);
     }
 
-    const data: { name?: string; apiBase?: string } = {};
+    const effectiveResponsesMode =
+      body.responsesMode ??
+      ((existing.responsesMode ?? "DISABLED").toLowerCase() as "disabled" | "native" | "via_chat");
+    if (body.responsesEndpoint && effectiveResponsesMode !== "native") {
+      return c.json(
+        {
+          error: {
+            message: "responsesEndpoint is only valid when responsesMode is native",
+            type: "invalid_request_error",
+            param: "responsesEndpoint",
+            code: "invalid_value",
+          },
+        },
+        400,
+      );
+    }
+
+    const data: {
+      name?: string;
+      apiBase?: string;
+      responsesMode?: "DISABLED" | "NATIVE" | "VIA_CHAT";
+      responsesEndpoint?: string | null;
+    } = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.apiBase !== undefined) data.apiBase = body.apiBase;
+    if (body.responsesMode !== undefined) {
+      data.responsesMode =
+        body.responsesMode === "native"
+          ? "NATIVE"
+          : body.responsesMode === "via_chat"
+            ? "VIA_CHAT"
+            : "DISABLED";
+    }
+    if (body.responsesEndpoint !== undefined) {
+      data.responsesEndpoint = body.responsesEndpoint;
+    } else if (body.responsesMode !== undefined && body.responsesMode !== "native") {
+      data.responsesEndpoint = null;
+    }
 
     const existingKey = await prisma.providerChannel.findFirst({
       where: { provider: id },
@@ -415,6 +461,8 @@ providersRouter.put(
         type: "custom",
         configured: Boolean(existingKey || body.apiKey),
         apiBase: provider.apiBase,
+        responsesMode: (provider.responsesMode ?? "DISABLED").toLowerCase(),
+        responsesEndpoint: provider.responsesEndpoint,
         modelCount: provider.models.length,
       },
     });

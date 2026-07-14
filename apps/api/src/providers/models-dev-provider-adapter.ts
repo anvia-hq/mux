@@ -36,7 +36,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 const nonHttpEndpointCapabilities: ProviderCapabilities = {
   ...openAICompatibleCapabilities,
-  responsesApi: false,
+  responsesTransport: undefined,
   embeddingsApi: false,
   moderationsApi: false,
   imageGenerationsApi: false,
@@ -85,7 +85,9 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
   }) {
     this.name = input.name;
     this.apiKey = input.apiKey;
-    this.capabilities = input.apiBase ? openAICompatibleCapabilities : nonHttpEndpointCapabilities;
+    this.capabilities = input.apiBase
+      ? { ...openAICompatibleCapabilities, responsesTransport: undefined }
+      : nonHttpEndpointCapabilities;
     this.chatCompletionsUrl = input.apiBase ? this.toChatCompletionsUrl(input.apiBase) : undefined;
     this.embeddingsUrl = input.apiBase
       ? this.toEndpointUrl(input.apiBase, "embeddings")

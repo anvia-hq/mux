@@ -308,21 +308,42 @@ const customProviderModelsSchema = z
     }
   });
 
-export const createCustomProviderSchema = z.object({
-  id: providerNameSchema.refine((id) => !isReservedProviderName(id), {
-    message: "provider id is reserved",
-  }),
-  name: z.string().trim().min(1).max(120),
-  apiBase: z
-    .string()
-    .trim()
-    .url()
-    .refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
-      message: "apiBase must be an http(s) URL",
+const responsesModeSchema = z.enum(["disabled", "native", "via_chat"]);
+const responsesEndpointSchema = z
+  .string()
+  .trim()
+  .url()
+  .refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
+    message: "responsesEndpoint must be an http(s) URL",
+  });
+
+export const createCustomProviderSchema = z
+  .object({
+    id: providerNameSchema.refine((id) => !isReservedProviderName(id), {
+      message: "provider id is reserved",
     }),
-  apiKey: z.string().min(8),
-  models: customProviderModelsSchema,
-});
+    name: z.string().trim().min(1).max(120),
+    apiBase: z
+      .string()
+      .trim()
+      .url()
+      .refine((value) => value.startsWith("http://") || value.startsWith("https://"), {
+        message: "apiBase must be an http(s) URL",
+      }),
+    apiKey: z.string().min(8),
+    responsesMode: responsesModeSchema.default("disabled"),
+    responsesEndpoint: responsesEndpointSchema.optional(),
+    models: customProviderModelsSchema,
+  })
+  .superRefine((input, ctx) => {
+    if (input.responsesEndpoint && input.responsesMode !== "native") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["responsesEndpoint"],
+        message: "responsesEndpoint is only valid when responsesMode is native",
+      });
+    }
+  });
 
 export const updateCustomProviderSchema = z
   .object({
@@ -336,14 +357,29 @@ export const updateCustomProviderSchema = z
       })
       .optional(),
     apiKey: z.string().min(8).optional(),
+    responsesMode: responsesModeSchema.optional(),
+    responsesEndpoint: responsesEndpointSchema.nullable().optional(),
   })
   .refine(
     (input) =>
-      input.name !== undefined || input.apiBase !== undefined || input.apiKey !== undefined,
+      input.name !== undefined ||
+      input.apiBase !== undefined ||
+      input.apiKey !== undefined ||
+      input.responsesMode !== undefined ||
+      input.responsesEndpoint !== undefined,
     {
       message: "at least one field must be provided",
     },
-  );
+  )
+  .superRefine((input, ctx) => {
+    if (input.responsesEndpoint && input.responsesMode && input.responsesMode !== "native") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["responsesEndpoint"],
+        message: "responsesEndpoint is only valid when responsesMode is native",
+      });
+    }
+  });
 
 export const replaceCustomProviderModelsSchema = z.object({
   models: customProviderModelsSchema,

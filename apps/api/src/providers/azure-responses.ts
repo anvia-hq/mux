@@ -8,6 +8,8 @@ import type {
 import { mergeProviderRequestHeaders } from "./types";
 import { openAICompatibleCapabilities } from "./chat-compat";
 import { AZURE_OPENAI_RESPONSES_API_VERSION } from "./models-dev-provider-adapter";
+import { streamTextResponseBody } from "./openai-compatible-stream";
+import { throwResponsesApiError } from "./responses-api-error";
 
 export type AzureResponsesQuery = Record<string, string | string[]>;
 
@@ -15,7 +17,7 @@ const REQUEST_TIMEOUT_MS = 60_000;
 
 export const azureCapabilities: ProviderCapabilities = {
   ...openAICompatibleCapabilities,
-  responsesApi: true,
+  responsesTransport: "native",
   embeddingsApi: false,
   moderationsApi: false,
   imageGenerationsApi: false,
@@ -65,12 +67,16 @@ export class AzureResponsesClient {
     return `${normalized}/openai/v1/responses?api-version=${encodeURIComponent(this.apiVersion)}`;
   }
 
-  private getResponsesItemUrl(id: string): string {
+  private getResponsesItemUrl(id: string, query?: AzureResponsesQuery): string {
     if (!this.endpoint) {
       throw new AzureResponsesEndpointNotConfiguredError(this.providerName);
     }
     const normalized = this.endpoint.replace(/\/$/, "");
-    return `${normalized}/openai/v1/responses/${encodeURIComponent(id)}?api-version=${encodeURIComponent(this.apiVersion)}`;
+    const params = new URLSearchParams({ "api-version": this.apiVersion });
+    for (const [key, value] of Object.entries(query ?? {})) {
+      for (const item of Array.isArray(value) ? value : [value]) params.append(key, item);
+    }
+    return `${normalized}/openai/v1/responses/${encodeURIComponent(id)}?${params.toString()}`;
   }
 
   private getResponsesCancelUrl(id: string): string {
@@ -143,12 +149,12 @@ export class AzureResponsesClient {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -162,38 +168,31 @@ export class AzureResponsesClient {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("No response body");
-
-    const decoder = new TextDecoder();
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      yield decoder.decode(value, { stream: true });
-    }
-
-    const tail = decoder.decode();
-    if (tail) yield tail;
+    yield* streamTextResponseBody(response);
   }
 
-  async getResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
-    const response = await fetch(this.getResponsesItemUrl(id), {
+  async getResponse(
+    id: string,
+    query?: AzureResponsesQuery,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
+    const response = await fetch(this.getResponsesItemUrl(id, query), {
       method: "GET",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -203,12 +202,12 @@ export class AzureResponsesClient {
     const response = await fetch(this.getResponsesItemUrl(id), {
       method: "DELETE",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -218,12 +217,12 @@ export class AzureResponsesClient {
     const response = await fetch(this.getResponsesCancelUrl(id), {
       method: "POST",
       headers: this.buildHeaders(options),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -237,12 +236,12 @@ export class AzureResponsesClient {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -256,12 +255,12 @@ export class AzureResponsesClient {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -275,12 +274,12 @@ export class AzureResponsesClient {
     const response = await fetch(this.getResponsesInputItemsUrl(id, query), {
       method: "GET",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.providerName} Responses API error: ${response.status} - ${error}`);
+      await throwResponsesApiError(this.providerName, response);
     }
 
     return (await response.json()) as ResponseObject;

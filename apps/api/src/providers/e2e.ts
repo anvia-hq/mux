@@ -41,7 +41,10 @@ const MODELS: Model[] = [
 
 export class E2eAdapter implements ProviderAdapter {
   readonly name = E2E_PROVIDER;
-  readonly capabilities = openAICompatibleCapabilities;
+  readonly capabilities = {
+    ...openAICompatibleCapabilities,
+    responsesTransport: "native" as const,
+  };
 
   constructor(readonly apiKey: string) {}
 

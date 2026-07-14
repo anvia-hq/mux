@@ -9,6 +9,8 @@ const {
   mockEnqueueLog,
   mockGetProviderApiKey,
   mockGetProviderHeaders,
+  mockRedisEval,
+  mockRedisExpire,
   mockIncrbyfloat,
   mockRedisMulti,
   mockRedisTransaction,
@@ -20,6 +22,8 @@ const {
   mockEnqueueLog: vi.fn(),
   mockGetProviderApiKey: vi.fn(),
   mockGetProviderHeaders: vi.fn(),
+  mockRedisEval: vi.fn(),
+  mockRedisExpire: vi.fn(),
   mockIncrbyfloat: vi.fn(),
   mockRedisMulti: vi.fn(),
   mockRedisTransaction: {
@@ -61,6 +65,10 @@ function makeRow(
     pricingTiers: unknown;
     channelId: string | null;
     channelName: string | null;
+    upstreamUrl: string | null;
+    spendReservationId: string | null;
+    spendReservedUsd: number | null;
+    spendOwnerId: string | null;
   }> = {},
 ) {
   return {
@@ -103,7 +111,12 @@ function buildDeps(
 
   return {
     fetch: fetchImpl,
-    redis: { incrbyfloat: mockIncrbyfloat, multi: mockRedisMulti } as never,
+    redis: {
+      eval: mockRedisEval,
+      expire: mockRedisExpire,
+      incrbyfloat: mockIncrbyfloat,
+      multi: mockRedisMulti,
+    } as never,
     now: overrides.now ?? (() => new Date("2026-06-24T00:00:00Z")),
     enqueue: mockEnqueue,
     enqueueLog: mockEnqueueLog,
@@ -154,6 +167,8 @@ describe("processBackgroundPollJob", () => {
     vi.clearAllMocks();
     mockGetProviderApiKey.mockResolvedValue("sk-test");
     mockGetProviderHeaders.mockResolvedValue({});
+    mockRedisEval.mockResolvedValue([1, "ok"]);
+    mockRedisExpire.mockResolvedValue(1);
   });
 
   it("is a no-op when the row is missing", async () => {
@@ -174,6 +189,41 @@ describe("processBackgroundPollJob", () => {
     );
     expect(mockEnqueue).not.toHaveBeenCalled();
     expect(mockPrismaUpdate).not.toHaveBeenCalled();
+  });
+
+  it("finishes a stored reservation before ignoring an already-terminal row", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        status: "completed",
+        response: { status: "completed" },
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () => fakeFetchResponse({}));
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(mockRedisEval).toHaveBeenCalledWith(
+      expect.stringContaining("state', 'settled'"),
+      3,
+      "apikey_spend:key-1",
+      "user_spend:user-1",
+      "chat_spend_reservation:req-1",
+      "0.25",
+      "1",
+      String(24 * 60 * 60),
+    );
+    expect(mockPrismaUpdate).toHaveBeenCalledWith({
+      where: { id: "resp_bg_abc" },
+      data: {
+        spendReservationId: null,
+        spendReservedUsd: null,
+        spendOwnerId: null,
+      },
+    });
   });
 
   it("updates the row and re-enqueues when upstream is queued", async () => {
@@ -201,6 +251,47 @@ describe("processBackgroundPollJob", () => {
       }),
     );
     expect(mockEnqueue).toHaveBeenCalledWith("resp_bg_abc", 2, 4_000);
+  });
+
+  it("polls the exact stored upstream URL and refreshes a pending reservation", async () => {
+    const upstreamUrl = "https://custom.example/v1/responses/resp_bg_abc?region=apac";
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        upstreamUrl,
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({ id: "resp_bg_abc", status: "in_progress" }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(fetchImpl).toHaveBeenCalledWith(upstreamUrl, expect.any(Object));
+    expect(mockRedisExpire).toHaveBeenCalledWith("chat_spend_reservation:req-1", 24 * 60 * 60);
+  });
+
+  it("uses the Azure Responses endpoint for legacy Azure rows without a stored URL", async () => {
+    const previousEndpoint = process.env.AZURE_OPENAI_RESPONSES_ENDPOINT;
+    process.env.AZURE_OPENAI_RESPONSES_ENDPOINT = "https://legacy.openai.azure.com";
+    mockPrismaFindUnique.mockResolvedValueOnce(makeRow({ provider: "azure", upstreamUrl: null }));
+    const fetchImpl = vi.fn(async () => fakeFetchResponse({ id: "resp_bg_abc", status: "queued" }));
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    try {
+      await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+    } finally {
+      if (previousEndpoint === undefined) delete process.env.AZURE_OPENAI_RESPONSES_ENDPOINT;
+      else process.env.AZURE_OPENAI_RESPONSES_ENDPOINT = previousEndpoint;
+    }
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://legacy.openai.azure.com/openai/v1/responses/resp_bg_abc?api-version=2025-04-01-preview",
+      expect.any(Object),
+    );
   });
 
   it("applies static channel headers while polling upstream", async () => {
@@ -366,6 +457,112 @@ describe("processBackgroundPollJob", () => {
     expect(mockIncrbyfloat).not.toHaveBeenCalled();
     expect(mockEnqueueLog).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "final", statusCode: 200 }),
+    );
+  });
+
+  it("settles the reserved amount when a completed response omits usage", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({ id: "resp_bg_abc", status: "completed", model: "gpt-5" }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(mockRedisEval).toHaveBeenCalledWith(
+      expect.stringContaining("state', 'settled'"),
+      3,
+      "apikey_spend:key-1",
+      "user_spend:user-1",
+      "chat_spend_reservation:req-1",
+      "0.25",
+      "1",
+      String(24 * 60 * 60),
+    );
+    expect(mockPrismaApiKeyFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("settles an explicit zero-token completion at zero", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({
+        id: "resp_bg_abc",
+        status: "completed",
+        usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 },
+      }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(mockRedisEval).toHaveBeenCalledWith(
+      expect.stringContaining("state', 'settled'"),
+      3,
+      "apikey_spend:key-1",
+      "user_spend:user-1",
+      "chat_spend_reservation:req-1",
+      "0",
+      "1",
+      String(24 * 60 * 60),
+    );
+  });
+
+  it("leaves a completed upstream job nonterminal when reservation settlement fails", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({ id: "resp_bg_abc", status: "completed" }),
+    );
+    mockRedisEval.mockRejectedValueOnce(new Error("redis offline"));
+
+    await expect(
+      processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch)),
+    ).rejects.toThrow("redis offline");
+
+    expect(mockPrismaUpdate).not.toHaveBeenCalled();
+    expect(mockEnqueueLog).not.toHaveBeenCalled();
+  });
+
+  it("refunds a pending reservation when upstream reaches a failed state", async () => {
+    mockPrismaFindUnique.mockResolvedValueOnce(
+      makeRow({
+        spendReservationId: "req-1",
+        spendReservedUsd: 0.25,
+        spendOwnerId: "user-1",
+      }),
+    );
+    const fetchImpl = vi.fn(async () =>
+      fakeFetchResponse({ id: "resp_bg_abc", status: "failed", error: { message: "nope" } }),
+    );
+    mockPrismaUpdate.mockResolvedValueOnce({});
+
+    await processBackgroundPollJob(makeJob(), buildDeps(fetchImpl as unknown as typeof fetch));
+
+    expect(mockRedisEval).toHaveBeenCalledWith(
+      expect.stringContaining("state', 'refunded'"),
+      3,
+      "apikey_spend:key-1",
+      "user_spend:user-1",
+      "chat_spend_reservation:req-1",
+      "1",
+      String(24 * 60 * 60),
     );
   });
 

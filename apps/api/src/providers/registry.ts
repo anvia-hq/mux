@@ -335,6 +335,8 @@ type CustomProviderWithModels = {
   id: string;
   name: string;
   apiBase: string;
+  responsesMode: "DISABLED" | "NATIVE" | "VIA_CHAT";
+  responsesEndpoint: string | null;
   models: Array<{
     modelId: string;
     name: string;
@@ -387,6 +389,13 @@ function buildCustomAdapter(row: CustomProviderWithModels, apiKey: string): Prov
     name: row.id,
     apiKey,
     apiBase: row.apiBase,
+    responsesMode:
+      row.responsesMode === "NATIVE"
+        ? "native"
+        : row.responsesMode === "VIA_CHAT"
+          ? "via_chat"
+          : "disabled",
+    responsesEndpoint: row.responsesEndpoint ?? undefined,
     models: row.models.map((model) => ({
       id: model.modelId,
       name: model.name,
@@ -932,6 +941,12 @@ export type ResolvedResponseTarget = {
   target: ResolvedProviderModel;
 };
 
+export type ResolvedResponseTargets = {
+  kind: "direct" | "fallback-group";
+  requestedModelId: string;
+  targets: ResolvedProviderModel[];
+};
+
 export type ResolvedEmbeddingProviderModel = ResolvedProviderModel & {
   provider: ProviderAdapter & {
     createEmbedding: (
@@ -1347,44 +1362,25 @@ export async function resolveAnthropicMessageTokenCountAccessModelId(
   return model.includes(":") ? model : toPublicModelId("anthropic", model);
 }
 
-/**
- * Pick the first Responses-capable target for a model id. Accepts:
- *   - a direct provider model id (e.g. `openai:gpt-4o`): returns it if
- *     the underlying adapter advertises `responsesApi: true`.
- *   - a fallback group id (e.g. `mux:fast`): iterates the group's
- *     targets in order and returns the first Responses-capable one.
- *   - anything else, or a model/group with no Responses-capable
- *     targets: returns `null`.
- */
-export async function resolveResponseTarget(model: string): Promise<ResolvedResponseTarget | null> {
+export async function resolveResponseTargets(
+  model: string,
+): Promise<ResolvedResponseTargets | null> {
   const resolved = await resolveChatModel(model);
-  if (!resolved) {
-    return null;
-  }
+  if (!resolved) return null;
+  const targets = resolved.targets.filter((target) =>
+    Boolean(target.provider.capabilities.responsesTransport),
+  );
+  return targets.length > 0
+    ? { kind: resolved.kind, requestedModelId: resolved.requestedModelId, targets }
+    : null;
+}
 
-  if (resolved.kind === "direct") {
-    for (const target of resolved.targets) {
-      if (target.provider.capabilities.responsesApi === true) {
-        return {
-          kind: "direct",
-          requestedModelId: resolved.requestedModelId,
-          target,
-        };
-      }
-    }
-    return null;
-  }
-
-  for (const target of resolved.targets) {
-    if (target.provider.capabilities.responsesApi === true) {
-      return {
-        kind: "fallback-group",
-        requestedModelId: resolved.requestedModelId,
-        target,
-      };
-    }
-  }
-  return null;
+export async function resolveResponseTarget(model: string): Promise<ResolvedResponseTarget | null> {
+  const resolved = await resolveResponseTargets(model);
+  const target = resolved?.targets[0];
+  return resolved && target
+    ? { kind: resolved.kind, requestedModelId: resolved.requestedModelId, target }
+    : null;
 }
 
 export function listAllModels(): Model[] {

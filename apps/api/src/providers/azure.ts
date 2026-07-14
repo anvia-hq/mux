@@ -1648,8 +1648,12 @@ export class AzureAdapter extends ModelsDevProviderAdapter {
     return this.responses.createResponseStream(request, options);
   }
 
-  getResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {
-    return this.responses.getResponse(id, options);
+  getResponse(
+    id: string,
+    query?: Record<string, string | string[]>,
+    options?: ProviderRequestOptions,
+  ): Promise<ResponseObject> {
+    return this.responses.getResponse(id, query, options);
   }
 
   deleteResponse(id: string, options?: ProviderRequestOptions): Promise<ResponseObject> {

@@ -3,15 +3,23 @@ export async function* streamTextResponseBody(response: Response): AsyncIterable
   if (!reader) throw new Error("No response body");
 
   const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield decoder.decode(value, { stream: true });
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    yield decoder.decode(value, { stream: true });
+    const final = decoder.decode();
+    if (final) yield final;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // The response body may already be closed or aborted.
+    }
+    reader.releaseLock();
   }
-
-  const final = decoder.decode();
-  if (final) yield final;
 }
 
 export async function* streamImageGenerationResponseBody(

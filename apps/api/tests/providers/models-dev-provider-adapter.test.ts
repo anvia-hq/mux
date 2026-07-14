@@ -60,7 +60,7 @@ describe("ModelsDevProviderAdapter", () => {
   it("does not advertise passthrough endpoints without apiBase", () => {
     const a = new ModelsDevProviderAdapter({ name: "t", apiKey: "k", models: testModels });
 
-    expect(a.capabilities.responsesApi).toBe(false);
+    expect(a.capabilities.responsesTransport).toBeUndefined();
     expect(a.capabilities.embeddingsApi).toBe(false);
     expect(a.capabilities.moderationsApi).toBe(false);
     expect(a.capabilities.imageGenerationsApi).toBe(false);

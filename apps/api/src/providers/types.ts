@@ -3,7 +3,8 @@ export type ChatContentPart =
   | { type: "refusal"; refusal: string }
   | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } }
   | { type: "input_audio"; input_audio: { data: string; format: string } }
-  | { type: "file"; file: { file_id?: string; filename?: string; file_data?: string } };
+  | { type: "file"; file: { file_id?: string; filename?: string; file_data?: string } }
+  | { type: "video_url"; video_url: { url: string } };
 
 export type ToolCall = {
   id: string;
@@ -134,6 +135,7 @@ export interface ChatCompletionChunk {
     delta: {
       role?: ChatMessage["role"];
       content?: string | null;
+      reasoning_content?: string | null;
       tool_calls?: ToolCallDelta[];
     };
     finish_reason: string | null;
@@ -401,14 +403,8 @@ export interface ProviderCapabilities {
   reasoning: boolean;
   logprobs: boolean;
   openAICompatiblePassthrough: boolean;
-  /**
-   * Whether this adapter implements the OpenAI Responses API surface
-   * (`createResponse`, `createResponseStream`, `getResponse`,
-   * `deleteResponse`). Used by the `/v1/responses` router to decide
-   * which targets a model id (or fallback group) can resolve to.
-   * Defaults to `false`; opt in per adapter.
-   */
-  responsesApi?: boolean;
+  /** Transport used when serving the OpenAI Responses API. */
+  responsesTransport?: "native" | "chat";
   /**
    * Whether this adapter can proxy OpenAI-compatible embeddings through
    * `/v1/embeddings`.
@@ -460,6 +456,7 @@ export type ProviderRequestOptions = {
   headers?: Record<string, string>;
   rawBody?: string;
   signal?: AbortSignal;
+  onResponse?: (response: Response) => void;
 };
 
 export function mergeProviderRequestHeaders(

@@ -33,6 +33,7 @@ function contentTokens(content: ChatMessage["content"]): number {
     if (part.type === "image_url") return total + IMAGE_TOKENS;
     if (part.type === "input_audio") return total + AUDIO_TOKENS;
     if (part.type === "file") return total + FILE_TOKENS;
+    if (part.type === "video_url") return total + FILE_TOKENS;
     return total + FILE_TOKENS;
   }, 0);
 }

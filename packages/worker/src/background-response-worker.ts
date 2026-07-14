@@ -66,6 +66,10 @@ type BackgroundJobRecord = {
   inputPricePer1M?: number | null;
   outputPricePer1M?: number | null;
   pricingTiers?: unknown;
+  upstreamUrl?: string | null;
+  spendReservationId?: string | null;
+  spendReservedUsd?: number | null;
+  spendOwnerId?: string | null;
 };
 
 type UpstreamResponse = {
@@ -115,6 +119,17 @@ export async function processBackgroundPollJob(
   }
 
   if (TERMINAL_STATUSES.has(row.status)) {
+    await finalizeStoredTerminalReservation(row, redis);
+    if (row.spendReservationId) {
+      await prismaClient.backgroundResponseJob.update({
+        where: { id: row.id },
+        data: {
+          spendReservationId: null,
+          spendReservedUsd: null,
+          spendOwnerId: null,
+        },
+      });
+    }
     return;
   }
 
@@ -127,10 +142,12 @@ export async function processBackgroundPollJob(
       error instanceof ProviderKeyUnavailableError ||
       error instanceof BackgroundPollConfigurationError
     ) {
+      await refundBackgroundReservation(row, redis);
       await failBackgroundJob(row.id, error.message, now, prismaClient);
       return;
     }
     if (typeof apiError.status === "number" && apiError.status === 404) {
+      await refundBackgroundReservation(row, redis);
       await failBackgroundJob(row.id, "upstream 404 while polling", now, prismaClient);
       return;
     }
@@ -145,6 +162,9 @@ export async function processBackgroundPollJob(
       status: upstreamStatus,
       response: upstreamResponse as object,
       completedAt: now(),
+      spendReservationId: null,
+      spendReservedUsd: null,
+      spendOwnerId: null,
     };
     if (upstreamStatus === "failed") {
       updateData.errorMessage =
@@ -152,48 +172,51 @@ export async function processBackgroundPollJob(
           ? JSON.stringify(upstreamResponse.error)
           : "upstream reported failed";
     }
-    await prismaClient.backgroundResponseJob.update({
-      where: { id: row.id },
-      data: updateData,
-    });
-
     if (upstreamStatus === "completed") {
       const usage = upstreamResponse.usage;
       let estimatedCost: number | undefined;
-      let pricingDetails: ReturnType<typeof computeCostDetails>;
-      if (usage?.input_tokens || usage?.output_tokens) {
+      let pricingDetails: ReturnType<typeof computeCostDetails> | undefined;
+      if (hasReportedUsage(usage)) {
         pricingDetails = computeCostDetails(usage.input_tokens, usage.output_tokens, row);
         estimatedCost = pricingDetails?.estimatedCost;
-        if (estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost > 0) {
-          try {
-            const apiKey = await prismaClient.apiKey.findUnique({
-              where: { id: row.apiKeyId },
-              select: { createdBy: true },
-            });
-            const transaction = redis
-              .multi()
-              .incrbyfloat(`apikey_spend:${row.apiKeyId}`, estimatedCost);
+      }
 
-            if (apiKey) {
-              transaction.incrbyfloat(`user_spend:${apiKey.createdBy}`, estimatedCost);
-            }
+      const settledCost = estimatedCost ?? row.spendReservedUsd ?? undefined;
+      if (row.spendReservationId) {
+        await settleBackgroundReservation(row, settledCost, redis);
+      } else if (
+        estimatedCost !== undefined &&
+        Number.isFinite(estimatedCost) &&
+        estimatedCost > 0
+      ) {
+        try {
+          const apiKey = await prismaClient.apiKey.findUnique({
+            where: { id: row.apiKeyId },
+            select: { createdBy: true },
+          });
+          const transaction = redis
+            .multi()
+            .incrbyfloat(`apikey_spend:${row.apiKeyId}`, estimatedCost);
 
-            const results = await transaction.exec();
-            if (!results) {
-              throw new Error("Redis transaction aborted");
-            }
-
-            for (const [commandError] of results) {
-              if (commandError) {
-                throw commandError;
-              }
-            }
-          } catch (error) {
-            console.error(
-              `Failed to bill background response ${row.id}:`,
-              error instanceof Error ? error.message : String(error),
-            );
+          if (apiKey) {
+            transaction.incrbyfloat(`user_spend:${apiKey.createdBy}`, estimatedCost);
           }
+
+          const results = await transaction.exec();
+          if (!results) {
+            throw new Error("Redis transaction aborted");
+          }
+
+          for (const [commandError] of results) {
+            if (commandError) {
+              throw commandError;
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Failed to bill background response ${row.id}:`,
+            error instanceof Error ? error.message : String(error),
+          );
         }
       }
       await enqueueLog({
@@ -211,14 +234,20 @@ export async function processBackgroundPollJob(
         completionTokens: upstreamResponse.usage?.output_tokens,
         totalTokens: upstreamResponse.usage?.total_tokens,
         reasoningTokens: readReasoningTokens(upstreamResponse.usage),
-        estimatedCost,
+        estimatedCost: estimatedCost ?? row.spendReservedUsd ?? undefined,
         pricingInputTokens: pricingDetails?.pricingInputTokens,
         appliedInputPricePer1M: pricingDetails?.appliedInputPricePer1M,
         appliedOutputPricePer1M: pricingDetails?.appliedOutputPricePer1M,
         appliedPricingTierThreshold: pricingDetails?.appliedPricingTierThreshold ?? undefined,
         statusCode: 200,
       } satisfies RequestLogJob);
+    } else {
+      await refundBackgroundReservation(row, redis);
     }
+    await prismaClient.backgroundResponseJob.update({
+      where: { id: row.id },
+      data: updateData,
+    });
     return;
   }
 
@@ -230,6 +259,7 @@ export async function processBackgroundPollJob(
     },
   });
 
+  await refreshBackgroundReservation(row, redis);
   await enqueue(job.jobId, job.attempt + 1, backoffMs(job.attempt + 1));
 }
 
@@ -296,7 +326,8 @@ function mergeHeaders(
 }
 
 function buildUpstreamGetUrl(row: BackgroundJobRecord): string {
-  if (row.provider === "azure-cognitive-services") {
+  if (row.upstreamUrl) return row.upstreamUrl;
+  if (row.provider === "azure-cognitive-services" || row.provider === "azure") {
     const endpoint = process.env.AZURE_OPENAI_RESPONSES_ENDPOINT;
     if (!endpoint) {
       throw new BackgroundPollConfigurationError(
@@ -308,6 +339,125 @@ function buildUpstreamGetUrl(row: BackgroundJobRecord): string {
     return `${normalized}/openai/v1/responses/${encodeURIComponent(row.id)}?api-version=${encodeURIComponent(apiVersion)}`;
   }
   return `https://api.openai.com/v1/responses/${encodeURIComponent(row.id)}`;
+}
+
+const RESERVATION_TTL_SECONDS = 24 * 60 * 60;
+
+function hasReportedUsage(
+  usage: UpstreamResponse["usage"],
+): usage is NonNullable<UpstreamResponse["usage"]> {
+  return typeof usage?.input_tokens === "number" || typeof usage?.output_tokens === "number";
+}
+
+async function finalizeStoredTerminalReservation(
+  row: BackgroundJobRecord,
+  redis: IORedis,
+): Promise<void> {
+  if (!row.spendReservationId) return;
+  if (row.status !== "completed") {
+    await refundBackgroundReservation(row, redis);
+    return;
+  }
+
+  const response =
+    row.response && typeof row.response === "object"
+      ? (row.response as UpstreamResponse)
+      : undefined;
+  const usage = response?.usage;
+  const estimatedCost = hasReportedUsage(usage)
+    ? computeCostDetails(usage?.input_tokens, usage?.output_tokens, row)?.estimatedCost
+    : undefined;
+  await settleBackgroundReservation(row, estimatedCost ?? row.spendReservedUsd ?? undefined, redis);
+}
+
+function reservationKeys(row: BackgroundJobRecord): [string, string, string] | null {
+  if (!row.spendReservationId) return null;
+  return [
+    `apikey_spend:${row.apiKeyId}`,
+    row.spendOwnerId
+      ? `user_spend:${row.spendOwnerId}`
+      : `chat_spend:no_owner:${row.spendReservationId}`,
+    `chat_spend_reservation:${row.spendReservationId}`,
+  ];
+}
+
+async function refreshBackgroundReservation(row: BackgroundJobRecord, redis: IORedis) {
+  const keys = reservationKeys(row);
+  if (!keys) return;
+  await redis.expire(keys[2], RESERVATION_TTL_SECONDS);
+}
+
+async function settleBackgroundReservation(
+  row: BackgroundJobRecord,
+  actualUsd: number | undefined,
+  redis: IORedis,
+) {
+  const keys = reservationKeys(row);
+  if (!keys) return;
+  const actual =
+    actualUsd !== undefined && Number.isFinite(actualUsd) && actualUsd >= 0
+      ? actualUsd
+      : (row.spendReservedUsd ?? 0);
+  const result = await redis.eval(
+    `
+local state = redis.call('HGET', KEYS[3], 'state')
+if state == 'settled' or state == 'refunded' then return {1, state} end
+if state ~= 'pending' then return {0, 'not_pending'} end
+local current = tonumber(redis.call('HGET', KEYS[3], 'amount') or '0')
+local actual = tonumber(ARGV[1])
+local delta = actual - current
+if delta ~= 0 then
+  redis.call('INCRBYFLOAT', KEYS[1], delta)
+  if ARGV[2] == '1' then redis.call('INCRBYFLOAT', KEYS[2], delta) end
+end
+redis.call('HSET', KEYS[3], 'state', 'settled', 'actual', actual)
+redis.call('EXPIRE', KEYS[3], ARGV[3])
+return {1, tostring(actual)}
+`,
+    3,
+    ...keys,
+    String(actual),
+    row.spendOwnerId ? "1" : "0",
+    String(RESERVATION_TTL_SECONDS),
+  );
+  if (!Array.isArray(result) || (result[0] !== 1 && result[0] !== "1")) {
+    throw new Error("background spend reservation could not be settled");
+  }
+}
+
+async function refundBackgroundReservation(row: BackgroundJobRecord, redis: IORedis) {
+  const keys = reservationKeys(row);
+  if (!keys) return;
+  try {
+    const result = await redis.eval(
+      `
+local state = redis.call('HGET', KEYS[3], 'state')
+if state == 'refunded' or state == 'settled' then return {1, state} end
+if state ~= 'pending' then return {0, 'not_pending'} end
+local amount = tonumber(redis.call('HGET', KEYS[3], 'amount') or '0')
+redis.call('SET', KEYS[1], math.max(tonumber(redis.call('GET', KEYS[1]) or '0') - amount, 0))
+if ARGV[1] == '1' then
+  redis.call('SET', KEYS[2], math.max(tonumber(redis.call('GET', KEYS[2]) or '0') - amount, 0))
+end
+redis.call('HSET', KEYS[3], 'state', 'refunded', 'actual', 0)
+redis.call('EXPIRE', KEYS[3], ARGV[2])
+return {1, 'refunded'}
+`,
+      3,
+      ...keys,
+      row.spendOwnerId ? "1" : "0",
+      String(RESERVATION_TTL_SECONDS),
+    );
+    if (!Array.isArray(result) || (result[0] !== 1 && result[0] !== "1")) {
+      throw new Error("background spend reservation could not be refunded");
+    }
+  } catch (error) {
+    console.error(
+      `Failed to refund background response ${row.id}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
 }
 
 type PricingTier = {
@@ -389,6 +539,9 @@ async function failBackgroundJob(
       status: "failed",
       errorMessage,
       completedAt: now(),
+      spendReservationId: null,
+      spendReservedUsd: null,
+      spendOwnerId: null,
     },
   });
 }

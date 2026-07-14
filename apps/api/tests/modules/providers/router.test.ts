@@ -156,6 +156,8 @@ describe("providers router", () => {
         id: "custom-openai",
         name: "Custom OpenAI",
         apiBase: "https://custom.example/v1",
+        responsesMode: "VIA_CHAT",
+        responsesEndpoint: null,
         models: [{ modelId: "custom-chat" }],
       },
     ]);
@@ -173,6 +175,7 @@ describe("providers router", () => {
           name: "Custom OpenAI",
           type: "custom",
           configured: true,
+          responsesMode: "via_chat",
           modelCount: 1,
         }),
         expect.objectContaining({
@@ -207,6 +210,8 @@ describe("providers router", () => {
         name: "Custom OpenAI",
         apiBase: "https://custom.example/v1",
         apiKey: "custom-key",
+        responsesMode: "native",
+        responsesEndpoint: "https://custom.example/v1/responses",
         models: [
           {
             id: "custom-chat",
@@ -231,6 +236,8 @@ describe("providers router", () => {
       expect.objectContaining({
         data: expect.objectContaining({
           id: "custom-openai",
+          responsesMode: "NATIVE",
+          responsesEndpoint: "https://custom.example/v1/responses",
           models: expect.objectContaining({
             create: [
               expect.objectContaining({
@@ -255,6 +262,101 @@ describe("providers router", () => {
       }),
     );
     expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
+  });
+
+  it("rejects a custom Responses endpoint unless native mode is enabled", async () => {
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "custom-openai",
+        name: "Custom OpenAI",
+        apiBase: "https://custom.example/v1",
+        apiKey: "custom-key",
+        responsesMode: "via_chat",
+        responsesEndpoint: "https://custom.example/v1/responses",
+        models: [
+          {
+            id: "custom-chat",
+            name: "Custom Chat",
+            inputPricePer1M: 1,
+            outputPricePer1M: 2,
+            contextWindow: 128000,
+            maxOutputTokens: 4096,
+            inputModalities: ["text"],
+            outputModalities: ["text"],
+            weights: "closed",
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        message: expect.stringContaining("responsesEndpoint"),
+        param: "responsesEndpoint",
+      },
+    });
+    expect(mockPrisma.customProvider.create).not.toHaveBeenCalled();
+  });
+
+  it("updates Responses support for an existing custom provider", async () => {
+    mockPrisma.customProvider.findUnique.mockResolvedValueOnce({
+      id: "custom-openai",
+      responsesMode: "NATIVE",
+      responsesEndpoint: "https://custom.example/v1/responses",
+    });
+    mockPrisma.providerChannel.findFirst.mockResolvedValueOnce({ id: "custom-openai" });
+    mockPrisma.customProvider.update.mockResolvedValueOnce({
+      id: "custom-openai",
+      name: "Custom OpenAI",
+      apiBase: "https://custom.example/v1",
+      responsesMode: "VIA_CHAT",
+      responsesEndpoint: null,
+      models: [{ modelId: "custom-chat" }],
+    });
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/custom/custom-openai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ responsesMode: "via_chat" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.customProvider.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "custom-openai" },
+        data: { responsesMode: "VIA_CHAT", responsesEndpoint: null },
+      }),
+    );
+    expect(mockReloadProvider).toHaveBeenCalledWith("custom-openai");
+  });
+
+  it("rejects adding a Responses endpoint to a non-native existing provider", async () => {
+    mockPrisma.customProvider.findUnique.mockResolvedValueOnce({
+      id: "custom-openai",
+      responsesMode: "VIA_CHAT",
+      responsesEndpoint: null,
+    });
+    const app = new Hono().route("/providers", providersRouter);
+    const res = await app.request("/providers/custom/custom-openai", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        responsesEndpoint: "https://custom.example/v1/responses",
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      error: {
+        param: "responsesEndpoint",
+        code: "invalid_value",
+      },
+    });
+    expect(mockPrisma.customProvider.update).not.toHaveBeenCalled();
   });
 
   it("POST /custom defaults custom model capabilities when omitted", async () => {

@@ -28,6 +28,8 @@ import {
   toAudioProxyStreamResponse,
 } from "./openai-compatible-audio";
 import { throwOpenAICompatibleError } from "./openai-compatible-error";
+import { throwResponsesApiError } from "./responses-api-error";
+export { UpstreamResponsesApiError } from "./responses-api-error";
 import { mergeProviderRequestHeaders } from "./types";
 import {
   streamImageGenerationResponseBody,
@@ -1038,40 +1040,6 @@ const OPENAI_AUDIO_TRANSLATIONS_URL = "https://api.openai.com/v1/audio/translati
 const OPENAI_AUDIO_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
 const REQUEST_TIMEOUT_MS = 60_000;
 
-export class UpstreamResponsesApiError extends Error {
-  readonly status: number;
-  readonly body: string;
-
-  constructor(status: number, body: string) {
-    super(`OpenAI Responses API error: ${status} - ${body}`);
-    this.name = "UpstreamResponsesApiError";
-    this.status = status;
-    this.body = body;
-  }
-
-  get jsonError(): {
-    message?: string;
-    type?: string;
-    param?: string | null;
-    code?: string | null;
-  } | null {
-    try {
-      const parsed = JSON.parse(this.body) as { error?: unknown };
-      if (parsed && typeof parsed === "object" && "error" in parsed) {
-        return parsed.error as {
-          message?: string;
-          type?: string;
-          param?: string | null;
-          code?: string | null;
-        };
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  }
-}
-
 export type UpstreamResponsesQuery = Record<string, string | string[]>;
 
 function buildResponsesUrl(id: string, query?: UpstreamResponsesQuery): string {
@@ -1100,7 +1068,7 @@ function buildResponsesSubResourceUrl(
 
 export class OpenAIAdapter implements ProviderAdapter {
   name = "openai";
-  capabilities = openAICompatibleCapabilities;
+  capabilities = { ...openAICompatibleCapabilities, responsesTransport: "native" as const };
   private apiKey: string;
 
   constructor(apiKey: string) {
@@ -1178,8 +1146,9 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       const error = await response.text();
@@ -1197,8 +1166,9 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       await throwOpenAICompatibleError("OpenAI", response);
@@ -1233,8 +1203,9 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       await throwOpenAICompatibleError("OpenAI", response);
@@ -1326,12 +1297,12 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1345,12 +1316,12 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     yield* streamTextResponseBody(response);
@@ -1364,12 +1335,12 @@ export class OpenAIAdapter implements ProviderAdapter {
     const response = await fetch(buildResponsesUrl(id, query), {
       method: "GET",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1379,12 +1350,12 @@ export class OpenAIAdapter implements ProviderAdapter {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}`, {
       method: "DELETE",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1394,12 +1365,12 @@ export class OpenAIAdapter implements ProviderAdapter {
     const response = await fetch(`${OPENAI_RESPONSES_URL}/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       headers: this.buildHeaders(options, true),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1413,12 +1384,12 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1432,12 +1403,12 @@ export class OpenAIAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options, true),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;
@@ -1451,12 +1422,12 @@ export class OpenAIAdapter implements ProviderAdapter {
     const response = await fetch(buildResponsesSubResourceUrl(id, "input_items", query), {
       method: "GET",
       headers: this.buildHeaders(options, false),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new UpstreamResponsesApiError(response.status, error);
+      await throwResponsesApiError("OpenAI", response);
     }
 
     return (await response.json()) as ResponseObject;

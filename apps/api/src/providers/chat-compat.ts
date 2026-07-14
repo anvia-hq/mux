@@ -18,7 +18,7 @@ export const openAICompatibleCapabilities: ProviderCapabilities = {
   reasoning: true,
   logprobs: true,
   openAICompatiblePassthrough: true,
-  responsesApi: true,
+  responsesTransport: undefined,
   embeddingsApi: true,
   moderationsApi: true,
   imageGenerationsApi: true,
@@ -50,6 +50,7 @@ export const googleCapabilities: ProviderCapabilities = {
   reasoning: false,
   logprobs: false,
   openAICompatiblePassthrough: false,
+  responsesTransport: "chat",
 };
 
 export const unsupportedNativeCapabilities: ProviderCapabilities = {
@@ -412,5 +413,6 @@ function supportsInputPart(model: Model, part: ChatContentPart): boolean {
   if (part.type === "image_url") return model.inputModalities.includes("image");
   if (part.type === "input_audio") return model.inputModalities.includes("audio");
   if (part.type === "file") return model.inputModalities.includes("pdf");
+  if (part.type === "video_url") return model.inputModalities.includes("video");
   return true;
 }

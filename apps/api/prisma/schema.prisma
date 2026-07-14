@@ -22,6 +22,12 @@ enum RedemptionTargetType {
   API_KEY
 }
 
+enum ResponsesMode {
+  DISABLED
+  NATIVE
+  VIA_CHAT
+}
+
 model User {
   id                            String                  @id @default(cuid())
   email                         String                  @unique
@@ -232,14 +238,16 @@ model ProviderChannel {
 }
 
 model CustomProvider {
-  id        String                @id
-  name      String
-  apiBase   String
-  createdBy String
-  creator   User                  @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  models    CustomProviderModel[]
-  createdAt DateTime              @default(now())
-  updatedAt DateTime              @updatedAt
+  id                String                @id
+  name              String
+  apiBase           String
+  responsesMode     ResponsesMode         @default(DISABLED)
+  responsesEndpoint String?
+  createdBy         String
+  creator           User                  @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  models            CustomProviderModel[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
 
   @@index([createdBy])
 }
@@ -320,23 +328,27 @@ model ModelAlias {
 /// The actual generation is performed server-side by the provider; the
 /// worker polls upstream and updates status until the response is terminal.
 model BackgroundResponseJob {
-  id               String    @id
-  apiKeyId         String
-  apiKey           ApiKey    @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
-  provider         String
-  model            String
-  channelId        String?
-  channelName      String?
-  request          Json
-  status           String
-  response         Json?
-  errorMessage     String?
-  inputPricePer1M  Float?
-  outputPricePer1M Float?
-  pricingTiers     Json?
-  createdAt        DateTime  @default(now())
-  startedAt        DateTime?
-  completedAt      DateTime?
+  id                 String    @id
+  apiKeyId           String
+  apiKey             ApiKey    @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  provider           String
+  model              String
+  channelId          String?
+  channelName        String?
+  request            Json
+  status             String
+  response           Json?
+  errorMessage       String?
+  inputPricePer1M    Float?
+  outputPricePer1M   Float?
+  pricingTiers       Json?
+  upstreamUrl        String?
+  spendReservationId String?
+  spendReservedUsd   Float?
+  spendOwnerId       String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  completedAt        DateTime?
 
   @@index([apiKeyId])
   @@index([channelId])

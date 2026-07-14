@@ -18,6 +18,8 @@ export type ProviderCatalogRow = {
   updatedAt: string | null;
   updater?: { email: string } | null;
   apiBase: string | null;
+  responsesMode?: "disabled" | "native" | "via_chat";
+  responsesEndpoint?: string | null;
   modelCount: number | null;
 };
 
@@ -395,6 +397,8 @@ export type CreateCustomProviderInput = {
   name: string;
   apiBase: string;
   apiKey: string;
+  responsesMode?: "disabled" | "native" | "via_chat";
+  responsesEndpoint?: string;
   models: CustomProviderModelInput[];
 };
 
@@ -403,6 +407,8 @@ export type UpdateCustomProviderInput = {
   name?: string;
   apiBase?: string;
   apiKey?: string;
+  responsesMode?: "disabled" | "native" | "via_chat";
+  responsesEndpoint?: string | null;
 };
 
 export function useCreateCustomProviderMutation() {

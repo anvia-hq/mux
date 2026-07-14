@@ -181,6 +181,31 @@ import {
 } from "../../../src/modules/responses/services";
 import { responsesRouter } from "../../../src/modules/responses/router";
 
+function responseRelayResult(
+  response: Record<string, unknown>,
+  status = 200,
+  headers = new Headers(),
+) {
+  return { response, status, headers };
+}
+
+function streamRelayResult(
+  stream: AsyncIterable<string>,
+  finalizeSpend = vi.fn().mockResolvedValue(0.01),
+  overrides: { status?: number; headers?: Headers; abort?: ReturnType<typeof vi.fn> } = {},
+) {
+  return {
+    stream,
+    provider: "openai",
+    model: "openai:gpt-4o",
+    latencyMs: 25,
+    status: overrides.status ?? 200,
+    headers: overrides.headers ?? new Headers(),
+    abort: overrides.abort ?? vi.fn(),
+    finalizeSpend,
+  };
+}
+
 describe("responses router", () => {
   beforeEach(() => {
     mockSpendLimit.value = null;
@@ -196,10 +221,10 @@ describe("responses router", () => {
     vi.clearAllMocks();
   });
 
-  it("POST /v1/responses 400 invalid json", async () => {
+  it("POST /v1/responses rejects a non-JSON content type", async () => {
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses", { method: "POST", body: "bad" });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(415);
   });
 
   it("POST /v1/responses 400 missing model", async () => {
@@ -223,11 +248,13 @@ describe("responses router", () => {
   });
 
   it("POST /v1/responses 200 success", async () => {
-    mockHandleResponseCreate.mockResolvedValueOnce({
-      id: "resp-1",
-      model: "openai:gpt-4o",
-      output: [],
-    });
+    mockHandleResponseCreate.mockResolvedValueOnce(
+      responseRelayResult({
+        id: "resp-1",
+        model: "openai:gpt-4o",
+        output: [],
+      }),
+    );
     const app = new Hono().route("/v1/responses", responsesRouter);
     const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hi"\n}';
     const res = await app.request("/v1/responses", {
@@ -246,11 +273,13 @@ describe("responses router", () => {
   });
 
   it("POST /v1/responses preserves extended create fields after validation", async () => {
-    mockHandleResponseCreate.mockResolvedValueOnce({
-      id: "resp-extended",
-      model: "openai:gpt-4o",
-      output: [],
-    });
+    mockHandleResponseCreate.mockResolvedValueOnce(
+      responseRelayResult({
+        id: "resp-extended",
+        model: "openai:gpt-4o",
+        output: [],
+      }),
+    );
     const body = {
       model: "openai:gpt-4o",
       input: [
@@ -367,7 +396,7 @@ describe("responses router", () => {
     });
   });
 
-  it("POST /v1/responses checks spend limit before limited background request", async () => {
+  it("POST /v1/responses delegates limited background spend reservation to the service", async () => {
     mockSpendLimit.value = 10;
     mockSubmitBackgroundResponse.mockResolvedValueOnce({
       id: "resp_bg_abc",
@@ -381,11 +410,14 @@ describe("responses router", () => {
     });
 
     expect(res.status).toBe(202);
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
+    expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockSubmitBackgroundResponse).toHaveBeenCalledWith(
       expect.anything(),
       "key-1",
-      expect.objectContaining({ requireBillableUsage: true }),
+      expect.objectContaining({
+        requireBillableUsage: true,
+        billing: expect.objectContaining({ apiKeyId: "key-1", apiKeyLimitUsd: 10 }),
+      }),
     );
   });
 
@@ -393,7 +425,7 @@ describe("responses router", () => {
     mockSpendLimit.value = 10;
     const app = new Hono().route("/v1/responses", responsesRouter);
 
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
+    mockSubmitBackgroundResponse.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
     const exhausted = await app.request("/v1/responses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -401,7 +433,7 @@ describe("responses router", () => {
     });
     expect(exhausted.status).toBe(429);
 
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(
+    mockSubmitBackgroundResponse.mockRejectedValueOnce(
       new ApiKeySpendLedgerUnavailableError(new Error()),
     );
     const unavailable = await app.request("/v1/responses", {
@@ -449,7 +481,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "Background mode requires gpt-5 family",
+        message: expect.stringContaining("Background mode requires gpt-5 family"),
         type: "invalid_request_error",
       },
     });
@@ -461,12 +493,7 @@ describe("responses router", () => {
       yield 'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5,"output_tokens_details":{"reasoning_tokens":7}}}}\n\n';
     }
 
-    mockHandleResponseCreateStream.mockResolvedValueOnce({
-      stream: chunks(),
-      provider: "openai",
-      model: "openai:gpt-4o",
-      latencyMs: 25,
-    });
+    mockHandleResponseCreateStream.mockResolvedValueOnce(streamRelayResult(chunks()));
 
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses", {
@@ -505,12 +532,10 @@ describe("responses router", () => {
       yield 'event: response.completed\ndata: {"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}\n\n';
     }
 
-    mockHandleResponseCreateStream.mockResolvedValueOnce({
-      stream: chunks(),
-      provider: "openai",
-      model: "openai:gpt-4o",
-      latencyMs: 25,
-    });
+    const finalizeSpend = vi.fn().mockResolvedValue(0.01);
+    mockHandleResponseCreateStream.mockResolvedValueOnce(
+      streamRelayResult(chunks(), finalizeSpend),
+    );
 
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses", {
@@ -521,16 +546,22 @@ describe("responses router", () => {
 
     expect(res.status).toBe(200);
     await res.text();
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
-    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.01);
+    expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
+    expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
+    expect(finalizeSpend).toHaveBeenCalledWith(
+      expect.objectContaining({ input_tokens: 2, output_tokens: 3 }),
+      0,
+    );
   });
 
-  it("POST /v1/responses checks spend limit before limited request", async () => {
+  it("POST /v1/responses delegates limited spend reservation to the service", async () => {
     mockSpendLimit.value = 10;
-    mockHandleResponseCreate.mockResolvedValueOnce({
-      id: "resp-1",
-      model: "openai:gpt-4o",
-    });
+    mockHandleResponseCreate.mockResolvedValueOnce(
+      responseRelayResult({
+        id: "resp-1",
+        model: "openai:gpt-4o",
+      }),
+    );
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses", {
       method: "POST",
@@ -539,12 +570,92 @@ describe("responses router", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockAssertApiKeyCanSpend).toHaveBeenCalledWith("key-1", 10);
+    expect(mockAssertApiKeyCanSpend).not.toHaveBeenCalled();
     expect(mockHandleResponseCreate).toHaveBeenCalledWith(
       expect.anything(),
       "key-1",
-      expect.objectContaining({ requireBillableUsage: true }),
+      expect.objectContaining({
+        requireBillableUsage: true,
+        billing: expect.objectContaining({ apiKeyId: "key-1", apiKeyLimitUsd: 10 }),
+      }),
     );
+  });
+
+  it("POST /v1/responses preserves safe upstream status and headers", async () => {
+    mockHandleResponseCreate.mockResolvedValueOnce(
+      responseRelayResult(
+        { id: "resp-1", model: "openai:gpt-4o" },
+        201,
+        new Headers({
+          connection: "close",
+          "set-cookie": "session=upstream",
+          "x-ratelimit-remaining-requests": "42",
+          "x-request-id": "upstream-request-id",
+        }),
+      ),
+    );
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi" }),
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.headers.get("x-ratelimit-remaining-requests")).toBe("42");
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("connection")).not.toBe("close");
+    expect(res.headers.get("x-request-id")).not.toBe("upstream-request-id");
+  });
+
+  it("POST /v1/responses treats response.error as a terminal failed stream", async () => {
+    const chunk =
+      'event: response.error\ndata: {"type":"response.error","code":"server_error","message":"upstream failed"}\n\n';
+    async function* chunks() {
+      yield chunk;
+    }
+
+    const finalizeSpend = vi.fn().mockResolvedValue(0.01);
+    mockHandleResponseCreateStream.mockResolvedValueOnce(
+      streamRelayResult(chunks(), finalizeSpend),
+    );
+
+    const app = new Hono().route("/v1/responses", responsesRouter);
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", stream: true }),
+    });
+
+    expect(res.status).toBe(200);
+    await expect(res.text()).resolves.toBe(chunk);
+    expect(finalizeSpend).toHaveBeenCalledWith(undefined, 0);
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(
+      expect.objectContaining({ statusCode: 502, errorMessage: "upstream failed" }),
+    );
+  });
+
+  it("POST /v1/responses aborts and settles a started stream when logging cannot start", async () => {
+    async function* chunks() {
+      yield 'event: response.created\ndata: {"type":"response.created","response":{}}\n\n';
+    }
+    const abort = vi.fn();
+    const finalizeSpend = vi.fn().mockResolvedValue(0.01);
+    mockHandleResponseCreateStream.mockResolvedValueOnce(
+      streamRelayResult(chunks(), finalizeSpend, { abort }),
+    );
+    mockLogStreamStart.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
+    const app = new Hono().route("/v1/responses", responsesRouter);
+
+    const res = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "openai:gpt-4o", input: "hi", stream: true }),
+    });
+
+    expect(res.status).toBe(503);
+    expect(abort).toHaveBeenCalledOnce();
+    expect(finalizeSpend).toHaveBeenCalledWith();
   });
 
   it("POST /v1/responses maps known service errors", async () => {
@@ -588,13 +699,26 @@ describe("responses router", () => {
         body,
       }),
     ).toHaveProperty("status", 503);
+
+    mockHandleResponseCreate.mockRejectedValueOnce(
+      new Error("upstream leaked secret sk-sensitive"),
+    );
+    const internal = await app.request("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    expect(internal.status).toBe(500);
+    const internalBody = await internal.text();
+    expect(internalBody).toContain("request_id");
+    expect(internalBody).not.toContain("sk-sensitive");
   });
 
   it("POST /v1/responses maps spend limit errors", async () => {
     mockSpendLimit.value = 10;
     const app = new Hono().route("/v1/responses", responsesRouter);
 
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
+    mockHandleResponseCreate.mockRejectedValueOnce(new ApiKeySpendLimitExceededError());
     const exhausted = await app.request("/v1/responses", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -602,7 +726,7 @@ describe("responses router", () => {
     });
     expect(exhausted.status).toBe(429);
 
-    mockAssertApiKeyCanSpend.mockRejectedValueOnce(
+    mockHandleResponseCreate.mockRejectedValueOnce(
       new ApiKeySpendLedgerUnavailableError(new Error()),
     );
     const unavailable = await app.request("/v1/responses", {
@@ -679,8 +803,14 @@ describe("responses router", () => {
     const notFound = await app.request("/v1/responses/resp_abc", { method: "GET" });
     expect(notFound.status).toBe(404);
     await expect(notFound.json()).resolves.toMatchObject({
-      error: { message: "not found" },
+      error: { message: expect.stringContaining("not found") },
     });
+
+    mockHandleResponseRetrieve.mockRejectedValueOnce(new ResponseNotFoundError("resp_abc"));
+    expect(await app.request("/v1/responses/resp_abc", { method: "GET" })).toHaveProperty(
+      "status",
+      404,
+    );
 
     mockHandleResponseRetrieve.mockRejectedValueOnce(new Error("boom"));
     expect(await app.request("/v1/responses/resp_abc", { method: "GET" })).toHaveProperty(
@@ -729,7 +859,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "Invalid value for 'model'",
+        message: expect.stringContaining("Invalid value for 'model'"),
         type: "invalid_request_error",
         param: "model",
         code: "invalid_value",
@@ -751,7 +881,10 @@ describe("responses router", () => {
 
     expect(res.status).toBe(500);
     await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining("OpenAI Responses API error: 500"),
+      error: {
+        message: expect.stringContaining("bad response status code 500"),
+        type: "upstream_error",
+      },
     });
   });
 
@@ -777,7 +910,9 @@ describe("responses router", () => {
     const res = await app.request("/v1/responses/resp_missing", { method: "DELETE" });
 
     expect(res.status).toBe(404);
-    await expect(res.json()).resolves.toMatchObject({ error: { message: "not found" } });
+    await expect(res.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("not found") },
+    });
   });
 
   it("DELETE /v1/responses/:id maps known service errors", async () => {
@@ -793,6 +928,12 @@ describe("responses router", () => {
     expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
       "status",
       422,
+    );
+
+    mockHandleResponseDelete.mockRejectedValueOnce(new ResponseNotFoundError("resp_abc"));
+    expect(await app.request("/v1/responses/resp_abc", { method: "DELETE" })).toHaveProperty(
+      "status",
+      404,
     );
 
     mockHandleResponseDelete.mockRejectedValueOnce(new RequestLoggingUnavailableError(new Error()));
@@ -870,7 +1011,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "Response is not cancellable",
+        message: expect.stringContaining("Response is not cancellable"),
         type: "invalid_request_error",
         param: null,
         code: "invalid_value",
@@ -977,7 +1118,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "Invalid include value",
+        message: expect.stringContaining("Invalid include value"),
         type: "invalid_request_error",
         param: "include",
         code: "invalid_value",
@@ -1014,11 +1155,9 @@ describe("responses router", () => {
   });
 
   it("POST /v1/responses/input_tokens returns 200 with the upstream body", async () => {
-    mockHandleResponseInputTokens.mockResolvedValueOnce({
-      provider: "openai",
-      model: "openai:gpt-4o",
-      response: { object: "response.input_tokens", input_tokens: 42 },
-    });
+    mockHandleResponseInputTokens.mockResolvedValueOnce(
+      responseRelayResult({ object: "response.input_tokens", input_tokens: 42 }),
+    );
     const app = new Hono().route("/v1/responses", responsesRouter);
     const rawBody = '{\n  "model": "openai:gpt-4o",\n  "input": "hi"\n}';
     const res = await app.request("/v1/responses/input_tokens", {
@@ -1056,7 +1195,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     expect(mockHandleResponseInputTokens).not.toHaveBeenCalled();
     await expect(res.json()).resolves.toMatchObject({
-      error: expect.stringContaining("valid JSON"),
+      error: { message: expect.stringContaining("invalid JSON") },
     });
   });
 
@@ -1101,7 +1240,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "Invalid model",
+        message: expect.stringContaining("Invalid model"),
         type: "invalid_request_error",
         param: "model",
         code: "invalid_value",
@@ -1138,16 +1277,14 @@ describe("responses router", () => {
   });
 
   it("POST /v1/responses/compact returns 200 with the upstream body", async () => {
-    mockHandleResponseCompact.mockResolvedValueOnce({
-      provider: "openai",
-      model: "openai:gpt-5",
-      response: {
+    mockHandleResponseCompact.mockResolvedValueOnce(
+      responseRelayResult({
         id: "resp_001",
         object: "response.compaction",
         output: [{ id: "cmp_001", type: "compaction" }],
         usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-      },
-    });
+      }),
+    );
     const app = new Hono().route("/v1/responses", responsesRouter);
     const rawBody = JSON.stringify({
       model: "openai:gpt-5",
@@ -1190,11 +1327,9 @@ describe("responses router", () => {
   });
 
   it("POST /v1/responses/compact strips unknown fields", async () => {
-    mockHandleResponseCompact.mockResolvedValueOnce({
-      provider: "openai",
-      model: "openai:gpt-5",
-      response: { id: "resp_001", object: "response.compaction", output: [] },
-    });
+    mockHandleResponseCompact.mockResolvedValueOnce(
+      responseRelayResult({ id: "resp_001", object: "response.compaction", output: [] }),
+    );
     const app = new Hono().route("/v1/responses", responsesRouter);
     const res = await app.request("/v1/responses/compact", {
       method: "POST",
@@ -1236,7 +1371,7 @@ describe("responses router", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       error: {
-        message: "compact failed",
+        message: expect.stringContaining("compact failed"),
         type: "invalid_request_error",
         param: null,
         code: "invalid_value",
