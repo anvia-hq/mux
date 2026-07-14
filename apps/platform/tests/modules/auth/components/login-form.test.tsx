@@ -16,6 +16,8 @@ vi.mock("@repo/ui/components/button", () => ({
   Button: ({
     asChild,
     children,
+    size: _size,
+    variant: _variant,
     ...props
   }: Record<string, unknown> & { children?: React.ReactNode; asChild?: boolean }) => {
     if (asChild && React.isValidElement(children)) {
