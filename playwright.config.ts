@@ -5,6 +5,7 @@ import {
   e2ePlatformPort,
   e2ePlatformUrl,
   e2eRequestLogWorkerUrl,
+  e2eResponsesUpstreamUrl,
   e2eRuntimeEnv,
 } from "./e2e/env";
 
@@ -41,6 +42,14 @@ export default defineConfig({
     },
   ],
   webServer: [
+    {
+      command: `${shellEnv(e2eRuntimeEnv)} pnpm exec tsx scripts/e2e/responses-upstream.ts`,
+      url: `${e2eResponsesUpstreamUrl}/health`,
+      reuseExistingServer: false,
+      timeout: 120_000,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
     {
       command: `${shellEnv(e2eRuntimeEnv)} pnpm exec tsx scripts/e2e/request-log-worker.ts`,
       url: `${e2eRequestLogWorkerUrl}/health`,

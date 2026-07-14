@@ -95,7 +95,7 @@ async function main() {
   run(pnpmCommand, ["--filter", "@repo/api", "exec", "prisma", "generate"], {
     env: { ...process.env, DATABASE_URL: e2eDatabaseUrl },
   });
-  run(pnpmCommand, ["--filter", "@repo/api", "exec", "prisma", "db", "push"], {
+  run(pnpmCommand, ["--filter", "@repo/api", "exec", "tsx", "scripts/migrate-deploy.ts"], {
     env: { ...process.env, DATABASE_URL: e2eDatabaseUrl },
   });
 }

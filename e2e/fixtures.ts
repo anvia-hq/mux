@@ -6,7 +6,7 @@ import {
   type APIResponse,
   type Page,
 } from "@playwright/test";
-import { e2eApiUrl, e2eResetToken } from "./env";
+import { e2eApiUrl, e2eResetToken, e2eResponsesUpstreamUrl } from "./env";
 
 type AdminUser = {
   email: string;
@@ -74,6 +74,33 @@ type SeedInput = {
     enabled?: boolean;
     targets: Array<{ provider: string; modelId: string }>;
   }>;
+  customProviders?: Array<{
+    id: string;
+    name?: string;
+    apiBase: string;
+    responsesMode: "native" | "via_chat";
+    responsesEndpoint?: string;
+    models: Array<{
+      id: string;
+      name?: string;
+      inputPricePer1M?: number;
+      outputPricePer1M?: number;
+      contextWindow?: number;
+      maxOutputTokens?: number;
+      reasoning?: boolean;
+      toolCall?: boolean;
+      structuredOutput?: boolean;
+    }>;
+    channels: Array<{
+      id: string;
+      name?: string;
+      apiKey: string;
+      enabled?: boolean;
+      priority?: number;
+      weight?: number;
+      headerOverride?: Record<string, string>;
+    }>;
+  }>;
 };
 
 type SeedResponse = {
@@ -82,6 +109,12 @@ type SeedResponse = {
   providerKeys: Array<{ provider: string; lastFour: string }>;
   requestLogs: Array<{ id: string; provider: string; model: string }>;
   fallbackGroups: Array<{ id: string; name: string; enabled: boolean }>;
+  customProviders: Array<{
+    id: string;
+    responsesMode: "native" | "via_chat";
+    modelIds: string[];
+    channelIds: string[];
+  }>;
 };
 
 export type E2eRequestLog = {
@@ -89,6 +122,9 @@ export type E2eRequestLog = {
   apiKeyName: string;
   provider: string;
   model: string;
+  requestedModel: string | null;
+  channelId: string | null;
+  channelName: string | null;
   endpoint: string;
   latencyMs: number;
   providerLatencyMs: number | null;
@@ -126,6 +162,13 @@ export async function resetE2eState(
 
   if (!response.ok()) {
     throw new Error(`E2E reset failed: ${response.status()} ${await response.text()}`);
+  }
+
+  const fixtureResponse = await request.post(`${e2eResponsesUpstreamUrl}/__fixture/reset`);
+  if (!fixtureResponse.ok()) {
+    throw new Error(
+      `Responses fixture reset failed: ${fixtureResponse.status()} ${await fixtureResponse.text()}`,
+    );
   }
 }
 
@@ -222,6 +265,45 @@ export async function waitForE2eRequestLog(
     throw new Error("E2E request log did not match after polling");
   }
 
+  return match;
+}
+
+export type E2eUpstreamRequest = {
+  id: number;
+  method: string;
+  path: string;
+  query: Record<string, string[]>;
+  channel: string;
+  authorizationPresent: boolean;
+  headerNames: string[];
+  body: Record<string, unknown> | null;
+};
+
+export async function readResponsesUpstreamRequests(
+  request: APIRequestContext,
+): Promise<E2eUpstreamRequest[]> {
+  const response = await request.get(`${e2eResponsesUpstreamUrl}/__fixture/requests`);
+  if (!response.ok()) {
+    throw new Error(
+      `Responses fixture request read failed: ${response.status()} ${await response.text()}`,
+    );
+  }
+  const body = (await response.json()) as { requests: E2eUpstreamRequest[] };
+  return body.requests;
+}
+
+export async function waitForResponsesUpstreamRequest(
+  request: APIRequestContext,
+  predicate: (captured: E2eUpstreamRequest) => boolean,
+): Promise<E2eUpstreamRequest> {
+  let match: E2eUpstreamRequest | undefined;
+  await expect
+    .poll(async () => {
+      match = (await readResponsesUpstreamRequests(request)).find(predicate);
+      return Boolean(match);
+    })
+    .toBe(true);
+  if (!match) throw new Error("Responses fixture request did not match after polling");
   return match;
 }
 

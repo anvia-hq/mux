@@ -1761,6 +1761,7 @@ describe("responses services", () => {
       const compactResponse = vi.fn().mockResolvedValueOnce({
         id: "resp_001",
         object: "response.compaction",
+        model: "gpt-5",
         usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
       });
       mockResolveResponseTarget.mockResolvedValueOnce({
@@ -1785,6 +1786,7 @@ describe("responses services", () => {
       expect(result).toMatchObject({
         provider: "openai",
         model: "openai:gpt-5",
+        response: { model: "openai:gpt-5" },
       });
       expect(compactResponse).toHaveBeenCalledWith(
         expect.objectContaining({

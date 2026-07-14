@@ -1,10 +1,12 @@
 export const e2eApiPort = process.env.E2E_API_PORT ?? "8010";
 export const e2ePlatformPort = process.env.E2E_PLATFORM_PORT ?? "3010";
 export const e2eRequestLogWorkerPort = process.env.E2E_REQUEST_LOG_WORKER_PORT ?? "8020";
+export const e2eResponsesUpstreamPort = process.env.E2E_RESPONSES_UPSTREAM_PORT ?? "8030";
 
 export const e2eApiUrl = `http://127.0.0.1:${e2eApiPort}`;
 export const e2ePlatformUrl = `http://127.0.0.1:${e2ePlatformPort}`;
 export const e2eRequestLogWorkerUrl = `http://127.0.0.1:${e2eRequestLogWorkerPort}`;
+export const e2eResponsesUpstreamUrl = `http://127.0.0.1:${e2eResponsesUpstreamPort}`;
 
 export const e2eDatabaseUrl =
   process.env.E2E_DATABASE_URL ??
@@ -21,9 +23,13 @@ export const e2eRuntimeEnv = {
   DATABASE_URL: e2eDatabaseUrl,
   E2E_RESET_TOKEN: e2eResetToken,
   E2E_REQUEST_LOG_WORKER_PORT: e2eRequestLogWorkerPort,
+  E2E_RESPONSES_UPSTREAM_PORT: e2eResponsesUpstreamPort,
   PROVIDER_KEYS_ENCRYPTION_KEY:
     process.env.E2E_PROVIDER_KEYS_ENCRYPTION_KEY ?? "e2e-provider-key-change-me",
   REDIS_URL: e2eRedisUrl,
+  RESPONSES_FIRST_BYTE_TIMEOUT_MS: "400",
+  RESPONSES_NON_STREAM_TIMEOUT_MS: "600",
+  RESPONSES_STREAM_IDLE_TIMEOUT_MS: "400",
 } satisfies Record<string, string>;
 
 export const e2ePlatformEnv = {

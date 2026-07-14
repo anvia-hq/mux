@@ -70,6 +70,42 @@ const fallbackGroupSeedSchema = z.object({
     .min(1),
 });
 
+const customProviderSeedSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).optional(),
+  apiBase: z.string().url(),
+  responsesMode: z.enum(["native", "via_chat"]),
+  responsesEndpoint: z.string().url().optional(),
+  models: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).optional(),
+        inputPricePer1M: z.number().nonnegative().default(1),
+        outputPricePer1M: z.number().nonnegative().default(2),
+        contextWindow: z.number().int().positive().default(128_000),
+        maxOutputTokens: z.number().int().positive().default(16_384),
+        reasoning: z.boolean().default(true),
+        toolCall: z.boolean().default(true),
+        structuredOutput: z.boolean().default(true),
+      }),
+    )
+    .min(1),
+  channels: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string().min(1).optional(),
+        apiKey: z.string().min(8),
+        enabled: z.boolean().default(true),
+        priority: z.number().int().default(0),
+        weight: z.number().int().positive().default(1),
+        headerOverride: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .min(1),
+});
+
 const seedSchema = z.object({
   users: z.array(userSeedSchema).optional(),
   syntheticProvider: z.boolean().optional(),
@@ -77,6 +113,7 @@ const seedSchema = z.object({
   apiKeys: z.array(apiKeySeedSchema).optional(),
   requestLogs: z.array(requestLogSeedSchema).optional(),
   fallbackGroups: z.array(fallbackGroupSeedSchema).optional(),
+  customProviders: z.array(customProviderSeedSchema).optional(),
 });
 
 function authorizeE2e(c: Context) {
@@ -235,6 +272,76 @@ export const e2eRouter = new Hono()
       providerKeys.push({ provider: row.provider, lastFour: row.lastFour });
     }
 
+    const customProviders = [];
+    for (const input of seed.customProviders ?? []) {
+      const updater = await findSeedAdmin();
+      const provider = await prisma.customProvider.create({
+        data: {
+          id: input.id,
+          name: input.name ?? input.id,
+          apiBase: input.apiBase,
+          responsesMode: input.responsesMode === "native" ? "NATIVE" : "VIA_CHAT",
+          responsesEndpoint: input.responsesEndpoint,
+          createdBy: updater.id,
+          models: {
+            create: input.models.map((model) => ({
+              modelId: model.id,
+              name: model.name ?? model.id,
+              inputPricePer1M: model.inputPricePer1M,
+              outputPricePer1M: model.outputPricePer1M,
+              pricingTiers: [],
+              contextWindow: model.contextWindow,
+              maxOutputTokens: model.maxOutputTokens,
+              inputModalities: ["text"],
+              outputModalities: ["text"],
+              reasoning: model.reasoning,
+              toolCall: model.toolCall,
+              structuredOutput: model.structuredOutput,
+              weights: "closed",
+            })),
+          },
+        },
+      });
+
+      for (const channel of input.channels) {
+        const ciphertext = encrypt(channel.apiKey);
+        await prisma.providerChannel.create({
+          data: {
+            id: channel.id,
+            provider: input.id,
+            name: channel.name ?? channel.id,
+            enabled: channel.enabled,
+            priority: channel.priority,
+            weight: channel.weight,
+            keyCiphertext: ciphertext,
+            lastFour: lastFour(channel.apiKey),
+            headerOverride: channel.headerOverride,
+            createdBy: updater.id,
+            updatedBy: updater.id,
+          },
+        });
+      }
+
+      const legacyKey = input.channels[0]?.apiKey;
+      if (legacyKey) {
+        await prisma.providerKey.create({
+          data: {
+            provider: input.id,
+            ciphertext: encrypt(legacyKey),
+            lastFour: lastFour(legacyKey),
+            updatedBy: updater.id,
+          },
+        });
+      }
+      await reloadProvider(input.id);
+      customProviders.push({
+        id: provider.id,
+        responsesMode: input.responsesMode,
+        modelIds: input.models.map((model) => `${input.id}:${model.id}`),
+        channelIds: input.channels.map((channel) => channel.id),
+      });
+    }
+
     const fallbackGroups = [];
     for (const input of seed.fallbackGroups ?? []) {
       const group = await prisma.fallbackGroup.create({
@@ -300,7 +407,14 @@ export const e2eRouter = new Hono()
       requestLogs.push({ id: row.id, provider: row.provider, model: row.model });
     }
 
-    return c.json({ users, apiKeys, providerKeys, requestLogs, fallbackGroups });
+    return c.json({
+      users,
+      apiKeys,
+      providerKeys,
+      requestLogs,
+      fallbackGroups,
+      customProviders,
+    });
   })
   .get("/request-logs", async (c) => {
     const unauthorized = authorizeE2e(c);
@@ -320,6 +434,9 @@ export const e2eRouter = new Hono()
         apiKeyName: row.apiKey.name,
         provider: row.provider,
         model: row.model,
+        requestedModel: row.requestedModel,
+        channelId: row.channelId,
+        channelName: row.channelName,
         endpoint: row.endpoint,
         latencyMs: row.latencyMs,
         providerLatencyMs: row.providerLatencyMs,

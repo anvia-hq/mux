@@ -21,6 +21,9 @@ const BASELINE_MIGRATIONS = [
 ] as const;
 
 const TIERED_PRICING_MIGRATION = "20260711120000_add_model_pricing_tiers";
+const REQUESTED_MODEL_MIGRATION = "20260711130000_add_request_log_requested_model";
+const RESPONSES_MODE_MIGRATION = "20260714090000_add_custom_provider_responses_mode";
+const BACKGROUND_RESERVATION_MIGRATION = "20260714091000_add_background_response_reservation";
 
 const REQUIRED_TABLES = [
   "ApiKey",
@@ -54,6 +57,18 @@ const TIERED_PRICING_COLUMNS = [
   ["RequestLog", "appliedOutputPricePer1M"],
   ["RequestLog", "appliedPricingTierThreshold"],
   ["RequestLog", "pricingInputTokens"],
+] as const;
+
+const RESPONSES_MODE_COLUMNS = [
+  ["CustomProvider", "responsesMode"],
+  ["CustomProvider", "responsesEndpoint"],
+] as const;
+
+const BACKGROUND_RESERVATION_COLUMNS = [
+  ["BackgroundResponseJob", "upstreamUrl"],
+  ["BackgroundResponseJob", "spendReservationId"],
+  ["BackgroundResponseJob", "spendReservedUsd"],
+  ["BackgroundResponseJob", "spendOwnerId"],
 ] as const;
 
 function runPrisma(args: string[]) {
@@ -154,6 +169,30 @@ async function main() {
     );
   }
 
+  const responsesModeColumnsPresent = RESPONSES_MODE_COLUMNS.filter(([table, column]) =>
+    database.columns.has(`${table}.${column}`),
+  );
+  if (
+    responsesModeColumnsPresent.length > 0 &&
+    responsesModeColumnsPresent.length !== RESPONSES_MODE_COLUMNS.length
+  ) {
+    throw new Error(
+      "Custom-provider Responses migration is only partially present; manual repair is required.",
+    );
+  }
+
+  const backgroundReservationColumnsPresent = BACKGROUND_RESERVATION_COLUMNS.filter(
+    ([table, column]) => database.columns.has(`${table}.${column}`),
+  );
+  if (
+    backgroundReservationColumnsPresent.length > 0 &&
+    backgroundReservationColumnsPresent.length !== BACKGROUND_RESERVATION_COLUMNS.length
+  ) {
+    throw new Error(
+      "Background-response reservation migration is only partially present; manual repair is required.",
+    );
+  }
+
   console.log("Existing db-push database detected; recording the migration baseline.");
   for (const migration of BASELINE_MIGRATIONS) {
     runPrisma(["migrate", "resolve", "--applied", migration]);
@@ -161,6 +200,18 @@ async function main() {
 
   if (tieredPricingColumnsPresent.length === TIERED_PRICING_COLUMNS.length) {
     runPrisma(["migrate", "resolve", "--applied", TIERED_PRICING_MIGRATION]);
+  }
+
+  if (database.columns.has("RequestLog.requestedModel")) {
+    runPrisma(["migrate", "resolve", "--applied", REQUESTED_MODEL_MIGRATION]);
+  }
+
+  if (responsesModeColumnsPresent.length === RESPONSES_MODE_COLUMNS.length) {
+    runPrisma(["migrate", "resolve", "--applied", RESPONSES_MODE_MIGRATION]);
+  }
+
+  if (backgroundReservationColumnsPresent.length === BACKGROUND_RESERVATION_COLUMNS.length) {
+    runPrisma(["migrate", "resolve", "--applied", BACKGROUND_RESERVATION_MIGRATION]);
   }
 
   runPrisma(["migrate", "deploy"]);

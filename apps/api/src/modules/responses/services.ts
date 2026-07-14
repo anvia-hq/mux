@@ -1949,15 +1949,16 @@ export async function handleResponseCompact(
         attemptSignal.controller,
         options.signal,
       );
+      const publicResponse = withPublicModelId(response, resolved.requestedModelId);
       const latencyMs = Date.now() - attemptStartTime;
       lastLatencyMs = latencyMs;
-      const usage = response.usage;
+      const usage = publicResponse.usage;
       const cachedTokens = readCachedTokens(usage);
       const reasoningTokens = readReasoningTokens(usage);
       const estimatedCost = estimateCost(
         target.publicModelId,
         usage?.input_tokens ?? inputEstimate,
-        usage?.output_tokens ?? estimateResponseOutputTokens(response),
+        usage?.output_tokens ?? estimateResponseOutputTokens(publicResponse),
         cachedTokens,
       );
 
@@ -2006,7 +2007,7 @@ export async function handleResponseCompact(
       return {
         provider: target.providerName,
         model: resolved.requestedModelId,
-        response,
+        response: publicResponse,
         status,
         headers,
       };

@@ -117,6 +117,28 @@ The command prints a latency table and writes JSON to `benchmark-results/`.
 If `MUX_API_KEY` is not set, the benchmark can instead use `MUX_ADMIN_EMAIL` and
 `MUX_ADMIN_PASSWORD` to create and revoke a temporary Mux API key.
 
+## Responses Verification
+
+Run the deterministic Responses transport suite and migration compatibility smoke tests with:
+
+```sh
+pnpm e2e:responses
+pnpm e2e:migrations
+```
+
+The Responses E2E suite uses a local HTTP/SSE upstream and does not require provider credentials.
+To smoke-test explicitly selected models through a running gateway, use:
+
+```sh
+RESPONSES_SMOKE_BASE_URL=http://localhost/api \
+RESPONSES_SMOKE_API_KEY=mux_live_... \
+RESPONSES_SMOKE_MODELS=openai:gpt-4o,custom-provider:model-id \
+pnpm smoke:responses
+```
+
+Set `RESPONSES_SMOKE_BACKGROUND=1` to include billable background creation and polling. Live smoke
+tests are never included in the default test commands.
+
 Recent 100-sample run against `gpt-5.4-mini`:
 
 | Metric | Direct p50 | Mux p50 | Median overhead | Direct p95 | Mux p95 |
