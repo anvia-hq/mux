@@ -7,6 +7,10 @@ const {
   mockLogRequest,
   mockResolveAnthropicMessageTokenCountModel,
   mockResolveAnthropicMessagesModel,
+  mockReserveSpend,
+  mockExpandSpendReservation,
+  mockRefundSpendReservation,
+  mockSettleSpendReservation,
 } = vi.hoisted(() => ({
   mockAddApiKeySpendUsd: vi.fn(),
   mockEstimateCost: vi.fn(),
@@ -14,6 +18,17 @@ const {
   mockLogRequest: vi.fn(),
   mockResolveAnthropicMessageTokenCountModel: vi.fn(),
   mockResolveAnthropicMessagesModel: vi.fn(),
+  mockReserveSpend: vi.fn(),
+  mockExpandSpendReservation: vi.fn(),
+  mockRefundSpendReservation: vi.fn(),
+  mockSettleSpendReservation: vi.fn(),
+}));
+
+vi.mock("../../../src/modules/relay/billing", () => ({
+  reserveSpend: mockReserveSpend,
+  expandSpendReservation: mockExpandSpendReservation,
+  refundSpendReservation: mockRefundSpendReservation,
+  settleSpendReservation: mockSettleSpendReservation,
 }));
 
 vi.mock("../../../src/modules/keys/services", () => {
@@ -23,9 +38,16 @@ vi.mock("../../../src/modules/keys/services", () => {
       this.name = "ApiKeySpendLedgerUnavailableError";
     }
   }
+  class ApiKeySpendLimitExceededError extends Error {
+    constructor() {
+      super("API key spend limit exceeded");
+      this.name = "ApiKeySpendLimitExceededError";
+    }
+  }
 
   return {
     ApiKeySpendLedgerUnavailableError,
+    ApiKeySpendLimitExceededError,
     addApiKeySpendUsd: mockAddApiKeySpendUsd,
   };
 });
@@ -56,11 +78,29 @@ import {
   handleAnthropicMessage,
   handleAnthropicMessageTokenCount,
 } from "../../../src/modules/messages/services";
+import { MessagesRelayTimeoutError } from "../../../src/modules/messages/relay/errors";
+import { UpstreamAnthropicMessagesApiError } from "../../../src/providers/anthropic";
 
 describe("messages services", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
+
+  const relayConfig = {
+    retryCount: 1,
+    retryStatusCodes: [
+      { start: 408, end: 408 },
+      { start: 429, end: 429 },
+      { start: 500, end: 599 },
+    ],
+    firstByteTimeoutMs: 25,
+    streamIdleTimeoutMs: 25,
+    nonStreamTimeoutMs: 25,
+    maxRequestBodyBytes: 1024,
+    rateLimitWindowSeconds: 60,
+    rateLimitTotal: 0,
+    rateLimitSuccess: 0,
+  };
 
   function resolvedTarget(overrides?: {
     createAnthropicMessage?: ReturnType<typeof vi.fn>;
@@ -95,6 +135,7 @@ describe("messages services", () => {
     const createAnthropicMessage = vi.fn().mockResolvedValueOnce({
       id: "msg-1",
       model: "claude-test",
+      content: [{ type: "text", text: "ok" }],
       usage: {
         input_tokens: 10,
         output_tokens: 20,
@@ -130,10 +171,14 @@ describe("messages services", () => {
         max_tokens: 4096,
         stream: false,
       },
-      { headers: { "anthropic-version": "2023-06-01" } },
+      expect.objectContaining({
+        headers: { "anthropic-version": "2023-06-01" },
+        signal: expect.any(AbortSignal),
+        onResponse: expect.any(Function),
+      }),
     );
     expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.05);
-    expect(mockEstimateCost).toHaveBeenCalledWith("anthropic:claude-test", 10, 20, undefined, 80);
+    expect(mockEstimateCost).toHaveBeenCalledWith("anthropic:claude-test", 80, 20, undefined, 80);
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         endpoint: "/v1/messages",
@@ -156,6 +201,7 @@ describe("messages services", () => {
         resolvedTarget({
           createAnthropicMessage: vi.fn().mockResolvedValueOnce({
             id: "msg-1",
+            content: [{ type: "text", text: "ok" }],
             usage: { input_tokens: 10, output_tokens: 20 },
           }),
         }),
@@ -198,18 +244,25 @@ describe("messages services", () => {
       chunks.push(chunk);
     }
     expect(chunks).toEqual(['data: {"type":"message_start"}\n\n']);
-    expect(createAnthropicMessageStream).toHaveBeenCalledWith({
-      model: "claude-test",
-      messages: [{ role: "user", content: "hi" }],
-      max_tokens: 4096,
-      stream: true,
-    });
+    expect(createAnthropicMessageStream).toHaveBeenCalledWith(
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 4096,
+        stream: true,
+      },
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+        onResponse: expect.any(Function),
+      }),
+    );
   });
 
   it("applies channel model mapping, param overrides, and header overrides", async () => {
     const createAnthropicMessage = vi.fn().mockResolvedValueOnce({
       id: "msg-1",
       model: "claude-upstream",
+      content: [{ type: "text", text: "ok" }],
       usage: { input_tokens: 1, output_tokens: 1 },
     });
     mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
@@ -256,6 +309,8 @@ describe("messages services", () => {
           "anthropic-version": "2024-01-01",
           "anthropic-beta": "tools-2024-04-04",
         },
+        signal: expect.any(AbortSignal),
+        onResponse: expect.any(Function),
       },
     );
     expect(mockLogRequest).toHaveBeenCalledWith(
@@ -318,6 +373,8 @@ describe("messages services", () => {
           "anthropic-version": "2024-01-01",
           "anthropic-beta": "tools-2024-04-04",
         },
+        signal: expect.any(AbortSignal),
+        onResponse: expect.any(Function),
       },
     );
     expect(mockLogRequest).toHaveBeenCalledWith(
@@ -328,5 +385,146 @@ describe("messages services", () => {
         statusCode: 200,
       }),
     );
+  });
+
+  it("does not retry a non-retryable upstream validation error", async () => {
+    const primary = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new UpstreamAnthropicMessagesApiError(
+          400,
+          '{"type":"error","error":{"type":"invalid_request_error","message":"bad"}}',
+          "application/json",
+        ),
+      );
+    const backup = vi.fn();
+    mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      requestedModelId: "anthropic:claude-test",
+      targets: [
+        resolvedTarget({ createAnthropicMessage: primary }),
+        resolvedTarget({ createAnthropicMessage: backup }),
+      ],
+    });
+
+    await expect(
+      handleAnthropicMessage(
+        { model: "claude-test", messages: [{ role: "user", content: "hi" }] },
+        "key-1",
+        { config: relayConfig },
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(primary).toHaveBeenCalledOnce();
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("retries configured upstream statuses on the next target", async () => {
+    const primary = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new UpstreamAnthropicMessagesApiError(429, '{"type":"error"}', "application/json"),
+      );
+    const backup = vi.fn().mockResolvedValueOnce({
+      id: "msg-backup",
+      type: "message",
+      role: "assistant",
+      model: "claude-test",
+      content: [{ type: "text", text: "ok" }],
+      usage: { input_tokens: 2, output_tokens: 1 },
+    });
+    mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      requestedModelId: "anthropic:claude-test",
+      targets: [
+        resolvedTarget({ createAnthropicMessage: primary }),
+        resolvedTarget({ createAnthropicMessage: backup }),
+      ],
+    });
+    mockEstimateCost.mockReturnValueOnce(0.001);
+
+    const result = await handleAnthropicMessage(
+      { model: "claude-test", messages: [{ role: "user", content: "hi" }] },
+      "key-1",
+      { config: relayConfig },
+    );
+
+    expect(result).toMatchObject({ kind: "complete", response: { id: "msg-backup" } });
+    expect(primary).toHaveBeenCalledOnce();
+    expect(backup).toHaveBeenCalledOnce();
+  });
+
+  it("aborts a non-stream request at the configured timeout", async () => {
+    const never = vi.fn(
+      (_request, options: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => reject(options.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
+    mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "anthropic:claude-test",
+      targets: [resolvedTarget({ createAnthropicMessage: never })],
+    });
+
+    await expect(
+      handleAnthropicMessage(
+        { model: "claude-test", messages: [{ role: "user", content: "hi" }] },
+        "key-1",
+        { config: { ...relayConfig, retryCount: 0, nonStreamTimeoutMs: 5 } },
+      ),
+    ).rejects.toBeInstanceOf(MessagesRelayTimeoutError);
+    expect(never.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+  });
+
+  it("reserves maximum liability and settles actual spend atomically", async () => {
+    const reservation = {
+      requestId: "req-1",
+      limits: { apiKeyId: "key-1", apiKeyLimitUsd: 1 },
+      reservedUsd: 0.5,
+    };
+    mockReserveSpend.mockResolvedValueOnce(reservation);
+    mockGetModelPricing.mockReturnValue({ maxOutputTokens: 1000 });
+    mockEstimateCost.mockReturnValueOnce(0.5).mockReturnValueOnce(0.05);
+    mockResolveAnthropicMessagesModel.mockResolvedValueOnce({
+      kind: "direct",
+      requestedModelId: "anthropic:claude-test",
+      targets: [
+        resolvedTarget({
+          createAnthropicMessage: vi.fn().mockResolvedValueOnce({
+            id: "msg-1",
+            type: "message",
+            role: "assistant",
+            model: "claude-test",
+            content: [{ type: "text", text: "ok" }],
+            usage: { input_tokens: 10, output_tokens: 5 },
+          }),
+        }),
+      ],
+    });
+
+    await handleAnthropicMessage(
+      {
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+        max_tokens: 100,
+      },
+      "key-1",
+      {
+        requireBillableUsage: true,
+        billing: { apiKeyId: "key-1", apiKeyLimitUsd: 1 },
+        requestId: "req-1",
+        config: { ...relayConfig, retryCount: 0 },
+      },
+    );
+
+    expect(mockReserveSpend).toHaveBeenCalledWith(
+      { apiKeyId: "key-1", apiKeyLimitUsd: 1 },
+      "req-1",
+      0.5,
+    );
+    expect(mockSettleSpendReservation).toHaveBeenCalledWith(reservation, 0.05);
+    expect(mockAddApiKeySpendUsd).not.toHaveBeenCalled();
   });
 });

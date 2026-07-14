@@ -417,7 +417,7 @@ describe("AnthropicAdapter", () => {
     mockFetch.mockResolvedValueOnce(
       new Response('{"type":"error","error":{"message":"bad"}}', {
         status: 400,
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Retry-After": "7" },
       }),
     );
 
@@ -431,6 +431,34 @@ describe("AnthropicAdapter", () => {
       name: "UpstreamAnthropicMessagesApiError",
       status: 400,
       body: '{"type":"error","error":{"message":"bad"}}',
+      retryAfter: "7",
     } satisfies Partial<UpstreamAnthropicMessagesApiError>);
+  });
+
+  it("uses the relay signal, exposes upstream response metadata, and supports an endpoint override", async () => {
+    const upstream = Response.json({
+      id: "msg-override",
+      type: "message",
+      role: "assistant",
+      model: "claude-test",
+      content: [{ type: "text", text: "ok" }],
+    });
+    mockFetch.mockResolvedValueOnce(upstream);
+    const controller = new AbortController();
+    const onResponse = vi.fn();
+
+    await new AnthropicAdapter(
+      "sk-test",
+      "https://anthropic-upstream.example/v1/messages/?api-version=fixture",
+    ).createAnthropicMessage(
+      { model: "claude-test", messages: [{ role: "user", content: "hi" }] },
+      { signal: controller.signal, onResponse, query: { beta: "true" } },
+    );
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "https://anthropic-upstream.example/v1/messages?api-version=fixture&beta=true",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    expect(onResponse).toHaveBeenCalledWith(upstream);
   });
 });

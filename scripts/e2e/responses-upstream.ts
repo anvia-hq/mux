@@ -10,6 +10,7 @@ type CapturedRequest = {
   query: Record<string, string[]>;
   channel: string;
   authorizationPresent: boolean;
+  apiKeyPresent: boolean;
   headerNames: string[];
   body: JsonObject | null;
 };
@@ -52,6 +53,9 @@ function channelFor(request: IncomingMessage): string {
   if (token.includes("native-backup")) return "native-backup";
   if (token.includes("chat-primary")) return "chat-primary";
   if (token.includes("chat-backup")) return "chat-backup";
+  const apiKey = String(request.headers["x-api-key"] ?? "");
+  if (apiKey.includes("anthropic-primary")) return "anthropic-primary";
+  if (apiKey.includes("anthropic-backup")) return "anthropic-backup";
   return "unknown";
 }
 
@@ -72,6 +76,7 @@ function capture(request: IncomingMessage, url: URL, channel: string, body: Json
     query,
     channel,
     authorizationPresent: Boolean(request.headers.authorization),
+    apiKeyPresent: Boolean(request.headers["x-api-key"]),
     headerNames: Object.keys(request.headers)
       .map((name) => name.toLowerCase())
       .sort(),
@@ -295,6 +300,121 @@ async function chatCreate(response: ServerResponse, channel: string, body: JsonO
   response.end("data: [DONE]\n\n");
 }
 
+function anthropicMessage(body: JsonObject): JsonObject {
+  return {
+    id: `msg_fixture_${++responseSequence}`,
+    type: "message",
+    role: "assistant",
+    model: typeof body.model === "string" ? body.model : "claude-haiku-4-5",
+    content: [{ type: "text", text: "Fixture Anthropic response" }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: {
+      input_tokens: 12,
+      output_tokens: 8,
+      cache_creation_input_tokens: 3,
+      cache_read_input_tokens: 2,
+    },
+  };
+}
+
+async function anthropicCreate(response: ServerResponse, channel: string, body: JsonObject) {
+  const scenario = scenarioFor(body);
+  if (scenario === "retryable_primary" && channel === "anthropic-primary") {
+    json(response, 503, {
+      type: "error",
+      error: { type: "api_error", message: "fixture primary unavailable" },
+    });
+    return;
+  }
+  if (scenario === "non_retryable") {
+    json(
+      response,
+      400,
+      {
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "fixture rejected x-api-key: sk-fixturesecret123456",
+        },
+      },
+      { "retry-after": "9" },
+    );
+    return;
+  }
+  if (scenario === "slow_first_byte") await delay(1_000);
+
+  if (body.stream !== true) {
+    json(response, 200, anthropicMessage(body), {
+      "x-fixture-upstream": channel,
+      "x-request-id": "must-not-overwrite-gateway-request-id",
+      "set-cookie": "must-not-forward=true",
+    });
+    return;
+  }
+
+  const id = `msg_fixture_${++responseSequence}`;
+  const model = typeof body.model === "string" ? body.model : "claude-haiku-4-5";
+  response.writeHead(200, {
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    "x-fixture-upstream": channel,
+  });
+  const fragmented = scenario === "fragmented_stream";
+  await writeFragments(
+    response,
+    sse("message_start", {
+      message: {
+        id,
+        type: "message",
+        role: "assistant",
+        model,
+        content: [],
+        stop_reason: null,
+        usage: {
+          input_tokens: 12,
+          output_tokens: 0,
+          cache_creation_input_tokens: 3,
+          cache_read_input_tokens: 2,
+        },
+      },
+    }),
+    fragmented,
+  );
+  if (scenario === "idle_timeout") await delay(1_000);
+  await writeFragments(
+    response,
+    sse("content_block_delta", {
+      index: 0,
+      delta: { type: "text_delta", text: "Fixture Anthropic stream" },
+    }),
+    fragmented,
+  );
+  await writeFragments(
+    response,
+    sse("message_delta", {
+      delta: { stop_reason: "end_turn", stop_sequence: null },
+      usage: { output_tokens: 8 },
+    }),
+    fragmented,
+  );
+  if (scenario === "stream_error") {
+    await writeFragments(
+      response,
+      sse("error", {
+        error: {
+          type: "api_error",
+          message: "stream failed authorization: Bearer sk-streamsecret123456",
+        },
+      }),
+      fragmented,
+    );
+  } else if (scenario !== "missing_terminal" && scenario !== "idle_timeout") {
+    await writeFragments(response, sse("message_stop", {}), fragmented);
+  }
+  response.end();
+}
+
 async function handleResponseOperation(
   request: IncomingMessage,
   response: ServerResponse,
@@ -387,6 +507,14 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname === "/v1/chat/completions" && request.method === "POST" && body) {
       await chatCreate(response, channel, body);
+      return;
+    }
+    if (url.pathname === "/v1/messages/count_tokens" && request.method === "POST") {
+      json(response, 200, { input_tokens: 42 }, { "x-fixture-upstream": channel });
+      return;
+    }
+    if (url.pathname === "/v1/messages" && request.method === "POST" && body) {
+      await anthropicCreate(response, channel, body);
       return;
     }
     if (url.pathname === "/v1/responses/input_tokens" && request.method === "POST") {

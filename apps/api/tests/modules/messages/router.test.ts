@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -164,10 +165,54 @@ describe("messages router", () => {
     const app = new Hono().route("/v1/messages", messagesRouter);
     const res = await app.request("/v1/messages", {
       method: "POST",
-      headers: { "x-api-key": "mux_live_test" },
+      headers: { "x-api-key": "mux_live_test", "Content-Type": "application/json" },
       body: "bad",
     });
     expect(res.status).toBe(400);
+    expect(res.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(res.json()).resolves.toMatchObject({
+      type: "error",
+      error: { type: "invalid_request_error" },
+      request_id: res.headers.get("x-request-id"),
+    });
+  });
+
+  it("POST /v1/messages accepts a gzip-compressed JSON request", async () => {
+    mockHandleAnthropicMessage.mockResolvedValueOnce({
+      kind: "complete",
+      response: {
+        id: "msg-gzip",
+        type: "message",
+        role: "assistant",
+        model: "claude-test",
+        content: [{ type: "text", text: "ok" }],
+      },
+      status: 200,
+      headers: new Headers(),
+    });
+    const body = gzipSync(
+      JSON.stringify({
+        model: "claude-test",
+        messages: [{ role: "user", content: "compressed" }],
+      }),
+    );
+    const app = new Hono().route("/v1/messages", messagesRouter);
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": "mux_live_test",
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+      },
+      body,
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockHandleAnthropicMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ messages: [{ role: "user", content: "compressed" }] }),
+      "key-1",
+      expect.any(Object),
+    );
   });
 
   it("POST /v1/messages 403 when the API key cannot access the normalized model", async () => {
@@ -186,8 +231,15 @@ describe("messages router", () => {
     });
 
     expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({
-      error: "API key is not allowed to use model: anthropic:claude-test",
+    await expect(res.json()).resolves.toMatchObject({
+      type: "error",
+      error: {
+        type: "permission_error",
+        message: expect.stringContaining(
+          "API key is not allowed to use model: anthropic:claude-test",
+        ),
+      },
+      request_id: expect.any(String),
     });
     expect(mockHandleAnthropicMessage).not.toHaveBeenCalled();
   });
@@ -200,10 +252,12 @@ describe("messages router", () => {
         model: "claude-test",
         usage: { input_tokens: 1, output_tokens: 2 },
       },
+      status: 200,
+      headers: new Headers({ "request-id": "upstream-1" }),
     });
 
     const app = new Hono().route("/v1/messages", messagesRouter);
-    const res = await app.request("/v1/messages", {
+    const res = await app.request("/v1/messages?beta=true", {
       method: "POST",
       headers: {
         "x-api-key": "mux_live_test",
@@ -225,19 +279,23 @@ describe("messages router", () => {
         messages: [{ role: "user", content: "hi" }],
       },
       "key-1",
-      {
+      expect.objectContaining({
         requireBillableUsage: false,
         providerOptions: {
           headers: {
             "anthropic-version": "2023-06-01",
             "anthropic-beta": "tools-2024-04-04",
           },
+          query: { beta: "true" },
         },
+        billing: undefined,
         rawBody: expect.any(String),
+        requestId: expect.any(String),
+        signal: expect.any(AbortSignal),
         requestContext: expect.objectContaining({
           requestPath: "/v1/messages",
         }),
-      },
+      }),
     );
   });
 
@@ -246,6 +304,8 @@ describe("messages router", () => {
       provider: "anthropic",
       model: "anthropic:claude-test",
       response: { input_tokens: 42 },
+      status: 200,
+      headers: new Headers(),
     });
 
     const app = new Hono().route("/v1/messages", messagesRouter);
@@ -271,7 +331,7 @@ describe("messages router", () => {
         messages: [{ role: "user", content: "hi" }],
       },
       "key-1",
-      {
+      expect.objectContaining({
         providerOptions: {
           headers: {
             "anthropic-version": "2023-06-01",
@@ -279,10 +339,12 @@ describe("messages router", () => {
           },
         },
         rawBody: expect.any(String),
+        requestId: expect.any(String),
+        signal: expect.any(AbortSignal),
         requestContext: expect.objectContaining({
           requestPath: "/v1/messages/count_tokens",
         }),
-      },
+      }),
     );
   });
 
@@ -302,8 +364,15 @@ describe("messages router", () => {
     });
 
     expect(res.status).toBe(403);
-    await expect(res.json()).resolves.toEqual({
-      error: "API key is not allowed to use model: anthropic:claude-test",
+    await expect(res.json()).resolves.toMatchObject({
+      type: "error",
+      error: {
+        type: "permission_error",
+        message: expect.stringContaining(
+          "API key is not allowed to use model: anthropic:claude-test",
+        ),
+      },
+      request_id: expect.any(String),
     });
     expect(mockHandleAnthropicMessageTokenCount).not.toHaveBeenCalled();
   });
@@ -313,6 +382,7 @@ describe("messages router", () => {
     async function* rawStream() {
       yield 'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}\n\n';
       yield 'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":5}}\n\n';
+      yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n';
     }
     mockHandleAnthropicMessage.mockResolvedValueOnce({
       kind: "stream",
@@ -322,6 +392,11 @@ describe("messages router", () => {
       channelId: "anthropic-primary",
       channelName: "Anthropic primary",
       latencyMs: 25,
+      status: 200,
+      headers: new Headers(),
+      abort: vi.fn(),
+      refundSpend: vi.fn(),
+      finalizeSpend: vi.fn().mockResolvedValue(0.02),
     });
     mockEstimateCost.mockReturnValueOnce(0.02);
 
@@ -341,9 +416,11 @@ describe("messages router", () => {
     expect(mockHandleAnthropicMessage).toHaveBeenCalledWith(
       expect.objectContaining({ stream: true }),
       "key-1",
-      expect.objectContaining({ requireBillableUsage: false }),
+      expect.objectContaining({
+        requireBillableUsage: true,
+        billing: expect.objectContaining({ apiKeyId: "key-1", apiKeyLimitUsd: 10 }),
+      }),
     );
-    expect(mockAddApiKeySpendUsd).toHaveBeenCalledWith("key-1", 0.02);
     expect(mockLogStreamFinal).toHaveBeenCalledWith(
       expect.objectContaining({
         latencyMs: 25,
@@ -358,12 +435,13 @@ describe("messages router", () => {
     );
   });
 
-  it("POST /v1/messages preserves upstream Anthropic error bodies", async () => {
+  it("POST /v1/messages sanitizes upstream Anthropic error bodies", async () => {
     mockHandleAnthropicMessage.mockRejectedValueOnce(
       new UpstreamAnthropicMessagesApiError(
         400,
-        '{"type":"error","error":{"message":"bad"}}',
+        '{"type":"error","error":{"message":"bad x-api-key: sk-secretsecretsecret"}}',
         "application/json",
+        "3",
       ),
     );
 
@@ -378,6 +456,52 @@ describe("messages router", () => {
     });
 
     expect(res.status).toBe(400);
-    await expect(res.text()).resolves.toBe('{"type":"error","error":{"message":"bad"}}');
+    expect(res.headers.get("Retry-After")).toBe("3");
+    await expect(res.json()).resolves.toMatchObject({
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message: expect.stringContaining("bad x-api-key: [REDACTED] (request_id:"),
+      },
+      request_id: expect.any(String),
+    });
+  });
+
+  it("POST /v1/messages emits an Anthropic error event when a stream ends early", async () => {
+    async function* incompleteStream() {
+      yield 'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n';
+    }
+    const finalizeSpend = vi.fn().mockResolvedValue(0.001);
+    mockHandleAnthropicMessage.mockResolvedValueOnce({
+      kind: "stream",
+      stream: incompleteStream(),
+      provider: "anthropic",
+      model: "anthropic:claude-test",
+      latencyMs: 2,
+      status: 200,
+      headers: new Headers(),
+      abort: vi.fn(),
+      refundSpend: vi.fn(),
+      finalizeSpend,
+    });
+
+    const app = new Hono().route("/v1/messages", messagesRouter);
+    const res = await app.request("/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": "mux_live_test", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-test",
+        messages: [{ role: "user", content: "hi" }],
+        stream: true,
+      }),
+    });
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(text).toContain("event: message_start");
+    expect(text).toContain("event: error");
+    expect(text).toContain("Upstream request failed");
+    expect(finalizeSpend).toHaveBeenCalledOnce();
+    expect(mockLogStreamFinal).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 502 }));
   });
 });

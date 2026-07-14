@@ -960,7 +960,7 @@ type ResolvedEndpointModel<TTarget extends ResolvedProviderModel> =
   | {
       kind: "direct";
       requestedModelId: string;
-      targets: [TTarget];
+      targets: [TTarget, ...TTarget[]];
     }
   | {
       kind: "fallback-group";
@@ -1227,6 +1227,7 @@ function isAnthropicMessageTokenCountCapableTarget(
 async function resolveEndpointModel<TTarget extends ResolvedProviderModel>(
   model: string,
   isCapableTarget: (target: ResolvedProviderModel) => target is TTarget,
+  options: { allDirectTargets?: boolean } = {},
 ): Promise<ResolvedEndpointModel<TTarget> | null> {
   const resolved = await resolveChatModel(model);
   if (!resolved) {
@@ -1234,14 +1235,18 @@ async function resolveEndpointModel<TTarget extends ResolvedProviderModel>(
   }
 
   if (resolved.kind === "direct") {
-    const target = resolved.targets[0];
-    if (!isCapableTarget(target)) {
+    const targets = options.allDirectTargets
+      ? resolved.targets.filter(isCapableTarget)
+      : resolved.targets[0] && isCapableTarget(resolved.targets[0])
+        ? [resolved.targets[0]]
+        : [];
+    if (targets.length === 0) {
       return null;
     }
     return {
       kind: "direct",
       requestedModelId: resolved.requestedModelId,
-      targets: [target],
+      targets: targets as [TTarget, ...TTarget[]],
     };
   }
 
@@ -1312,18 +1317,23 @@ export async function resolveAnthropicMessagesModel(
   model: string,
 ): Promise<ResolvedAnthropicMessagesModel | null> {
   if (model.includes(":")) {
-    return resolveEndpointModel(model, isAnthropicMessagesCapableTarget);
+    return resolveEndpointModel(model, isAnthropicMessagesCapableTarget, {
+      allDirectTargets: true,
+    });
   }
 
   const directAnthropic = await resolveEndpointModel(
     toPublicModelId("anthropic", model),
     isAnthropicMessagesCapableTarget,
+    { allDirectTargets: true },
   );
   if (directAnthropic) {
     return directAnthropic;
   }
 
-  return resolveEndpointModel(model, isAnthropicMessagesCapableTarget);
+  return resolveEndpointModel(model, isAnthropicMessagesCapableTarget, {
+    allDirectTargets: true,
+  });
 }
 
 export async function resolveAnthropicMessagesAccessModelId(model: string): Promise<string> {
@@ -1338,18 +1348,23 @@ export async function resolveAnthropicMessageTokenCountModel(
   model: string,
 ): Promise<ResolvedAnthropicMessageTokenCountModel | null> {
   if (model.includes(":")) {
-    return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget);
+    return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget, {
+      allDirectTargets: true,
+    });
   }
 
   const directAnthropic = await resolveEndpointModel(
     toPublicModelId("anthropic", model),
     isAnthropicMessageTokenCountCapableTarget,
+    { allDirectTargets: true },
   );
   if (directAnthropic) {
     return directAnthropic;
   }
 
-  return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget);
+  return resolveEndpointModel(model, isAnthropicMessageTokenCountCapableTarget, {
+    allDirectTargets: true,
+  });
 }
 
 export async function resolveAnthropicMessageTokenCountAccessModelId(

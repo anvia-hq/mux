@@ -139,6 +139,25 @@ pnpm smoke:responses
 Set `RESPONSES_SMOKE_BACKGROUND=1` to include billable background creation and polling. Live smoke
 tests are never included in the default test commands.
 
+## Messages Verification
+
+Run the deterministic Anthropic Messages transport suite with:
+
+```sh
+pnpm e2e:messages
+```
+
+The suite uses a local HTTP/SSE upstream and covers native payload forwarding, token counting,
+retry policy, stream termination, timeout handling, error sanitization, and spend reservations.
+To smoke-test explicitly selected models through a running gateway, use:
+
+```sh
+MESSAGES_SMOKE_BASE_URL=http://localhost/api \
+MESSAGES_SMOKE_API_KEY=mux_live_... \
+MESSAGES_SMOKE_MODELS=anthropic:claude-haiku-4-5 \
+pnpm smoke:messages
+```
+
 Recent 100-sample run against `gpt-5.4-mini`:
 
 | Metric | Direct p50 | Mux p50 | Median overhead | Direct p95 | Mux p95 |
@@ -182,6 +201,14 @@ Important production settings:
 | `RESPONSES_NON_STREAM_TIMEOUT_MS` | Timeout for non-streaming Responses operations. |
 | `RESPONSES_MAX_REQUEST_BODY_MB` | Maximum decompressed Responses request size. Defaults to `128`. |
 | `RESPONSES_RATE_LIMIT_*` | Optional per-key fixed-window total and successful Responses limits. |
+| `ANTHROPIC_MESSAGES_API_URL` | Optional full upstream URL for Anthropic-compatible Messages requests. |
+| `MESSAGES_RETRY_COUNT` | Retry/failover attempts for `/v1/messages`. Defaults to `2`. |
+| `MESSAGES_RETRY_STATUS_CODES` | Retryable upstream HTTP statuses and ranges. |
+| `MESSAGES_FIRST_BYTE_TIMEOUT_MS` | Maximum wait for the first Messages stream event. |
+| `MESSAGES_STREAM_IDLE_TIMEOUT_MS` | Maximum idle time between Messages stream events. |
+| `MESSAGES_NON_STREAM_TIMEOUT_MS` | Timeout for non-streaming Messages operations. |
+| `MESSAGES_MAX_REQUEST_BODY_MB` | Maximum decompressed Messages request size. Defaults to `128`. |
+| `MESSAGES_RATE_LIMIT_*` | Optional per-key fixed-window total and successful Messages limits. |
 
 ## Current Boundaries
 

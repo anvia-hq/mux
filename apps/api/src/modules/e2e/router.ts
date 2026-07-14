@@ -110,6 +110,7 @@ const seedSchema = z.object({
   users: z.array(userSeedSchema).optional(),
   syntheticProvider: z.boolean().optional(),
   e2eProvider: z.boolean().optional(),
+  anthropicProvider: z.boolean().optional(),
   apiKeys: z.array(apiKeySeedSchema).optional(),
   requestLogs: z.array(requestLogSeedSchema).optional(),
   fallbackGroups: z.array(fallbackGroupSeedSchema).optional(),
@@ -269,6 +270,64 @@ export const e2eRouter = new Hono()
         },
       });
       await reloadProvider("e2e");
+      providerKeys.push({ provider: row.provider, lastFour: row.lastFour });
+    }
+
+    if (seed.anthropicProvider) {
+      const updater = await findSeedAdmin();
+      const channels = [
+        {
+          id: "anthropic-e2e-primary",
+          name: "Anthropic E2E primary",
+          apiKey: "fixture-anthropic-primary-key",
+          priority: 100,
+        },
+        {
+          id: "anthropic-e2e-backup",
+          name: "Anthropic E2E backup",
+          apiKey: "fixture-anthropic-backup-key",
+          priority: 50,
+        },
+      ];
+      for (const channel of channels) {
+        const ciphertext = encrypt(channel.apiKey);
+        await prisma.providerChannel.upsert({
+          where: { id: channel.id },
+          create: {
+            id: channel.id,
+            provider: "anthropic",
+            name: channel.name,
+            priority: channel.priority,
+            keyCiphertext: ciphertext,
+            lastFour: lastFour(channel.apiKey),
+            createdBy: updater.id,
+            updatedBy: updater.id,
+          },
+          update: {
+            name: channel.name,
+            priority: channel.priority,
+            keyCiphertext: ciphertext,
+            lastFour: lastFour(channel.apiKey),
+            updatedBy: updater.id,
+          },
+        });
+      }
+      const primaryKey = channels[0]?.apiKey ?? "";
+      const row = await prisma.providerKey.upsert({
+        where: { provider: "anthropic" },
+        create: {
+          provider: "anthropic",
+          ciphertext: encrypt(primaryKey),
+          lastFour: lastFour(primaryKey),
+          updatedBy: updater.id,
+        },
+        update: {
+          ciphertext: encrypt(primaryKey),
+          lastFour: lastFour(primaryKey),
+          updatedBy: updater.id,
+        },
+      });
+      await reloadProvider("anthropic");
       providerKeys.push({ provider: row.provider, lastFour: row.lastFour });
     }
 

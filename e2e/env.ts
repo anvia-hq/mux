@@ -24,12 +24,16 @@ export const e2eRuntimeEnv = {
   E2E_RESET_TOKEN: e2eResetToken,
   E2E_REQUEST_LOG_WORKER_PORT: e2eRequestLogWorkerPort,
   E2E_RESPONSES_UPSTREAM_PORT: e2eResponsesUpstreamPort,
+  ANTHROPIC_MESSAGES_API_URL: `${e2eResponsesUpstreamUrl}/v1/messages`,
   PROVIDER_KEYS_ENCRYPTION_KEY:
     process.env.E2E_PROVIDER_KEYS_ENCRYPTION_KEY ?? "e2e-provider-key-change-me",
   REDIS_URL: e2eRedisUrl,
   RESPONSES_FIRST_BYTE_TIMEOUT_MS: "400",
   RESPONSES_NON_STREAM_TIMEOUT_MS: "600",
   RESPONSES_STREAM_IDLE_TIMEOUT_MS: "400",
+  MESSAGES_FIRST_BYTE_TIMEOUT_MS: "400",
+  MESSAGES_NON_STREAM_TIMEOUT_MS: "600",
+  MESSAGES_STREAM_IDLE_TIMEOUT_MS: "400",
 } satisfies Record<string, string>;
 
 export const e2ePlatformEnv = {

@@ -46,6 +46,7 @@ type SeedInput = {
   users?: Array<AdminUser & { role: "ADMIN" | "USER" }>;
   syntheticProvider?: boolean;
   e2eProvider?: boolean;
+  anthropicProvider?: boolean;
   apiKeys?: Array<{
     name: string;
     createdByEmail?: string;
@@ -275,6 +276,7 @@ export type E2eUpstreamRequest = {
   query: Record<string, string[]>;
   channel: string;
   authorizationPresent: boolean;
+  apiKeyPresent: boolean;
   headerNames: string[];
   body: Record<string, unknown> | null;
 };

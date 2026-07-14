@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { logRequest, RequestLoggingUnavailableError } from "../../middleware/logger";
 import { UpstreamAnthropicMessagesApiError } from "../../providers/anthropic";
 import {
@@ -23,7 +24,31 @@ import type {
   ProviderRequestOptions,
 } from "../../providers/types";
 import { mergeProviderRequestHeaders } from "../../providers/types";
-import { addApiKeySpendUsd, ApiKeySpendLedgerUnavailableError } from "../keys/services";
+import {
+  addApiKeySpendUsd,
+  ApiKeySpendLedgerUnavailableError,
+  ApiKeySpendLimitExceededError,
+} from "../keys/services";
+import {
+  expandSpendReservation,
+  refundSpendReservation,
+  reserveSpend,
+  settleSpendReservation,
+  type SpendLimits,
+  type SpendReservation,
+} from "../relay/billing";
+import { createChatCandidateSelector } from "../chat/relay/routing";
+import { messagesRelayConfig, type MessagesRelayConfig } from "./relay/config";
+import {
+  MessagesRelayClientAbortError,
+  MessagesRelayProtocolError,
+  MessagesRelayTimeoutError,
+  messagesRelayStatus,
+  retryableMessagesError,
+} from "./relay/errors";
+import { estimateAnthropicMessageInputTokens } from "./relay/token-estimator";
+
+type AnthropicUsage = ReturnType<typeof extractAnthropicMessageTokenUsage>;
 
 export type AnthropicMessageResult =
   | {
@@ -34,10 +59,20 @@ export type AnthropicMessageResult =
       channelId?: string;
       channelName?: string;
       latencyMs: number;
+      status: number;
+      headers: Headers;
+      abort: () => void;
+      refundSpend: () => Promise<void>;
+      finalizeSpend: (
+        usage?: AnthropicUsage,
+        outputTokenEstimate?: number,
+      ) => Promise<number | undefined>;
     }
   | {
       kind: "complete";
       response: AnthropicMessageObject;
+      status: number;
+      headers: Headers;
     };
 
 export type AnthropicMessageTokenCountResult = {
@@ -46,6 +81,20 @@ export type AnthropicMessageTokenCountResult = {
   channelId?: string;
   channelName?: string;
   response: AnthropicMessageTokenCountObject;
+  status: number;
+  headers: Headers;
+};
+
+export type HandleAnthropicMessageOptions = {
+  requireBillableUsage?: boolean;
+  billing?: SpendLimits;
+  providerOptions?: ProviderRequestOptions;
+  requestContext?: ChannelOverrideRequestContext;
+  rawBody?: string;
+  requestId?: string;
+  signal?: AbortSignal;
+  config?: MessagesRelayConfig;
+  random?: () => number;
 };
 
 export class ApiKeyUnbillableAnthropicMessageUsageError extends Error {
@@ -60,72 +109,55 @@ export class ApiKeyUnbillableAnthropicMessageUsageError extends Error {
 export async function handleAnthropicMessage(
   request: AnthropicMessageCreateRequest,
   apiKeyId: string,
-  options: {
-    requireBillableUsage?: boolean;
-    providerOptions?: ProviderRequestOptions;
-    requestContext?: ChannelOverrideRequestContext;
-    rawBody?: string;
-  } = {},
+  options: HandleAnthropicMessageOptions = {},
 ): Promise<AnthropicMessageResult> {
   const resolved = await resolveAnthropicMessagesModel(request.model);
+  if (!resolved) throw new Error(`No provider found for model: ${request.model}`);
 
-  if (!resolved) {
-    throw new Error(`No provider found for model: ${request.model}`);
-  }
-
-  if (
-    options.requireBillableUsage &&
-    resolved.kind === "direct" &&
-    !getModelPricing(resolved.targets[0].publicModelId)
-  ) {
+  const targets = options.requireBillableUsage
+    ? resolved.targets.filter((target) => getModelPricing(target.publicModelId))
+    : resolved.targets;
+  if (targets.length === 0 && options.requireBillableUsage) {
     throw new ApiKeyUnbillableAnthropicMessageUsageError();
   }
 
-  if (request.stream === true) {
-    const selected = await resolveStreamingTarget(request, apiKeyId, resolved.targets, {
-      providerOptions: options.providerOptions,
-      requestContext: options.requestContext,
-      rawBody: options.rawBody,
-    });
-    return {
-      kind: "stream",
-      stream: selected.stream,
-      provider: selected.target.providerName,
-      model: selected.target.publicModelId,
-      channelId: selected.target.channelId,
-      channelName: selected.target.channelName,
-      latencyMs: selected.latencyMs,
-    };
-  }
-
-  return createAnthropicMessageWithFallback(request, apiKeyId, resolved.targets, {
-    requireBillableUsage: options.requireBillableUsage,
-    providerOptions: options.providerOptions,
-    requestContext: options.requestContext,
-    rawBody: options.rawBody,
-  });
+  return request.stream === true
+    ? createAnthropicMessageStreamWithFallback(
+        request,
+        apiKeyId,
+        resolved.requestedModelId,
+        targets,
+        options,
+      )
+    : createAnthropicMessageWithFallback(
+        request,
+        apiKeyId,
+        resolved.requestedModelId,
+        targets,
+        options,
+      );
 }
 
 export async function handleAnthropicMessageTokenCount(
   request: AnthropicMessageCountTokensRequest,
   apiKeyId: string,
-  options: {
-    providerOptions?: ProviderRequestOptions;
-    requestContext?: ChannelOverrideRequestContext;
-    rawBody?: string;
-  } = {},
+  options: Omit<HandleAnthropicMessageOptions, "requireBillableUsage" | "billing"> = {},
 ): Promise<AnthropicMessageTokenCountResult> {
   const resolved = await resolveAnthropicMessageTokenCountModel(request.model);
+  if (!resolved) throw new Error(`No provider found for model: ${request.model}`);
 
-  if (!resolved) {
-    throw new Error(`No provider found for model: ${request.model}`);
-  }
-
+  const config = options.config ?? messagesRelayConfig;
+  const selector = createChatCandidateSelector(resolved.targets, options.random);
   let lastError: unknown;
 
-  for (const target of resolved.targets) {
-    let attemptStartTime: number | undefined;
+  for (let attempt = 0; attempt <= config.retryCount; attempt += 1) {
+    const target = selector.next() as ResolvedAnthropicMessageTokenCountProviderModel | null;
+    if (!target) break;
+    const startedAt = Date.now();
+    const attemptSignal = messagesAttemptSignal(options.signal);
     try {
+      let status = 200;
+      let headers = new Headers();
       const prepared = prepareChannelOpenAICompatibleRequestSettings(
         buildAnthropicMessageTokenCountRequest(request, target),
         target,
@@ -135,14 +167,21 @@ export async function handleAnthropicMessageTokenCount(
         options.providerOptions,
         prepared.headers,
         rawPassThroughBody(target, options.rawBody),
+        attemptSignal.controller.signal,
+        (response) => {
+          status = response.status;
+          headers = new Headers(response.headers);
+        },
       );
-      attemptStartTime = Date.now();
-      const response = requestOptions
-        ? await target.provider.countAnthropicMessageTokens(prepared.body, requestOptions)
-        : await target.provider.countAnthropicMessageTokens(prepared.body);
-      const latencyMs = Date.now() - attemptStartTime;
+      const response = await messagesRaceWithTimeout(
+        target.provider.countAnthropicMessageTokens(prepared.body, requestOptions),
+        config.nonStreamTimeoutMs,
+        "non_stream",
+        attemptSignal.controller,
+        options.signal,
+      );
+      assertAnthropicTokenCount(response);
       const promptTokens = numberOrUndefined(response.input_tokens);
-
       await logRequest({
         apiKeyId,
         provider: target.providerName,
@@ -151,45 +190,39 @@ export async function handleAnthropicMessageTokenCount(
         channelId: target.channelId,
         channelName: target.channelName,
         endpoint: "/v1/messages/count_tokens",
-        latencyMs,
+        latencyMs: Date.now() - startedAt,
         promptTokens,
         totalTokens: promptTokens,
-        statusCode: 200,
+        statusCode: status,
       });
-
       return {
         provider: target.providerName,
         model: resolved.requestedModelId,
         channelId: target.channelId,
         channelName: target.channelName,
         response,
+        status,
+        headers,
       };
     } catch (error) {
-      if (
-        error instanceof RequestLoggingUnavailableError ||
-        error instanceof ChannelParamOverrideError ||
-        error instanceof ChannelHeaderOverrideError
-      ) {
-        throw error;
-      }
-
-      lastError = error;
-      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
-
-      await logRequest({
+      if (fatalMessagesError(error)) throw error;
+      lastError = normalizeMessagesError(error, options.signal, attemptSignal.controller.signal);
+      await safeLogAnthropicFailure(
         apiKeyId,
-        provider: target.providerName,
-        model: target.publicModelId,
-        requestedModel: request.model,
-        channelId: target.channelId,
-        channelName: target.channelName,
-        endpoint: "/v1/messages/count_tokens",
-        latencyMs,
-        statusCode,
-        errorMessage,
-      });
+        request.model,
+        target,
+        "/v1/messages/count_tokens",
+        Date.now() - startedAt,
+        lastError,
+      );
+      if (
+        attempt >= config.retryCount ||
+        !retryableMessagesError(lastError, config, options.signal)
+      ) {
+        break;
+      }
+    } finally {
+      attemptSignal.cleanup();
     }
   }
 
@@ -199,189 +232,335 @@ export async function handleAnthropicMessageTokenCount(
 async function createAnthropicMessageWithFallback(
   request: AnthropicMessageCreateRequest,
   apiKeyId: string,
+  requestedModelId: string,
   targets: ResolvedAnthropicMessagesProviderModel[],
-  options: {
-    requireBillableUsage?: boolean;
-    providerOptions?: ProviderRequestOptions;
-    requestContext?: ChannelOverrideRequestContext;
-    rawBody?: string;
-  },
+  options: HandleAnthropicMessageOptions,
 ): Promise<AnthropicMessageResult> {
+  const config = options.config ?? messagesRelayConfig;
+  const selector = createChatCandidateSelector(targets, options.random);
+  const inputEstimate = estimateAnthropicMessageInputTokens(request);
+  let reservation: SpendReservation | null = null;
   let lastError: unknown;
 
-  for (const target of targets) {
-    let attemptStartTime: number | undefined;
+  for (let attempt = 0; attempt <= config.retryCount; attempt += 1) {
+    const target = selector.next() as ResolvedAnthropicMessagesProviderModel | null;
+    if (!target) break;
+    const startedAt = Date.now();
     try {
-      const prepared = prepareChannelOpenAICompatibleRequestSettings(
-        buildAnthropicMessageRequest(request, target, false),
+      reservation = await reserveForAnthropicAttempt(
+        request,
         target,
-        targetRequestContext(request, target, options.requestContext),
+        options.billing,
+        options.requestId,
+        reservation,
+        inputEstimate,
       );
-      const requestOptions = providerRequestOptions(
-        options.providerOptions,
-        prepared.headers,
-        rawPassThroughBody(target, options.rawBody),
-      );
-      attemptStartTime = Date.now();
-      const response = requestOptions
-        ? await target.provider.createAnthropicMessage(prepared.body, requestOptions)
-        : await target.provider.createAnthropicMessage(prepared.body);
-      const latencyMs = Date.now() - attemptStartTime;
-      const usage = extractAnthropicMessageTokenUsage(response);
+      const result = await runAnthropicMessageAttempt(request, target, options, config);
+      assertAnthropicMessage(result.response);
+      const usage = extractAnthropicMessageTokenUsage(result.response);
       const estimatedCost = estimateCost(
         target.publicModelId,
-        usage.promptTokens,
+        usage.pricingInputTokens ?? usage.promptTokens ?? inputEstimate,
         usage.completionTokens,
         undefined,
         usage.pricingInputTokens,
       );
-
       if (options.requireBillableUsage && estimatedCost === undefined) {
-        await logRequest({
-          apiKeyId,
-          provider: target.providerName,
-          model: target.publicModelId,
-          requestedModel: request.model,
-          channelId: target.channelId,
-          channelName: target.channelName,
-          endpoint: "/v1/messages",
-          latencyMs,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-          statusCode: 429,
-          errorMessage: "Billable usage could not be determined",
-        });
         throw new ApiKeyUnbillableAnthropicMessageUsageError();
       }
-
-      if (options.requireBillableUsage && estimatedCost !== undefined) {
+      if (options.requireBillableUsage && !options.billing && estimatedCost !== undefined) {
         await addApiKeySpendUsd(apiKeyId, estimatedCost);
       }
-
+      await settleSpendReservation(reservation, estimatedCost);
       await logRequest({
         apiKeyId,
         provider: target.providerName,
         model: target.publicModelId,
-        requestedModel: request.model,
+        requestedModel: requestedModelId,
         channelId: target.channelId,
         channelName: target.channelName,
         endpoint: "/v1/messages",
-        latencyMs,
+        latencyMs: Date.now() - startedAt,
         promptTokens: usage.promptTokens,
         completionTokens: usage.completionTokens,
         totalTokens: usage.totalTokens,
         pricingInputTokens: usage.pricingInputTokens,
         estimatedCost,
-        statusCode: 200,
+        statusCode: result.status,
       });
-
-      return { kind: "complete", response };
+      return { kind: "complete", ...result };
     } catch (error) {
-      if (
-        error instanceof RequestLoggingUnavailableError ||
-        error instanceof ApiKeySpendLedgerUnavailableError ||
-        error instanceof ApiKeyUnbillableAnthropicMessageUsageError ||
-        error instanceof ChannelParamOverrideError ||
-        error instanceof ChannelHeaderOverrideError
-      ) {
+      if (fatalMessagesError(error)) {
+        await safeRefundAnthropicReservation(reservation, options.requestId);
         throw error;
       }
-
-      lastError = error;
-      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
-
-      await logRequest({
+      lastError = normalizeMessagesError(error, options.signal);
+      await safeLogAnthropicFailure(
         apiKeyId,
-        provider: target.providerName,
-        model: target.publicModelId,
-        requestedModel: request.model,
-        channelId: target.channelId,
-        channelName: target.channelName,
-        endpoint: "/v1/messages",
-        latencyMs,
-        statusCode,
-        errorMessage,
-      });
+        requestedModelId,
+        target,
+        "/v1/messages",
+        Date.now() - startedAt,
+        lastError,
+      );
+      if (
+        attempt >= config.retryCount ||
+        !retryableMessagesError(lastError, config, options.signal)
+      ) {
+        break;
+      }
     }
   }
 
+  await safeRefundAnthropicReservation(reservation, options.requestId);
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
 }
 
-async function resolveStreamingTarget(
+async function createAnthropicMessageStreamWithFallback(
   request: AnthropicMessageCreateRequest,
   apiKeyId: string,
+  requestedModelId: string,
   targets: ResolvedAnthropicMessagesProviderModel[],
-  options: {
-    providerOptions?: ProviderRequestOptions;
-    requestContext?: ChannelOverrideRequestContext;
-    rawBody?: string;
-  },
-): Promise<{
-  target: ResolvedAnthropicMessagesProviderModel;
-  stream: AsyncIterable<string>;
-  latencyMs: number;
-}> {
+  options: HandleAnthropicMessageOptions,
+): Promise<AnthropicMessageResult> {
+  const config = options.config ?? messagesRelayConfig;
+  const selector = createChatCandidateSelector(targets, options.random);
+  const inputEstimate = estimateAnthropicMessageInputTokens(request);
+  let reservation: SpendReservation | null = null;
   let lastError: unknown;
 
-  for (const target of targets) {
-    let attemptStartTime: number | undefined;
+  for (let attempt = 0; attempt <= config.retryCount; attempt += 1) {
+    const target = selector.next() as ResolvedAnthropicMessagesProviderModel | null;
+    if (!target) break;
+    const startedAt = Date.now();
     try {
-      if (!target.provider.createAnthropicMessageStream) {
-        throw new Error(`${target.providerName} does not support Anthropic Messages streaming`);
-      }
-      const prepared = prepareChannelOpenAICompatibleRequestSettings(
-        buildAnthropicMessageRequest(request, target, true),
+      reservation = await reserveForAnthropicAttempt(
+        request,
         target,
-        targetRequestContext(request, target, options.requestContext),
+        options.billing,
+        options.requestId,
+        reservation,
+        inputEstimate,
       );
-      const requestOptions = providerRequestOptions(
-        options.providerOptions,
-        prepared.headers,
-        rawPassThroughBody(target, options.rawBody),
-      );
-      attemptStartTime = Date.now();
-      const stream = requestOptions
-        ? target.provider.createAnthropicMessageStream(prepared.body, requestOptions)
-        : target.provider.createAnthropicMessageStream(prepared.body);
-      const prefetchedStream = await prefetchFirstStreamChunk(stream);
+      const selected = await startAnthropicStreamAttempt(request, target, options, config);
+      let finalized = false;
       return {
-        target,
-        stream: prefetchedStream,
-        latencyMs: Date.now() - attemptStartTime,
-      };
-    } catch (error) {
-      if (
-        error instanceof ChannelParamOverrideError ||
-        error instanceof ChannelHeaderOverrideError
-      ) {
-        throw error;
-      }
-
-      lastError = error;
-      const latencyMs = attemptStartTime === undefined ? 0 : Date.now() - attemptStartTime;
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      const statusCode = error instanceof UpstreamAnthropicMessagesApiError ? error.status : 500;
-
-      await logRequest({
-        apiKeyId,
+        kind: "stream",
+        stream: selected.stream,
         provider: target.providerName,
         model: target.publicModelId,
-        requestedModel: request.model,
         channelId: target.channelId,
         channelName: target.channelName,
-        endpoint: "/v1/messages",
-        latencyMs,
-        statusCode,
-        errorMessage,
-      });
+        latencyMs: Date.now() - startedAt,
+        status: selected.status,
+        headers: selected.headers,
+        abort: selected.abort,
+        refundSpend: () => safeRefundAnthropicReservation(reservation, options.requestId),
+        finalizeSpend: async (usage = {}, outputTokenEstimate = 0) => {
+          const estimatedCost = estimateCost(
+            target.publicModelId,
+            usage.pricingInputTokens ?? usage.promptTokens ?? inputEstimate,
+            usage.completionTokens ?? outputTokenEstimate,
+            undefined,
+            usage.pricingInputTokens,
+          );
+          if (options.requireBillableUsage && estimatedCost === undefined) {
+            throw new ApiKeyUnbillableAnthropicMessageUsageError();
+          }
+          if (!finalized) {
+            finalized = true;
+            if (options.requireBillableUsage && !options.billing && estimatedCost !== undefined) {
+              await addApiKeySpendUsd(apiKeyId, estimatedCost);
+            }
+            await settleSpendReservation(reservation, estimatedCost);
+          }
+          return estimatedCost ?? reservation?.reservedUsd;
+        },
+      };
+    } catch (error) {
+      if (fatalMessagesError(error)) {
+        await safeRefundAnthropicReservation(reservation, options.requestId);
+        throw error;
+      }
+      lastError = normalizeMessagesError(error, options.signal);
+      await safeLogAnthropicFailure(
+        apiKeyId,
+        requestedModelId,
+        target,
+        "/v1/messages",
+        Date.now() - startedAt,
+        lastError,
+      );
+      if (
+        attempt >= config.retryCount ||
+        !retryableMessagesError(lastError, config, options.signal)
+      ) {
+        break;
+      }
     }
   }
 
+  await safeRefundAnthropicReservation(reservation, options.requestId);
   throw lastError ?? new Error(`No provider found for model: ${request.model}`);
+}
+
+async function runAnthropicMessageAttempt(
+  request: AnthropicMessageCreateRequest,
+  target: ResolvedAnthropicMessagesProviderModel,
+  options: HandleAnthropicMessageOptions,
+  config: MessagesRelayConfig,
+): Promise<{ response: AnthropicMessageObject; status: number; headers: Headers }> {
+  const attempt = messagesAttemptSignal(options.signal);
+  let status = 200;
+  let headers = new Headers();
+  const prepared = prepareChannelOpenAICompatibleRequestSettings(
+    buildAnthropicMessageRequest(request, target, false),
+    target,
+    targetRequestContext(request, target, options.requestContext),
+  );
+  const requestOptions = providerRequestOptions(
+    options.providerOptions,
+    prepared.headers,
+    rawPassThroughBody(target, options.rawBody),
+    attempt.controller.signal,
+    (response) => {
+      status = response.status;
+      headers = new Headers(response.headers);
+    },
+  );
+  try {
+    const response = await messagesRaceWithTimeout(
+      target.provider.createAnthropicMessage(prepared.body, requestOptions),
+      config.nonStreamTimeoutMs,
+      "non_stream",
+      attempt.controller,
+      options.signal,
+    );
+    return { response, status, headers };
+  } catch (error) {
+    throw normalizeMessagesError(error, options.signal, attempt.controller.signal);
+  } finally {
+    attempt.cleanup();
+  }
+}
+
+async function startAnthropicStreamAttempt(
+  request: AnthropicMessageCreateRequest,
+  target: ResolvedAnthropicMessagesProviderModel,
+  options: HandleAnthropicMessageOptions,
+  config: MessagesRelayConfig,
+): Promise<{ stream: AsyncIterable<string>; status: number; headers: Headers; abort: () => void }> {
+  if (!target.provider.createAnthropicMessageStream) {
+    throw new MessagesRelayProtocolError(
+      `${target.providerName} does not support Anthropic Messages streaming`,
+    );
+  }
+  const attempt = messagesAttemptSignal(options.signal);
+  let status = 200;
+  let headers = new Headers();
+  const prepared = prepareChannelOpenAICompatibleRequestSettings(
+    buildAnthropicMessageRequest(request, target, true),
+    target,
+    targetRequestContext(request, target, options.requestContext),
+  );
+  const requestOptions = providerRequestOptions(
+    options.providerOptions,
+    prepared.headers,
+    rawPassThroughBody(target, options.rawBody),
+    attempt.controller.signal,
+    (response) => {
+      status = response.status;
+      headers = new Headers(response.headers);
+    },
+  );
+  let iterator: AsyncIterator<string> | undefined;
+  try {
+    iterator = target.provider
+      .createAnthropicMessageStream(prepared.body, requestOptions)
+      [Symbol.asyncIterator]();
+    const first = await messagesRaceWithTimeout(
+      iterator.next(),
+      config.firstByteTimeoutMs,
+      "first_byte",
+      attempt.controller,
+      options.signal,
+    );
+    if (first.done) {
+      throw new MessagesRelayProtocolError("Upstream stream ended before its first event");
+    }
+    return {
+      status,
+      headers,
+      abort: () => attempt.controller.abort(new MessagesRelayClientAbortError()),
+      stream: anthropicStreamWithIdleTimeout(
+        first.value,
+        iterator,
+        attempt.controller,
+        attempt.cleanup,
+        options.signal,
+        config.streamIdleTimeoutMs,
+      ),
+    };
+  } catch (error) {
+    attempt.cleanup();
+    attempt.controller.abort(error);
+    closeAnthropicIterator(iterator);
+    throw normalizeMessagesError(error, options.signal, attempt.controller.signal);
+  }
+}
+
+async function* anthropicStreamWithIdleTimeout(
+  first: string,
+  iterator: AsyncIterator<string>,
+  controller: AbortController,
+  cleanup: () => void,
+  parentSignal: AbortSignal | undefined,
+  timeoutMs: number,
+): AsyncIterable<string> {
+  try {
+    yield first;
+    while (true) {
+      const next = await messagesRaceWithTimeout(
+        iterator.next(),
+        timeoutMs,
+        "idle",
+        controller,
+        parentSignal,
+      );
+      if (next.done) return;
+      yield next.value;
+    }
+  } catch (error) {
+    throw normalizeMessagesError(error, parentSignal, controller.signal);
+  } finally {
+    cleanup();
+    controller.abort(new MessagesRelayClientAbortError());
+    closeAnthropicIterator(iterator);
+  }
+}
+
+async function reserveForAnthropicAttempt(
+  request: AnthropicMessageCreateRequest,
+  target: ResolvedAnthropicMessagesProviderModel,
+  billing: SpendLimits | undefined,
+  requestId: string | undefined,
+  reservation: SpendReservation | null,
+  inputEstimate: number,
+): Promise<SpendReservation | null> {
+  if (!billing) return reservation;
+  const pricing = getModelPricing(target.publicModelId);
+  if (!pricing) throw new ApiKeyUnbillableAnthropicMessageUsageError();
+  const outputTokens = request.max_tokens ?? pricing.maxOutputTokens;
+  const liability = estimateCost(
+    target.publicModelId,
+    Math.max(inputEstimate, 500),
+    Math.max(outputTokens, 0),
+  );
+  if (liability === undefined) throw new ApiKeyUnbillableAnthropicMessageUsageError();
+  if (liability <= 0) return reservation;
+  if (!reservation) return reserveSpend(billing, requestId ?? randomUUID(), liability);
+  await expandSpendReservation(reservation, liability);
+  return reservation;
 }
 
 function buildAnthropicMessageRequest(
@@ -392,7 +571,8 @@ function buildAnthropicMessageRequest(
   return {
     ...request,
     model: target.upstreamModelId ?? target.modelId,
-    max_tokens: request.max_tokens ?? 4096,
+    max_tokens:
+      request.max_tokens ?? getModelPricing(target.publicModelId)?.maxOutputTokens ?? 4096,
     stream,
   };
 }
@@ -427,36 +607,176 @@ function targetRequestContext(
 function providerRequestOptions(
   baseOptions: ProviderRequestOptions | undefined,
   headers: Record<string, string>,
-  rawBody?: string,
-): ProviderRequestOptions | undefined {
+  rawBody: string | undefined,
+  signal: AbortSignal,
+  onResponse: (response: Response) => void,
+): ProviderRequestOptions {
   const mergedHeaders = mergeProviderRequestHeaders(baseOptions?.headers ?? {}, { headers });
-  return Object.keys(mergedHeaders).length > 0 || rawBody !== undefined
-    ? { headers: mergedHeaders, ...(rawBody !== undefined ? { rawBody } : {}) }
-    : undefined;
+  const {
+    headers: _baseHeaders,
+    rawBody: _baseRawBody,
+    signal: _baseSignal,
+    onResponse: _baseOnResponse,
+    ...remainingBaseOptions
+  } = baseOptions ?? {};
+  return {
+    ...remainingBaseOptions,
+    headers: mergedHeaders,
+    ...(rawBody !== undefined ? { rawBody } : {}),
+    signal,
+    onResponse: (response) => {
+      baseOptions?.onResponse?.(response);
+      onResponse(response);
+    },
+  };
 }
 
 function rawPassThroughBody(target: ResolvedProviderModel, rawBody: string | undefined) {
   return target.settings?.passThroughBodyEnabled ? rawBody : undefined;
 }
 
-async function prefetchFirstStreamChunk(
-  stream: AsyncIterable<string>,
-): Promise<AsyncIterable<string>> {
-  const iterator = stream[Symbol.asyncIterator]();
-  const first = await iterator.next();
+function messagesAttemptSignal(parentSignal?: AbortSignal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort(new MessagesRelayClientAbortError());
+  if (parentSignal?.aborted) abort();
+  else parentSignal?.addEventListener("abort", abort, { once: true });
+  return { controller, cleanup: () => parentSignal?.removeEventListener("abort", abort) };
+}
 
-  return {
-    async *[Symbol.asyncIterator]() {
-      if (!first.done) {
-        yield first.value;
-      }
-      while (true) {
-        const next = await iterator.next();
-        if (next.done) return;
-        yield next.value;
-      }
-    },
-  };
+async function messagesRaceWithTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  phase: "first_byte" | "idle" | "non_stream",
+  controller: AbortController,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  if (parentSignal?.aborted) throw new MessagesRelayClientAbortError();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new MessagesRelayTimeoutError(phase);
+      controller.abort(error);
+      reject(error);
+    }, timeoutMs);
+  });
+  const aborted = new Promise<never>((_, reject) => {
+    if (!parentSignal) return;
+    abortListener = () => reject(new MessagesRelayClientAbortError());
+    parentSignal.addEventListener("abort", abortListener, { once: true });
+  });
+  try {
+    return await Promise.race([operation, timeout, aborted]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (abortListener) parentSignal?.removeEventListener("abort", abortListener);
+  }
+}
+
+function closeAnthropicIterator(iterator: AsyncIterator<string> | undefined) {
+  try {
+    void Promise.resolve(iterator?.return?.()).catch(() => undefined);
+  } catch {
+    // The primary stream result is already being surfaced.
+  }
+}
+
+function normalizeMessagesError(
+  error: unknown,
+  parentSignal?: AbortSignal,
+  attemptSignal?: AbortSignal,
+): unknown {
+  if (parentSignal?.aborted) return new MessagesRelayClientAbortError();
+  if (
+    attemptSignal?.reason instanceof MessagesRelayClientAbortError ||
+    attemptSignal?.reason instanceof MessagesRelayTimeoutError
+  ) {
+    return attemptSignal.reason;
+  }
+  if (error instanceof SyntaxError) {
+    return new MessagesRelayProtocolError("Upstream returned malformed JSON");
+  }
+  if (
+    error instanceof UpstreamAnthropicMessagesApiError ||
+    error instanceof MessagesRelayClientAbortError ||
+    error instanceof MessagesRelayTimeoutError ||
+    error instanceof MessagesRelayProtocolError
+  ) {
+    return error;
+  }
+  return new MessagesRelayProtocolError("Upstream request failed");
+}
+
+function fatalMessagesError(error: unknown): boolean {
+  return (
+    error instanceof ChannelParamOverrideError ||
+    error instanceof ChannelHeaderOverrideError ||
+    error instanceof RequestLoggingUnavailableError ||
+    error instanceof ApiKeySpendLedgerUnavailableError ||
+    error instanceof ApiKeySpendLimitExceededError ||
+    error instanceof ApiKeyUnbillableAnthropicMessageUsageError
+  );
+}
+
+async function safeRefundAnthropicReservation(
+  reservation: SpendReservation | null,
+  requestId?: string,
+): Promise<void> {
+  try {
+    await refundSpendReservation(reservation);
+  } catch (error) {
+    console.error("anthropic_messages_spend_refund_failed", {
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function safeLogAnthropicFailure(
+  apiKeyId: string,
+  requestedModel: string,
+  target: ResolvedProviderModel,
+  endpoint: string,
+  latencyMs: number,
+  error: unknown,
+) {
+  try {
+    await logRequest({
+      apiKeyId,
+      provider: target.providerName,
+      model: target.publicModelId,
+      requestedModel,
+      channelId: target.channelId,
+      channelName: target.channelName,
+      endpoint,
+      latencyMs,
+      statusCode: messagesRelayStatus(error),
+      errorMessage:
+        error instanceof UpstreamAnthropicMessagesApiError
+          ? `Anthropic upstream error (status ${error.status})`
+          : error instanceof Error
+            ? error.message
+            : "Upstream request failed",
+    });
+  } catch (loggingError) {
+    if (loggingError instanceof RequestLoggingUnavailableError) throw loggingError;
+  }
+}
+
+function assertAnthropicMessage(response: AnthropicMessageObject): void {
+  const value = response as Record<string, unknown>;
+  if (value.error && typeof value.id !== "string") {
+    throw new MessagesRelayProtocolError("Upstream returned an error envelope with HTTP 200");
+  }
+  if (typeof value.id !== "string" || !Array.isArray(value.content)) {
+    throw new MessagesRelayProtocolError("Upstream returned a malformed Message object");
+  }
+}
+
+function assertAnthropicTokenCount(response: AnthropicMessageTokenCountObject): void {
+  if (numberOrUndefined(response.input_tokens) === undefined) {
+    throw new MessagesRelayProtocolError("Upstream returned a malformed token count object");
+  }
 }
 
 export function extractAnthropicMessageTokenUsage(response: AnthropicMessageObject): {

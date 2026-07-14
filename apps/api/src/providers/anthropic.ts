@@ -402,13 +402,20 @@ export class UpstreamAnthropicMessagesApiError extends Error {
   readonly status: number;
   readonly body: string;
   readonly contentType: string | null;
+  readonly retryAfter: string | null;
 
-  constructor(status: number, body: string, contentType: string | null) {
+  constructor(
+    status: number,
+    body: string,
+    contentType: string | null,
+    retryAfter?: string | null,
+  ) {
     super(`Anthropic Messages API error: ${status} - ${body}`);
     this.name = "UpstreamAnthropicMessagesApiError";
     this.status = status;
     this.body = body;
     this.contentType = contentType;
+    this.retryAfter = retryAfter ?? null;
   }
 }
 
@@ -426,9 +433,16 @@ export class AnthropicAdapter implements ProviderAdapter {
   name = "anthropic";
   capabilities = anthropicCapabilities;
   private apiKey: string;
+  private messagesApiUrl: string;
 
-  constructor(apiKey: string) {
+  constructor(
+    apiKey: string,
+    messagesApiUrl = process.env.ANTHROPIC_MESSAGES_API_URL?.trim() || ANTHROPIC_API_URL,
+  ) {
     this.apiKey = apiKey;
+    const normalizedUrl = new URL(messagesApiUrl);
+    normalizedUrl.pathname = normalizedUrl.pathname.replace(/\/$/, "");
+    this.messagesApiUrl = normalizedUrl.toString();
   }
 
   private convertMessages(messages: ChatCompletionRequest["messages"]) {
@@ -554,7 +568,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     request: ChatCompletionRequest,
     options?: ProviderRequestOptions,
   ): Promise<ChatCompletionResponse> {
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetch(anthropicRequestUrl(this.messagesApiUrl, options), {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, false),
@@ -633,7 +647,7 @@ export class AnthropicAdapter implements ProviderAdapter {
     request: ChatCompletionRequest,
     options?: ProviderRequestOptions,
   ): AsyncIterable<ChatCompletionChunk> {
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetch(anthropicRequestUrl(this.messagesApiUrl, options), {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? this.buildRequestBody(request, true),
@@ -898,12 +912,13 @@ export class AnthropicAdapter implements ProviderAdapter {
     request: AnthropicMessageCreateRequest,
     options?: ProviderRequestOptions,
   ): Promise<AnthropicMessageObject> {
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetch(anthropicRequestUrl(this.messagesApiUrl, options), {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       throw await upstreamAnthropicMessagesError(response);
@@ -916,12 +931,13 @@ export class AnthropicAdapter implements ProviderAdapter {
     request: AnthropicMessageCreateRequest,
     options?: ProviderRequestOptions,
   ): AsyncIterable<string> {
-    const response = await fetch(ANTHROPIC_API_URL, {
+    const response = await fetch(anthropicRequestUrl(this.messagesApiUrl, options), {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify({ ...request, stream: true }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       throw await upstreamAnthropicMessagesError(response);
@@ -934,12 +950,15 @@ export class AnthropicAdapter implements ProviderAdapter {
     request: AnthropicMessageCountTokensRequest,
     options?: ProviderRequestOptions,
   ): Promise<AnthropicMessageTokenCountObject> {
-    const response = await fetch(`${ANTHROPIC_API_URL}/count_tokens`, {
+    const countTokensUrl = new URL(this.messagesApiUrl);
+    countTokensUrl.pathname = `${countTokensUrl.pathname.replace(/\/$/, "")}/count_tokens`;
+    const response = await fetch(anthropicRequestUrl(countTokensUrl.toString(), options), {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
       throw await upstreamAnthropicMessagesError(response);
@@ -961,7 +980,19 @@ async function upstreamAnthropicMessagesError(
     response.status,
     body,
     response.headers.get("Content-Type"),
+    response.headers.get("Retry-After"),
   );
+}
+
+function anthropicRequestUrl(urlValue: string, options?: ProviderRequestOptions): string {
+  const url = new URL(urlValue);
+  for (const [key, value] of Object.entries(options?.query ?? {})) {
+    url.searchParams.delete(key);
+    for (const item of Array.isArray(value) ? value : [value]) {
+      url.searchParams.append(key, item);
+    }
+  }
+  return url.toString();
 }
 
 async function* streamRawResponseBody(response: Response): AsyncIterable<string> {
@@ -969,13 +1000,17 @@ async function* streamRawResponseBody(response: Response): AsyncIterable<string>
   if (!reader) throw new Error("No response body");
 
   const decoder = new TextDecoder();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    yield decoder.decode(value, { stream: true });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      yield decoder.decode(value, { stream: true });
+    }
+    const remaining = decoder.decode();
+    if (remaining) yield remaining;
+  } finally {
+    reader.releaseLock();
   }
-  const remaining = decoder.decode();
-  if (remaining) yield remaining;
 }
 
 function contentToText(content: ChatMessage["content"]): string {

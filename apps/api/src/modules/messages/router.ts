@@ -1,19 +1,19 @@
+import { randomUUID } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import { stream } from "hono/streaming";
+import { stream as honoStream } from "hono/streaming";
 import { apiKeyAuthWithAnthropicHeader, readApiKeyModelAccess } from "../../middleware/api-key";
 import {
   logStreamFinal,
   logStreamStart,
   RequestLoggingUnavailableError,
 } from "../../middleware/logger";
-import { UpstreamAnthropicMessagesApiError } from "../../providers/anthropic";
 import {
   ChannelHeaderOverrideError,
   ChannelParamOverrideError,
 } from "../../providers/channel-overrides";
+import { UpstreamAnthropicMessagesApiError } from "../../providers/anthropic";
 import {
-  estimateCost,
   resolveAnthropicMessageTokenCountAccessModelId,
   resolveAnthropicMessagesAccessModelId,
 } from "../../providers/registry";
@@ -21,12 +21,11 @@ import type {
   AnthropicMessageCountTokensRequest,
   AnthropicMessageCreateRequest,
 } from "../../providers/types";
+import { ChatRequestBodyError, readChatRequestBody } from "../chat/relay/request-body";
 import {
-  addApiKeySpendUsd,
   ApiKeyModelAccessDeniedError,
   ApiKeySpendLedgerUnavailableError,
   ApiKeySpendLimitExceededError,
-  assertApiKeyCanSpend,
   assertApiKeyModelAllowed,
 } from "../keys/services";
 import {
@@ -34,114 +33,103 @@ import {
   handleAnthropicMessage,
   handleAnthropicMessageTokenCount,
 } from "./services";
+import { messagesRelayConfig } from "./relay/config";
+import {
+  anthropicErrorBody,
+  anthropicRelayError,
+  MessagesRelayClientAbortError,
+  MessagesRelayProtocolError,
+  MessagesRelayTimeoutError,
+  messagesRelayStatus,
+} from "./relay/errors";
+import {
+  checkMessagesRateLimit,
+  MessagesRateLimitExceededError,
+  MessagesRateLimitUnavailableError,
+  recordMessagesRateLimitSuccess,
+} from "./relay/rate-limit";
+import { estimateAnthropicStreamOutputTokens } from "./relay/token-estimator";
 
 export const messagesRouter = new Hono();
 
+messagesRouter.use("*", async (c, next) => {
+  const requestId = randomUUID();
+  c.set("requestId" as never, requestId);
+  c.header("x-request-id", requestId);
+  await next();
+});
 messagesRouter.use("*", apiKeyAuthWithAnthropicHeader);
 
-messagesRouter.post("/count_tokens", async (c) => {
+messagesRouter.post("/count_tokens", enforceMessagesRateLimit, async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;
+  const parsed = await parseAnthropicBody<AnthropicMessageCountTokensRequest>(c);
+  if (parsed instanceof Response) return parsed;
+  const { body, rawBody } = parsed;
 
-  let rawBody: string;
-  let body: AnthropicMessageCountTokensRequest;
-  try {
-    rawBody = await c.req.text();
-    body = JSON.parse(rawBody) as AnthropicMessageCountTokensRequest;
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-
-  const validationError = validateAnthropicMessageRequestShape(body);
-  if (validationError) {
-    return c.json({ error: validationError }, 400);
-  }
-
-  try {
-    const accessModelId = await resolveAnthropicMessageTokenCountAccessModelId(body.model);
-    assertApiKeyModelAllowed(accessModelId, readApiKeyModelAccess(c));
-  } catch (error) {
-    if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: error.message }, 403);
-    }
-    throw error;
-  }
+  const accessError = await modelAccessError(
+    c,
+    body.model,
+    resolveAnthropicMessageTokenCountAccessModelId,
+  );
+  if (accessError) return accessError;
 
   try {
     const result = await handleAnthropicMessageTokenCount(body, apiKeyId, {
       providerOptions: providerOptionsFromHono(c),
       requestContext: requestContextFromHono(c),
       rawBody,
+      requestId: requestIdFromHono(c),
+      signal: c.req.raw.signal,
     });
-    return c.json(result.response);
+    copyUpstreamHeaders(c, result.headers);
+    await safeRecordMessagesSuccess(c);
+    return c.json(result.response, result.status as 200);
   } catch (error) {
-    const upstream = upstreamAnthropicErrorResponse(error);
-    if (upstream) return upstream;
-
-    const errorMessage = error instanceof Error ? error.message : "Internal server error";
-
-    if (errorMessage.startsWith("No provider found")) {
-      return c.json({ error: errorMessage }, 404);
-    }
-
-    if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: errorMessage }, 403);
-    }
-
-    const channelOverride = channelOverrideErrorResponse(c, error);
-    if (channelOverride) return channelOverride;
-
-    if (error instanceof RequestLoggingUnavailableError) {
-      return c.json({ error: errorMessage }, 503);
-    }
-
-    return c.json({ error: errorMessage }, 500);
+    return messagesErrorResponse(c, error);
   }
 });
 
-messagesRouter.post("/", async (c) => {
+messagesRouter.post("/", enforceMessagesRateLimit, async (c) => {
   const apiKeyId = c.get("apiKeyId" as never) as string;
-  const spendLimitUsd = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
-  const isLimitedKey = spendLimitUsd !== null && spendLimitUsd !== undefined;
+  const parsed = await parseAnthropicBody<AnthropicMessageCreateRequest>(c);
+  if (parsed instanceof Response) return parsed;
+  const { body, rawBody } = parsed;
 
-  let rawBody: string;
-  let body: AnthropicMessageCreateRequest;
-  try {
-    rawBody = await c.req.text();
-    body = JSON.parse(rawBody) as AnthropicMessageCreateRequest;
-  } catch {
-    return c.json({ error: "invalid JSON body" }, 400);
-  }
-
-  const validationError = validateAnthropicMessageRequestShape(body);
-  if (validationError) {
-    return c.json({ error: validationError }, 400);
-  }
+  const accessError = await modelAccessError(c, body.model, resolveAnthropicMessagesAccessModelId);
+  if (accessError) return accessError;
+  const { limited, billing } = billingOptions(c);
 
   try {
-    const accessModelId = await resolveAnthropicMessagesAccessModelId(body.model);
-    assertApiKeyModelAllowed(accessModelId, readApiKeyModelAccess(c));
-  } catch (error) {
-    if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: error.message }, 403);
-    }
-    throw error;
-  }
-
-  try {
-    if (isLimitedKey) {
-      await assertApiKeyCanSpend(apiKeyId, spendLimitUsd);
-    }
-
     const result = await handleAnthropicMessage(body, apiKeyId, {
-      requireBillableUsage: isLimitedKey && body.stream !== true,
+      requireBillableUsage: limited,
+      billing,
       providerOptions: providerOptionsFromHono(c),
       requestContext: requestContextFromHono(c),
       rawBody,
+      requestId: requestIdFromHono(c),
+      signal: c.req.raw.signal,
     });
 
-    if (result.kind === "stream") {
-      const { stream: streamIterable, provider, model, channelId, channelName, latencyMs } = result;
-      const logId = await logStreamStart({
+    if (result.kind === "complete") {
+      copyUpstreamHeaders(c, result.headers);
+      await safeRecordMessagesSuccess(c);
+      return c.json(result.response, result.status as 200);
+    }
+
+    const {
+      stream: streamIterable,
+      provider,
+      model,
+      channelId,
+      channelName,
+      latencyMs,
+      abort,
+      refundSpend,
+      finalizeSpend,
+    } = result;
+    let logId: string;
+    try {
+      logId = await logStreamStart({
         apiKeyId,
         provider,
         model,
@@ -153,37 +141,37 @@ messagesRouter.post("/", async (c) => {
         statusCode: 102,
         errorMessage: "stream pending",
       });
+    } catch (error) {
+      abort();
+      try {
+        await refundSpend();
+      } catch (settlementError) {
+        logSettlementFailure(c, settlementError);
+      }
+      throw error;
+    }
 
-      c.header("Content-Type", "text/event-stream");
-      c.header("Cache-Control", "no-cache");
-      c.header("Connection", "keep-alive");
+    copyUpstreamHeaders(c, result.headers);
+    c.header("Content-Type", "text/event-stream");
+    c.header("Cache-Control", "no-cache");
+    c.header("Connection", "keep-alive");
 
-      return stream(c, async (streamWriter) => {
-        const usageTracker = new AnthropicSseUsageTracker();
-        let streamLogFinalized = false;
+    return honoStream(c, async (streamWriter) => {
+      const tracker = new AnthropicSseTracker();
+      let finalized = false;
 
-        async function finalizeSuccessfulStreamLog() {
-          if (streamLogFinalized) return;
-          streamLogFinalized = true;
-          usageTracker.end();
-
-          const usage = usageTracker.usage();
-          const estimatedCost = estimateCost(
-            model,
-            usage.promptTokens,
-            usage.completionTokens,
-            undefined,
-            usage.pricingInputTokens,
-          );
-
-          if (isLimitedKey && estimatedCost !== undefined) {
-            try {
-              await addApiKeySpendUsd(apiKeyId, estimatedCost);
-            } catch (spendError) {
-              console.error("Failed to record streamed Anthropic Messages spend:", spendError);
-            }
-          }
-
+      const finalize = async (statusCode: number, errorMessage?: string) => {
+        if (finalized) return;
+        finalized = true;
+        tracker.end(requestIdFromHono(c));
+        const usage = tracker.usage();
+        let estimatedCost: number | undefined;
+        try {
+          estimatedCost = await finalizeSpend(usage, tracker.outputTokenEstimate);
+        } catch (error) {
+          logSettlementFailure(c, error);
+        }
+        try {
           await logStreamFinal({
             logId,
             apiKeyId,
@@ -199,96 +187,220 @@ messagesRouter.post("/", async (c) => {
             totalTokens: usage.totalTokens,
             pricingInputTokens: usage.pricingInputTokens,
             estimatedCost,
-            statusCode: 200,
+            statusCode,
+            errorMessage,
+          });
+        } catch (logError) {
+          console.error("anthropic_messages_stream_log_failed", {
+            requestId: requestIdFromHono(c),
+            error: logError instanceof Error ? logError.message : String(logError),
           });
         }
+      };
 
-        try {
-          for await (const chunk of streamIterable) {
-            usageTracker.push(chunk);
-            await streamWriter.write(chunk);
-          }
-
-          try {
-            await finalizeSuccessfulStreamLog();
-          } catch (logError) {
-            console.error("Failed to finalize Anthropic Messages stream log:", logError);
-          }
-        } catch (streamError) {
-          const errorMessage = streamError instanceof Error ? streamError.message : "Unknown error";
-
-          try {
-            if (!streamLogFinalized) {
-              await logStreamFinal({
-                logId,
-                apiKeyId,
-                provider,
-                model,
-                requestedModel: body.model,
-                channelId,
-                channelName,
-                endpoint: "/v1/messages",
-                latencyMs,
-                statusCode: 500,
-                errorMessage,
-              });
-              streamLogFinalized = true;
-            }
-          } catch (logError) {
-            console.error("Failed to finalize failed Anthropic Messages stream log:", logError);
-          }
-
-          throw streamError;
-        }
+      streamWriter.onAbort(async () => {
+        abort();
+        await finalize(499, "client disconnected");
       });
-    }
 
-    return c.json(result.response);
+      try {
+        for await (const chunk of streamIterable) {
+          for (const output of tracker.push(chunk, requestIdFromHono(c))) {
+            await streamWriter.write(output);
+          }
+        }
+        for (const output of tracker.end(requestIdFromHono(c))) {
+          await streamWriter.write(output);
+        }
+        if (!tracker.terminal) {
+          throw new MessagesRelayProtocolError(
+            "Upstream stream ended without a terminal message event",
+          );
+        }
+        const terminalError = tracker.terminalError;
+        await finalize(terminalError ? 502 : result.status, terminalError);
+        if (!terminalError) await safeRecordMessagesSuccess(c);
+      } catch (streamError) {
+        const status = messagesRelayStatus(streamError);
+        const message =
+          streamError instanceof Error ? streamError.message : "Upstream stream failed";
+        await finalize(status, message);
+        if (!(streamError instanceof MessagesRelayClientAbortError)) {
+          try {
+            const sanitized = anthropicRelayError(streamError, requestIdFromHono(c));
+            await streamWriter.write(`event: error\ndata: ${JSON.stringify(sanitized.body)}\n\n`);
+          } catch {
+            // The downstream may already be gone.
+          }
+        }
+      }
+    });
   } catch (error) {
-    const upstream = upstreamAnthropicErrorResponse(error);
-    if (upstream) return upstream;
-
-    const errorMessage = error instanceof Error ? error.message : "Internal server error";
-
-    if (errorMessage.startsWith("No provider found")) {
-      return c.json({ error: errorMessage }, 404);
-    }
-
-    if (error instanceof ApiKeySpendLimitExceededError) {
-      return c.json({ error: errorMessage }, 429);
-    }
-
-    if (error instanceof ApiKeyModelAccessDeniedError) {
-      return c.json({ error: errorMessage }, 403);
-    }
-
-    if (error instanceof ApiKeyUnbillableAnthropicMessageUsageError) {
-      return c.json({ error: errorMessage }, 429);
-    }
-
-    const channelOverride = channelOverrideErrorResponse(c, error);
-    if (channelOverride) return channelOverride;
-
-    if (
-      error instanceof RequestLoggingUnavailableError ||
-      error instanceof ApiKeySpendLedgerUnavailableError
-    ) {
-      return c.json({ error: errorMessage }, 503);
-    }
-
-    return c.json({ error: errorMessage }, 500);
+    return messagesErrorResponse(c, error);
   }
 });
+
+async function parseAnthropicBody<T extends AnthropicMessageCountTokensRequest>(
+  c: Context,
+): Promise<{ body: T; rawBody: string } | Response> {
+  const requestId = requestIdFromHono(c);
+  const contentType = c.req.header("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType && contentType !== "application/json" && !contentType.endsWith("+json")) {
+    return c.json(anthropicErrorBody("content type must be application/json", requestId), 415);
+  }
+
+  let rawBody: string;
+  let body: unknown;
+  try {
+    rawBody = await readChatRequestBody(c.req.raw, messagesRelayConfig.maxRequestBodyBytes);
+    body = JSON.parse(rawBody);
+  } catch (error) {
+    if (error instanceof ChatRequestBodyError) {
+      return c.json(
+        anthropicErrorBody(
+          error.message,
+          requestId,
+          error.status === 413 ? "request_too_large" : "invalid_request_error",
+        ),
+        error.status,
+      );
+    }
+    return c.json(anthropicErrorBody("invalid JSON body", requestId), 400);
+  }
+
+  const validationError = validateAnthropicMessageRequestShape(body);
+  if (validationError) {
+    return c.json(anthropicErrorBody(validationError, requestId), 400);
+  }
+  return { body: body as T, rawBody };
+}
+
+async function modelAccessError(
+  c: Context,
+  model: string,
+  resolveAccessModel: (model: string) => Promise<string>,
+): Promise<Response | null> {
+  try {
+    const accessModelId = await resolveAccessModel(model);
+    assertApiKeyModelAllowed(accessModelId, readApiKeyModelAccess(c));
+    return null;
+  } catch (error) {
+    if (error instanceof ApiKeyModelAccessDeniedError) {
+      return c.json(
+        anthropicErrorBody(error.message, requestIdFromHono(c), "permission_error"),
+        403,
+      );
+    }
+    throw error;
+  }
+}
+
+function billingOptions(c: Context) {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+  const legacy = c.get("apiKeySpendLimitUsd" as never) as number | null | undefined;
+  const own = c.get("apiKeyOwnSpendLimitUsd" as never) as number | null | undefined;
+  const ownerId = c.get("apiKeyOwnerId" as never) as string | undefined;
+  const ownerLimit = c.get("apiKeyOwnerSpendLimitUsd" as never) as number | null | undefined;
+  const apiKeyLimit = own === undefined ? legacy : own;
+  const limited = apiKeyLimit != null || ownerLimit != null;
+  return {
+    limited,
+    billing: limited
+      ? { apiKeyId, ownerId, apiKeyLimitUsd: apiKeyLimit, ownerLimitUsd: ownerLimit }
+      : undefined,
+  };
+}
+
+async function enforceMessagesRateLimit(c: Context, next: () => Promise<void>) {
+  const apiKeyId = c.get("apiKeyId" as never) as string;
+  try {
+    await checkMessagesRateLimit(apiKeyId, messagesRelayConfig);
+  } catch (error) {
+    if (error instanceof MessagesRateLimitExceededError) {
+      c.header("Retry-After", String(error.retryAfterSeconds));
+      return c.json(
+        anthropicErrorBody(error.message, requestIdFromHono(c), "rate_limit_error"),
+        429,
+      );
+    }
+    if (error instanceof MessagesRateLimitUnavailableError) {
+      return c.json(anthropicErrorBody(error.message, requestIdFromHono(c), "api_error"), 503);
+    }
+    throw error;
+  }
+  await next();
+}
+
+async function safeRecordMessagesSuccess(c: Context) {
+  try {
+    await recordMessagesRateLimitSuccess(c.get("apiKeyId" as never) as string, messagesRelayConfig);
+  } catch (error) {
+    console.error("anthropic_messages_rate_limit_success_record_failed", {
+      requestId: requestIdFromHono(c),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function messagesErrorResponse(c: Context, error: unknown): Response {
+  const requestId = requestIdFromHono(c);
+  if (
+    error instanceof MessagesRelayClientAbortError ||
+    error instanceof MessagesRelayTimeoutError ||
+    error instanceof MessagesRelayProtocolError ||
+    error instanceof TypeError ||
+    error instanceof UpstreamAnthropicMessagesApiError
+  ) {
+    const sanitized = anthropicRelayError(error, requestId);
+    if (sanitized.retryAfter) c.header("Retry-After", sanitized.retryAfter);
+    return c.json(sanitized.body, sanitized.status as 400);
+  }
+
+  const message = error instanceof Error ? error.message : "Internal server error";
+  if (message.startsWith("No provider found")) {
+    return c.json(anthropicErrorBody(message, requestId, "not_found_error"), 404);
+  }
+  if (
+    error instanceof ApiKeySpendLimitExceededError ||
+    error instanceof ApiKeyUnbillableAnthropicMessageUsageError
+  ) {
+    return c.json(anthropicErrorBody(message, requestId, "rate_limit_error"), 429);
+  }
+  if (error instanceof ApiKeyModelAccessDeniedError) {
+    return c.json(anthropicErrorBody(message, requestId, "permission_error"), 403);
+  }
+  if (error instanceof ChannelParamOverrideError) {
+    return c.json(
+      anthropicErrorBody(error.message, requestId, error.type || "invalid_request_error"),
+      error.statusCode as 400,
+    );
+  }
+  if (error instanceof ChannelHeaderOverrideError) {
+    return c.json(anthropicErrorBody(error.message, requestId), 400);
+  }
+  if (
+    error instanceof RequestLoggingUnavailableError ||
+    error instanceof ApiKeySpendLedgerUnavailableError ||
+    error instanceof MessagesRateLimitUnavailableError
+  ) {
+    return c.json(anthropicErrorBody(message, requestId, "api_error"), 503);
+  }
+
+  console.error("anthropic_messages_request_failed", { requestId, error: message });
+  return c.json(anthropicErrorBody("Internal server error", requestId, "api_error"), 500);
+}
 
 function providerOptionsFromHono(c: Context) {
   const headers: Record<string, string> = {
     "anthropic-version": c.req.header("anthropic-version")?.trim() || "2023-06-01",
   };
   const anthropicBeta = c.req.header("anthropic-beta")?.trim();
-  if (anthropicBeta) {
-    headers["anthropic-beta"] = anthropicBeta;
-  }
-  return { headers };
+  if (anthropicBeta) headers["anthropic-beta"] = anthropicBeta;
+  const betaQuery = c.req.query("beta")?.trim();
+  return {
+    headers,
+    ...(betaQuery === "true" ? { query: { beta: "true" } } : {}),
+  };
 }
 
 function requestContextFromHono(c: Context) {
@@ -298,35 +410,45 @@ function requestContextFromHono(c: Context) {
   };
 }
 
-function channelOverrideErrorResponse(c: Context, error: unknown): Response | null {
-  if (error instanceof ChannelParamOverrideError) {
-    return c.json(
-      { error: error.message },
-      error.statusCode as 400 | 401 | 403 | 404 | 409 | 422 | 429 | 500,
-    );
-  }
+function copyUpstreamHeaders(c: Context, headers: Headers) {
+  const blocked = new Set([
+    "connection",
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+    "keep-alive",
+    "trailer",
+    "upgrade",
+    "set-cookie",
+    "x-request-id",
+  ]);
+  headers.forEach((value, key) => {
+    if (!blocked.has(key.toLowerCase())) c.header(key, value);
+  });
+}
 
-  if (error instanceof ChannelHeaderOverrideError) {
-    return c.json({ error: error.message }, 400);
-  }
+function requestIdFromHono(c: Context): string {
+  return c.get("requestId" as never) as string;
+}
 
-  return null;
+function logSettlementFailure(c: Context, error: unknown) {
+  console.error("anthropic_messages_spend_settlement_failed", {
+    requestId: requestIdFromHono(c),
+    error: error instanceof Error ? error.message : String(error),
+  });
 }
 
 function validateAnthropicMessageRequestShape(value: unknown): string | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return "request body must be an object";
   }
-
   const request = value as Partial<AnthropicMessageCreateRequest>;
-  if (typeof request.model !== "string" || request.model.length === 0) {
+  if (typeof request.model !== "string" || request.model.trim().length === 0) {
     return "request must include a model";
   }
-
   if (!Array.isArray(request.messages) || request.messages.length === 0) {
     return "request must include a non-empty messages array";
   }
-
   if (
     request.max_tokens !== undefined &&
     (typeof request.max_tokens !== "number" ||
@@ -335,49 +457,33 @@ function validateAnthropicMessageRequestShape(value: unknown): string | null {
   ) {
     return "max_tokens must be a positive integer";
   }
-
   if (request.stream !== undefined && typeof request.stream !== "boolean") {
     return "stream must be a boolean";
   }
-
   return null;
 }
 
-function upstreamAnthropicErrorResponse(error: unknown): Response | null {
-  if (!(error instanceof UpstreamAnthropicMessagesApiError)) {
-    return null;
-  }
-
-  return new Response(error.body, {
-    status: error.status,
-    headers: {
-      "Content-Type": error.contentType ?? "application/json",
-    },
-  });
-}
-
-class AnthropicSseUsageTracker {
+class AnthropicSseTracker {
   private buffer = "";
   private promptTokens: number | undefined;
   private completionTokens: number | undefined;
   private cacheCreationTokens: number | undefined;
   private cacheReadTokens: number | undefined;
+  outputTokenEstimate = 0;
+  terminal = false;
+  terminalError: string | undefined;
 
-  push(chunk: string) {
+  push(chunk: string, requestId: string): string[] {
     this.buffer += chunk.replace(/\r\n/g, "\n");
     const blocks = this.buffer.split("\n\n");
     this.buffer = blocks.pop() ?? "";
-
-    for (const block of blocks) {
-      this.readBlock(block);
-    }
+    return blocks.map((block) => this.readBlock(block, requestId));
   }
 
-  end() {
-    if (this.buffer.trim()) {
-      this.readBlock(this.buffer);
-    }
+  end(requestId: string): string[] {
+    const output = this.buffer.trim() ? [this.readBlock(this.buffer, requestId)] : [];
     this.buffer = "";
+    return output;
   }
 
   usage(): {
@@ -405,56 +511,48 @@ class AnthropicSseUsageTracker {
     };
   }
 
-  private readBlock(block: string) {
+  private readBlock(block: string, requestId: string): string {
     const data = block
       .split("\n")
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice("data:".length).trimStart())
       .join("\n")
       .trim();
-
-    if (!data || data === "[DONE]") return;
+    if (!data || data === "[DONE]") return `${block}\n\n`;
 
     try {
       const event = JSON.parse(data) as {
-        message?: {
-          usage?: {
-            input_tokens?: unknown;
-            output_tokens?: unknown;
-            cache_creation_input_tokens?: unknown;
-            cache_read_input_tokens?: unknown;
-          };
-        };
-        usage?: {
-          input_tokens?: unknown;
-          output_tokens?: unknown;
-          cache_creation_input_tokens?: unknown;
-          cache_read_input_tokens?: unknown;
-        };
+        type?: string;
+        error?: { message?: unknown };
+        message?: { usage?: Record<string, unknown> };
+        usage?: Record<string, unknown>;
       };
+      this.outputTokenEstimate += estimateAnthropicStreamOutputTokens(event);
+      if (event.type === "message_stop") this.terminal = true;
+      if (event.type === "error") {
+        this.terminal = true;
+        this.terminalError = "Upstream stream error";
+        const sanitized = anthropicRelayError(
+          new UpstreamAnthropicMessagesApiError(502, JSON.stringify(event), "application/json"),
+          requestId,
+        );
+        return `event: error\ndata: ${JSON.stringify(sanitized.body)}\n\n`;
+      }
       const usage = event.message?.usage ?? event.usage;
-      if (!usage) return;
-
-      if (typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)) {
-        this.promptTokens = usage.input_tokens;
-      }
-      if (typeof usage.output_tokens === "number" && Number.isFinite(usage.output_tokens)) {
-        this.completionTokens = usage.output_tokens;
-      }
-      if (
-        typeof usage.cache_creation_input_tokens === "number" &&
-        Number.isFinite(usage.cache_creation_input_tokens)
-      ) {
-        this.cacheCreationTokens = usage.cache_creation_input_tokens;
-      }
-      if (
-        typeof usage.cache_read_input_tokens === "number" &&
-        Number.isFinite(usage.cache_read_input_tokens)
-      ) {
-        this.cacheReadTokens = usage.cache_read_input_tokens;
+      if (usage) {
+        this.promptTokens = finiteNumber(usage.input_tokens) ?? this.promptTokens;
+        this.completionTokens = finiteNumber(usage.output_tokens) ?? this.completionTokens;
+        this.cacheCreationTokens =
+          finiteNumber(usage.cache_creation_input_tokens) ?? this.cacheCreationTokens;
+        this.cacheReadTokens = finiteNumber(usage.cache_read_input_tokens) ?? this.cacheReadTokens;
       }
     } catch {
-      return;
+      // Unknown SSE events are forwarded unchanged and do not affect accounting.
     }
+    return `${block}\n\n`;
   }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

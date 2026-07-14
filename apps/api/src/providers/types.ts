@@ -454,6 +454,7 @@ export interface ProviderCapabilities {
 
 export type ProviderRequestOptions = {
   headers?: Record<string, string>;
+  query?: Record<string, string | string[]>;
   rawBody?: string;
   signal?: AbortSignal;
   onResponse?: (response: Response) => void;
