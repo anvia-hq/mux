@@ -62,6 +62,7 @@ import {
 } from "../../../src/modules/chat/services";
 import type { ChatCompletionRequest } from "../../../src/providers/types";
 import {
+  googleCapabilities,
   openAICompatibleCapabilities,
   unsupportedNativeCapabilities,
 } from "../../../src/providers/chat-compat";
@@ -423,6 +424,44 @@ describe("chat services", () => {
     expect(mockLogRequest).toHaveBeenCalledWith(
       expect.objectContaining({ model: "anthropic:claude-3-haiku", statusCode: 200 }),
     );
+  });
+
+  it("skips a native target that cannot translate a provider-specific response format", async () => {
+    const native = createResolvedModel("google", "gemini-test", {
+      chatCompletion: vi.fn(),
+    });
+    native.provider.capabilities = googleCapabilities;
+    const compatible = createResolvedModel("openai", "gpt-4", {
+      chatCompletion: vi.fn().mockResolvedValueOnce({
+        id: "chat-2",
+        model: "gpt-4",
+        choices: [
+          { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+    });
+
+    mockResolveChatModel.mockResolvedValueOnce({
+      kind: "fallback-group",
+      groupId: "structured-chat",
+      name: "Structured chat",
+      description: null,
+      requestedModelId: "mux:structured-chat",
+      targets: [native, compatible],
+    });
+
+    const request = {
+      ...createRequest({ model: "mux:structured-chat" }),
+      response_format: { type: "xml" },
+    } as unknown as ChatCompletionRequest;
+
+    await expect(handleChatCompletion(request, "key-1")).resolves.toMatchObject({
+      kind: "complete",
+      response: { model: "mux:structured-chat" },
+    });
+    expect(native.provider.chatCompletion).not.toHaveBeenCalled();
+    expect(compatible.provider.chatCompletion).toHaveBeenCalledOnce();
   });
 
   it("retries configured upstream statuses on the next candidate", async () => {

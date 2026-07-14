@@ -471,7 +471,9 @@ export class GoogleAdapter implements ProviderAdapter {
     }
     if (request.response_format?.type === "json_schema") {
       generationConfig.responseMimeType = "application/json";
-      generationConfig.responseSchema = request.response_format.json_schema.schema;
+      generationConfig.responseSchema = sanitizeGoogleResponseSchema(
+        request.response_format.json_schema.schema,
+      );
     }
 
     const body: Record<string, unknown> = {
@@ -779,6 +781,47 @@ export class GoogleAdapter implements ProviderAdapter {
   listModels(): Model[] {
     return MODELS;
   }
+}
+
+const maxGoogleSchemaSanitizationDepth = 5;
+
+function sanitizeGoogleResponseSchema(schema: unknown, depth = 0): unknown {
+  if (depth >= maxGoogleSchemaSanitizationDepth || !isJsonObject(schema)) {
+    return schema;
+  }
+
+  const sanitized: Record<string, unknown> = { ...schema };
+  delete sanitized.title;
+  delete sanitized.$schema;
+
+  if (sanitized.type === "object") {
+    delete sanitized.additionalProperties;
+
+    if (isJsonObject(sanitized.properties)) {
+      sanitized.properties = Object.fromEntries(
+        Object.entries(sanitized.properties).map(([name, propertySchema]) => [
+          name,
+          sanitizeGoogleResponseSchema(propertySchema, depth + 1),
+        ]),
+      );
+    }
+
+    for (const keyword of ["allOf", "anyOf", "oneOf"] as const) {
+      if (Array.isArray(sanitized[keyword])) {
+        sanitized[keyword] = sanitized[keyword].map((nestedSchema) =>
+          sanitizeGoogleResponseSchema(nestedSchema, depth + 1),
+        );
+      }
+    }
+  } else if (sanitized.type === "array" && isJsonObject(sanitized.items)) {
+    sanitized.items = sanitizeGoogleResponseSchema(sanitized.items, depth + 1);
+  }
+
+  return sanitized;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function contentToText(content: ChatMessage["content"]): string {

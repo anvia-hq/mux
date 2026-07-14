@@ -31,6 +31,7 @@ export const openAICompatibleCapabilities: ProviderCapabilities = {
 export const anthropicCapabilities: ProviderCapabilities = {
   tools: true,
   structuredOutput: false,
+  responseFormats: ["text"],
   multimodalInput: true,
   audioOutput: false,
   reasoning: false,
@@ -43,6 +44,7 @@ export const anthropicCapabilities: ProviderCapabilities = {
 export const googleCapabilities: ProviderCapabilities = {
   tools: true,
   structuredOutput: true,
+  responseFormats: ["text", "json_object", "json_schema"],
   multimodalInput: true,
   audioOutput: false,
   reasoning: false,
@@ -53,6 +55,7 @@ export const googleCapabilities: ProviderCapabilities = {
 export const unsupportedNativeCapabilities: ProviderCapabilities = {
   tools: false,
   structuredOutput: false,
+  responseFormats: ["text"],
   multimodalInput: false,
   audioOutput: false,
   reasoning: false,
@@ -131,6 +134,13 @@ export function unsupportedChatFeatures(
     unsupported.push("tools");
   }
   if (requested.has("structuredOutput") && !model.structuredOutput) {
+    unsupported.push("structuredOutput");
+  }
+  if (
+    request.response_format &&
+    capabilities.responseFormats &&
+    !capabilities.responseFormats.includes(request.response_format.type)
+  ) {
     unsupported.push("structuredOutput");
   }
   if (
@@ -286,7 +296,7 @@ function convertFirstSystemMessageToDeveloper(body: Record<string, unknown>): vo
 }
 
 export function validateChatCompletionRequestShape(value: unknown): string | null {
-  if (!value || typeof value !== "object") return "request body must be an object";
+  if (!isJsonObject(value)) return "request body must be an object";
   const request = value as Partial<ChatCompletionRequest>;
   if (typeof request.model !== "string" || request.model.length === 0) {
     return "request must include a model";
@@ -296,6 +306,10 @@ export function validateChatCompletionRequestShape(value: unknown): string | nul
   }
   if (request.messages !== undefined && !Array.isArray(request.messages)) {
     return "messages must be an array";
+  }
+  const responseFormatError = validateResponseFormat(value);
+  if (responseFormatError) {
+    return responseFormatError;
   }
   const webSearchOptionsError = normalizeWebSearchOptions(request as Record<string, unknown>);
   if (webSearchOptionsError) {
@@ -316,6 +330,48 @@ export function validateChatCompletionRequestShape(value: unknown): string | nul
   }
 
   return null;
+}
+
+function validateResponseFormat(request: Record<string, unknown>): string | null {
+  if (!Object.hasOwn(request, "response_format") || request.response_format === undefined) {
+    return null;
+  }
+
+  if (!isJsonObject(request.response_format)) {
+    return "response_format must be an object";
+  }
+
+  const responseFormat = request.response_format;
+  if (typeof responseFormat.type !== "string" || responseFormat.type.length === 0) {
+    return "response_format.type must be a non-empty string";
+  }
+  if (responseFormat.type !== "json_schema") {
+    return null;
+  }
+
+  if (!isJsonObject(responseFormat.json_schema)) {
+    return "response_format.json_schema must be an object";
+  }
+
+  const jsonSchema = responseFormat.json_schema;
+  if (typeof jsonSchema.name !== "string" || jsonSchema.name.length === 0) {
+    return "response_format.json_schema.name must be a non-empty string";
+  }
+  if (!isJsonObject(jsonSchema.schema)) {
+    return "response_format.json_schema.schema must be an object";
+  }
+  if (jsonSchema.description !== undefined && typeof jsonSchema.description !== "string") {
+    return "response_format.json_schema.description must be a string";
+  }
+  if (jsonSchema.strict !== undefined && typeof jsonSchema.strict !== "boolean") {
+    return "response_format.json_schema.strict must be a boolean";
+  }
+
+  return null;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function hasNonNilField(

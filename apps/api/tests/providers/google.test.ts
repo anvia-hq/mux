@@ -171,6 +171,124 @@ describe("GoogleAdapter", () => {
     expect(response.choices[0]?.finish_reason).toBe("tool_calls");
   });
 
+  it("sanitizes unsupported JSON Schema fields without mutating the request", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: '{"ok":true}' }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      }),
+    );
+
+    const schema = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      title: "Answer",
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { title: "Name", type: "string" },
+        items: {
+          title: "Items",
+          type: "array",
+          items: {
+            title: "Item",
+            type: "object",
+            additionalProperties: false,
+            properties: { id: { title: "Identifier", type: "integer" } },
+          },
+        },
+      },
+      allOf: [
+        {
+          title: "Required name",
+          type: "object",
+          additionalProperties: false,
+          properties: { name: { type: "string" } },
+        },
+      ],
+      anyOf: [{ title: "Any", type: "object", additionalProperties: true }],
+      oneOf: [{ title: "One", type: "array", items: { title: "Value", type: "number" } }],
+    };
+    const originalSchema = structuredClone(schema);
+
+    const adapter = new GoogleAdapter("sk-test");
+    await adapter.chatCompletion({
+      model: "gemini-test",
+      messages: [{ role: "user", content: "hi" }],
+      response_format: { type: "json_schema", json_schema: { name: "answer", schema } },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.generationConfig.responseSchema).toEqual({
+      type: "object",
+      properties: {
+        name: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { id: { type: "integer" } },
+          },
+        },
+      },
+      allOf: [{ type: "object", properties: { name: { type: "string" } } }],
+      anyOf: [{ type: "object" }],
+      oneOf: [{ type: "array", items: { type: "number" } }],
+    });
+    expect(schema).toEqual(originalSchema);
+  });
+
+  it("stops JSON Schema cleanup at the compatibility depth limit", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      }),
+    );
+
+    let schema: Record<string, unknown> = {
+      title: "Depth five",
+      type: "object",
+      additionalProperties: false,
+    };
+    for (let depth = 0; depth < 5; depth += 1) {
+      schema = { title: `Depth ${4 - depth}`, type: "object", properties: { next: schema } };
+    }
+
+    const adapter = new GoogleAdapter("sk-test");
+    await adapter.chatCompletion({
+      model: "gemini-test",
+      messages: [{ role: "user", content: "hi" }],
+      response_format: { type: "json_schema", json_schema: { name: "answer", schema } },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    let nested = requestBody.generationConfig.responseSchema;
+    for (let depth = 0; depth < 5; depth += 1) {
+      expect(nested.title).toBeUndefined();
+      nested = nested.properties.next;
+    }
+    expect(nested).toMatchObject({ title: "Depth five", additionalProperties: false });
+  });
+
+  it("maps JSON object mode without attaching a response schema", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json({
+        candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason: "STOP" }],
+        usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      }),
+    );
+
+    const adapter = new GoogleAdapter("sk-test");
+    await adapter.chatCompletion({
+      model: "gemini-test",
+      messages: [{ role: "user", content: "hi" }],
+      response_format: { type: "json_object" },
+    });
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(requestBody.generationConfig).toEqual({ responseMimeType: "application/json" });
+  });
+
   it("resolves and groups unnamed parallel tool results from assistant history", async () => {
     mockFetch.mockResolvedValueOnce(
       Response.json({
