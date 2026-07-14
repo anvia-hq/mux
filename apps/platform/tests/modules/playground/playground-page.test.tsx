@@ -24,7 +24,8 @@ const {
 }));
 
 function renderAsChild(element: keyof React.JSX.IntrinsicElements, props: Record<string, unknown>) {
-  const { asChild, children, ...rest } = props;
+  const { asChild, autoScroll: _autoScroll, children, submitMode: _submitMode, turnAnchor: _turnAnchor, ...rest } =
+    props;
 
   if (asChild && React.isValidElement(children)) {
     return React.cloneElement(children, rest);

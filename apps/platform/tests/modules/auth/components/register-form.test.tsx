@@ -17,8 +17,17 @@ const { mockOnboardingStatusQuery, mockRegisterMutation, mockToast } = vi.hoiste
 }));
 
 vi.mock("@repo/ui/components/button", () => ({
-  Button: ({ children, ...props }: Record<string, unknown> & { children?: React.ReactNode }) =>
-    React.createElement("button", { type: "button", ...props }, children),
+  Button: ({
+    asChild,
+    children,
+    ...props
+  }: Record<string, unknown> & { children?: React.ReactNode; asChild?: boolean }) => {
+    if (asChild && React.isValidElement(children)) {
+      return React.cloneElement(children, props);
+    }
+
+    return React.createElement("button", { type: "button", ...props }, children);
+  },
 }));
 vi.mock("@repo/ui/components/card", () => ({
   Card: ({ children }: Record<string, unknown> & { children?: React.ReactNode }) =>
