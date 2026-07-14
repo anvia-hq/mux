@@ -139,6 +139,25 @@ pnpm smoke:responses
 Set `RESPONSES_SMOKE_BACKGROUND=1` to include billable background creation and polling. Live smoke
 tests are never included in the default test commands.
 
+## Embeddings Verification
+
+Run the deterministic embeddings transport suite with:
+
+```sh
+pnpm e2e:embeddings
+```
+
+The suite uses a local HTTP upstream and covers request forwarding, direct-channel failover,
+timeouts, malformed responses, error sanitization, safe response headers, and spend reservations.
+To smoke-test explicitly selected models through a running gateway, use:
+
+```sh
+EMBEDDINGS_SMOKE_BASE_URL=http://localhost/api \
+EMBEDDINGS_SMOKE_API_KEY=mux_live_... \
+EMBEDDINGS_SMOKE_MODELS=openai:text-embedding-3-small \
+pnpm smoke:embeddings
+```
+
 ## Messages Verification
 
 Run the deterministic Anthropic Messages transport suite with:
@@ -194,6 +213,11 @@ Important production settings:
 | `MUX_RESPONSES_CACHE_TTL_SECONDS` | TTL for cached response retrieval bodies. Defaults to `300`. |
 | `AZURE_OPENAI_RESPONSES_ENDPOINT` | Azure Responses endpoint used by worker polling for Azure background jobs. |
 | `BACKGROUND_POLL_WORKER_CONCURRENCY` | Background response poll worker concurrency. Defaults to `5`. |
+| `EMBEDDINGS_RETRY_COUNT` | Retry/failover attempts for `/v1/embeddings`. Defaults to `2`. |
+| `EMBEDDINGS_RETRY_STATUS_CODES` | Retryable embedding upstream HTTP statuses and ranges. |
+| `EMBEDDINGS_NON_STREAM_TIMEOUT_MS` | Timeout for embedding requests. Defaults to `120000`. |
+| `EMBEDDINGS_MAX_REQUEST_BODY_MB` | Maximum decompressed embedding request size. Defaults to `128`. |
+| `EMBEDDINGS_RATE_LIMIT_*` | Optional per-key fixed-window total and successful embedding limits. |
 | `RESPONSES_RETRY_COUNT` | Retry/failover attempts for `/v1/responses`. Defaults to `2`. |
 | `RESPONSES_RETRY_STATUS_CODES` | Retryable upstream HTTP statuses and ranges. |
 | `RESPONSES_FIRST_BYTE_TIMEOUT_MS` | Maximum wait for the first Responses stream event. |
@@ -218,7 +242,6 @@ It does not currently handle:
 
 - Weighted provider load balancing
 - Provider-wide automatic fallback rules
-- Embeddings proxying
 - Function-call normalization between providers
 - Full multi-tenant isolation
 

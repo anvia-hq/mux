@@ -158,17 +158,24 @@ describe("ModelsDevProviderAdapter", () => {
       apiBase: "https://x.com/v1/chat/completions",
       models: testModels,
     });
-    const resp = await a.createEmbedding({
-      model: "m1",
-      input: ["hello"],
-      encoding_format: "float",
-    });
+    const controller = new AbortController();
+    const onResponse = vi.fn();
+    const resp = await a.createEmbedding(
+      {
+        model: "m1",
+        input: ["hello"],
+        encoding_format: "float",
+      },
+      { signal: controller.signal, onResponse },
+    );
 
     expect(resp.data[0]?.embedding).toEqual([0.1]);
+    expect(onResponse).toHaveBeenCalledOnce();
     expect(mockGlobalFetch).toHaveBeenCalledWith(
       "https://x.com/v1/embeddings",
       expect.objectContaining({
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer k",

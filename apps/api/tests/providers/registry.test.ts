@@ -32,6 +32,7 @@ import {
   resolveAudioTranslationModel,
   resolveChatModel,
   resolveCompletionModel,
+  resolveEmbeddingAccessModelId,
   resolveEmbeddingModel,
   resolveImageGenerationModel,
   resolveModerationModel,
@@ -519,6 +520,14 @@ describe("custom providers", () => {
         },
       ],
     });
+    await expect(resolveEmbeddingModel("custom-openai:public-chat")).resolves.toMatchObject({
+      kind: "direct",
+      requestedModelId: "custom-openai:public-chat",
+      targets: [{ channelId: "custom-primary" }, { channelId: "custom-secondary" }],
+    });
+    await expect(resolveEmbeddingAccessModelId("custom-openai:public-chat")).resolves.toBe(
+      "custom-openai:public-chat",
+    );
     await expect(listPublicModels()).resolves.toEqual([
       expect.objectContaining({
         provider: "custom-openai",

@@ -218,19 +218,26 @@ describe("OpenAIAdapter", () => {
     );
 
     const adapter = new OpenAIAdapter("sk-test");
-    const response = await adapter.createEmbedding({
-      model: "text-embedding-3-small",
-      input: "hello",
-      encoding_format: "float",
-      dimensions: 256,
-      user: "user-1",
-    });
+    const controller = new AbortController();
+    const onResponse = vi.fn();
+    const response = await adapter.createEmbedding(
+      {
+        model: "text-embedding-3-small",
+        input: "hello",
+        encoding_format: "float",
+        dimensions: 256,
+        user: "user-1",
+      },
+      { signal: controller.signal, onResponse },
+    );
 
     expect(response.data[0]?.embedding).toEqual([0.1, 0.2]);
+    expect(onResponse).toHaveBeenCalledOnce();
     expect(mockFetch).toHaveBeenCalledWith(
       "https://api.openai.com/v1/embeddings",
       expect.objectContaining({
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer sk-test",

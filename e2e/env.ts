@@ -34,6 +34,7 @@ export const e2eRuntimeEnv = {
   MESSAGES_FIRST_BYTE_TIMEOUT_MS: "400",
   MESSAGES_NON_STREAM_TIMEOUT_MS: "600",
   MESSAGES_STREAM_IDLE_TIMEOUT_MS: "400",
+  EMBEDDINGS_NON_STREAM_TIMEOUT_MS: "600",
 } satisfies Record<string, string>;
 
 export const e2ePlatformEnv = {

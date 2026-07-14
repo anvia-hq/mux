@@ -53,6 +53,8 @@ function channelFor(request: IncomingMessage): string {
   if (token.includes("native-backup")) return "native-backup";
   if (token.includes("chat-primary")) return "chat-primary";
   if (token.includes("chat-backup")) return "chat-backup";
+  if (token.includes("embedding-primary")) return "embedding-primary";
+  if (token.includes("embedding-backup")) return "embedding-backup";
   const apiKey = String(request.headers["x-api-key"] ?? "");
   if (apiKey.includes("anthropic-primary")) return "anthropic-primary";
   if (apiKey.includes("anthropic-backup")) return "anthropic-backup";
@@ -60,10 +62,85 @@ function channelFor(request: IncomingMessage): string {
 }
 
 function scenarioFor(body: JsonObject | null): string {
+  if (typeof body?.e2e_scenario === "string") return body.e2e_scenario;
   const metadata = body?.metadata;
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return "success";
   const scenario = (metadata as JsonObject).e2e_scenario;
   return typeof scenario === "string" ? scenario : "success";
+}
+
+function embeddingInputCount(input: unknown): number {
+  if (typeof input === "string") return Math.max(input.split(/\s+/).filter(Boolean).length, 1);
+  if (!Array.isArray(input)) return 0;
+  if (input.length === 0) return 0;
+  if (typeof input[0] === "number") return input.length;
+  if (Array.isArray(input[0])) {
+    return (input as unknown[][]).reduce((total, item) => total + item.length, 0);
+  }
+  return input.reduce(
+    (total, item) =>
+      total +
+      (typeof item === "string" ? Math.max(item.split(/\s+/).filter(Boolean).length, 1) : 0),
+    0,
+  );
+}
+
+function embeddingItemCount(input: unknown): number {
+  if (!Array.isArray(input) || input.length === 0) return 1;
+  return typeof input[0] === "string" || Array.isArray(input[0]) ? input.length : 1;
+}
+
+async function embeddingCreate(response: ServerResponse, channel: string, body: JsonObject) {
+  const scenario = scenarioFor(body);
+  if (scenario === "retryable_primary" && channel === "embedding-primary") {
+    json(response, 503, {
+      error: {
+        message: "fixture embedding primary unavailable api_key=sk-do-not-forward123456",
+        type: "server_error",
+      },
+    });
+    return;
+  }
+  if (scenario === "non_retryable") {
+    json(
+      response,
+      400,
+      {
+        error: {
+          message: "fixture rejected authorization: Bearer sk-fixturesecret123456",
+          type: "invalid_request_error",
+        },
+      },
+      { "retry-after": "9" },
+    );
+    return;
+  }
+  if (scenario === "slow") await delay(1_000);
+  if (scenario === "malformed") {
+    json(response, 200, { object: "list", model: body.model, data: [{ index: 0 }] });
+    return;
+  }
+
+  const base64 = body.encoding_format === "base64";
+  const count = embeddingItemCount(body.input);
+  const promptTokens = embeddingInputCount(body.input);
+  const result: JsonObject = {
+    object: "list",
+    model: typeof body.model === "string" ? body.model : "fixture-embed",
+    data: Array.from({ length: count }, (_, index) => ({
+      object: "embedding",
+      embedding: base64 ? `ZmlyZV9lbWJlZGRpbmdf${index}` : [0.1 + index, 0.2 + index],
+      index,
+    })),
+  };
+  if (scenario !== "missing_usage") {
+    result.usage = { prompt_tokens: promptTokens, total_tokens: promptTokens };
+  }
+  json(response, 200, result, {
+    "x-fixture-upstream": channel,
+    "x-request-id": "must-not-overwrite-gateway-request-id",
+    "set-cookie": "must-not-forward=true",
+  });
 }
 
 function capture(request: IncomingMessage, url: URL, channel: string, body: JsonObject | null) {
@@ -507,6 +584,10 @@ const server = createServer(async (request, response) => {
     }
     if (url.pathname === "/v1/chat/completions" && request.method === "POST" && body) {
       await chatCreate(response, channel, body);
+      return;
+    }
+    if (url.pathname === "/v1/embeddings" && request.method === "POST" && body) {
+      await embeddingCreate(response, channel, body);
       return;
     }
     if (url.pathname === "/v1/messages/count_tokens" && request.method === "POST") {

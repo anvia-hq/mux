@@ -7,6 +7,7 @@ const { mockFetch } = vi.hoisted(() => ({
 vi.stubGlobal("fetch", mockFetch);
 
 import { CustomOpenAICompatibleAdapter } from "../../src/providers/custom-openai-compatible";
+import { UpstreamOpenAICompatibleError } from "../../src/providers/openai-compatible-error";
 import type { Model } from "../../src/providers/types";
 
 const models: Model[] = [
@@ -194,21 +195,50 @@ describe("CustomOpenAICompatibleAdapter", () => {
       apiBase: "https://custom.example/v1/chat/completions",
       models,
     });
-    const response = await adapter.createEmbedding({
-      model: "embed",
-      input: "hello",
-      encoding_format: "base64",
-    });
+    const controller = new AbortController();
+    const onResponse = vi.fn();
+    const response = await adapter.createEmbedding(
+      {
+        model: "embed",
+        input: "hello",
+        encoding_format: "base64",
+      },
+      { signal: controller.signal, onResponse },
+    );
 
     expect(response.data[0]?.embedding).toBe("base64-data");
+    expect(onResponse).toHaveBeenCalledOnce();
     expect(mockFetch).toHaveBeenCalledWith(
       "https://custom.example/v1/embeddings",
       expect.objectContaining({
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           Authorization: "Bearer k",
         },
+      }),
+    );
+  });
+
+  it("raises status-aware embedding errors with Retry-After", async () => {
+    mockFetch.mockResolvedValueOnce(
+      Response.json(
+        { error: { message: "busy" } },
+        { status: 429, headers: { "retry-after": "7" } },
+      ),
+    );
+    const adapter = new CustomOpenAICompatibleAdapter({
+      name: "custom",
+      apiKey: "k",
+      apiBase: "https://custom.example/v1",
+      models,
+    });
+
+    await expect(adapter.createEmbedding({ model: "embed", input: "hello" })).rejects.toEqual(
+      expect.objectContaining<Partial<UpstreamOpenAICompatibleError>>({
+        status: 429,
+        retryAfter: "7",
       }),
     );
   });

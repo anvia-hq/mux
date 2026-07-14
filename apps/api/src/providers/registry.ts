@@ -983,36 +983,11 @@ function isEmbeddingCapableTarget(
 }
 
 export async function resolveEmbeddingModel(model: string): Promise<ResolvedEmbeddingModel | null> {
-  const resolved = await resolveChatModel(model);
-  if (!resolved) {
-    return null;
-  }
+  return resolveEndpointModel(model, isEmbeddingCapableTarget, { allDirectTargets: true });
+}
 
-  if (resolved.kind === "direct") {
-    const target = resolved.targets[0];
-    if (!isEmbeddingCapableTarget(target)) {
-      return null;
-    }
-    return {
-      kind: "direct",
-      requestedModelId: resolved.requestedModelId,
-      targets: [target],
-    };
-  }
-
-  const targets = resolved.targets.filter(isEmbeddingCapableTarget);
-  if (targets.length === 0) {
-    return null;
-  }
-
-  return {
-    kind: "fallback-group",
-    groupId: resolved.groupId,
-    name: resolved.name,
-    description: resolved.description,
-    requestedModelId: resolved.requestedModelId,
-    targets,
-  };
+export async function resolveEmbeddingAccessModelId(model: string): Promise<string> {
+  return (await resolveEmbeddingModel(model))?.requestedModelId ?? model;
 }
 
 export type ResolvedModerationProviderModel = ResolvedProviderModel & {

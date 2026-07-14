@@ -169,7 +169,7 @@ export interface EmbeddingResponse {
     index: number;
   }[];
   model: string;
-  usage: {
+  usage?: {
     prompt_tokens: number;
     total_tokens: number;
   };

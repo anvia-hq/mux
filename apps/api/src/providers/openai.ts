@@ -1151,8 +1151,7 @@ export class OpenAIAdapter implements ProviderAdapter {
     options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError("OpenAI", response);
     }
 
     return (await response.json()) as EmbeddingResponse;

@@ -199,12 +199,12 @@ export class ModelsDevProviderAdapter implements ProviderAdapter {
       method: "POST",
       headers: this.buildHeaders(options),
       body: options?.rawBody ?? JSON.stringify(request),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    options?.onResponse?.(response);
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`${this.name} API error: ${response.status} - ${error}`);
+      await throwOpenAICompatibleError(this.name, response);
     }
 
     return (await response.json()) as EmbeddingResponse;
