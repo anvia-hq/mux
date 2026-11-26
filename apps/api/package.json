@@ -6,11 +6,17 @@
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "build": "bun build src/index.ts --target bun --outdir dist",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "bun test"
   },
   "dependencies": {
+    "@elysiajs/cors": "latest",
+    "@mux/core": "workspace:*",
     "@mux/db": "workspace:*",
-    "elysia": "latest"
+    "better-auth": "latest",
+    "drizzle-orm": "latest",
+    "elysia": "latest",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

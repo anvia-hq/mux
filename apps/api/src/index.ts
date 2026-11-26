@@ -1,8 +1,24 @@
-import { Elysia } from "elysia";
+import { createApp } from "./app";
+import { createComposition } from "./composition";
 
-export const app = new Elysia()
-  .get("/", () => ({ name: "mux-api" }))
-  .get("/health", () => ({ ok: true }))
-  .listen(Number(process.env.PORT ?? 3000));
+const composition = createComposition();
+
+export const app = createApp(composition).listen(composition.config.PORT);
+
+const handleShutdown = async (): Promise<void> => {
+  await app.stop();
+  await composition.shutdown();
+  process.exit(0);
+};
+
+process.on("SIGINT", () => {
+  void handleShutdown();
+});
+
+process.on("SIGTERM", () => {
+  void handleShutdown();
+});
 
 console.log(`api listening on ${app.server?.url}`);
+
+export type { App } from "./app";
