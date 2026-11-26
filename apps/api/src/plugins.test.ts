@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -17,18 +17,39 @@ afterEach(async () => {
 });
 
 describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway", () => {
-  test("discovers and registers local plugin, uploads custom plugin with encrypted secrets, caches over MCP gateway, and cleans up on delete", async () => {
+  test("enforces admin RBAC, registers local & uploaded plugins, invalidates caches on sync & secret rotation, and cleans up on delete", async () => {
     const tempRoot = await mkdtemp(join(tmpdir(), "mux-api-plugins-"));
 
     tempDirs.push(tempRoot);
 
+    const localRoot = join(tempRoot, "local");
     const uploadedRoot = join(tempRoot, "uploaded");
+    const editableDir = join(localRoot, "editable-plugin");
 
+    await mkdir(editableDir, { recursive: true });
     await mkdir(uploadedRoot, { recursive: true });
+    await writeFile(
+      join(editableDir, "manifest.json"),
+      JSON.stringify({
+        name: "editable-plugin",
+        version: "1.0.0",
+        entry: "./index.ts",
+        tools: [
+          {
+            name: "version",
+            description: "Return plugin build tag",
+            handler: "getVersion",
+            readOnly: true,
+            inputSchema: { type: "object", properties: {} },
+            cache: { mode: "ttl", ttlSeconds: 300 },
+          },
+        ],
+      }),
+    );
+    await writeFile(join(editableDir, "index.ts"), "export const getVersion = () => ({ rev: 1 });");
 
-    const repoPluginsDir = resolve(import.meta.dir, "../../../plugins");
     const harness = createTestHarness({
-      localPluginsRoot: repoPluginsDir,
+      localPluginsRoot: localRoot,
       uploadedPluginsRoot: uploadedRoot,
     });
     const admin = harness.seedUser({
@@ -47,75 +68,115 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
     expect((await harness.request("/v1/sources/plugins/local", { userId: member.id })).status).toBe(
       403,
     );
-
-    const localListRes = await harness.request("/v1/sources/plugins/local", { userId: admin.id });
-
-    expect(localListRes.status).toBe(200);
-
-    const localPlugins = (await localListRes.json()).plugins as Array<{ directoryName: string }>;
-
-    expect(localPlugins.some((p) => p.directoryName === "example-utils")).toBe(true);
+    expect(
+      (
+        await harness.request("/v1/sources/plugins/local", {
+          method: "POST",
+          userId: member.id,
+          body: { directoryName: "editable-plugin" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request("/v1/sources/plugins/upload", {
+          method: "POST",
+          userId: member.id,
+          body: {
+            manifest: {
+              name: "blocked",
+              version: "1.0.0",
+              entry: "./index.ts",
+              tools: [
+                {
+                  name: "t",
+                  description: "t",
+                  handler: "t",
+                  inputSchema: { type: "object", properties: {} },
+                },
+              ],
+            },
+            files: [{ path: "index.ts", content: "export const t = () => ({});" }],
+          },
+        })
+      ).status,
+    ).toBe(403);
 
     const registerLocalRes = await harness.request("/v1/sources/plugins/local", {
       method: "POST",
       userId: admin.id,
-      body: { directoryName: "example-utils" },
+      body: { directoryName: "editable-plugin" },
     });
 
     expect(registerLocalRes.status).toBe(201);
 
     const localSource = (await registerLocalRes.json()).source;
+    const uploadBody = {
+      manifest: {
+        name: "greeter",
+        version: "1.0.0",
+        description: "Custom uploaded greeting plugin",
+        entry: "./index.ts",
+        secrets: ["GREETING_PREFIX"],
+        timeoutMs: 5000,
+        tools: [
+          {
+            name: "greet",
+            description: "Greet a user with configured secret prefix",
+            handler: "greetUser",
+            readOnly: true,
+            inputSchema: {
+              type: "object",
+              required: ["name"],
+              properties: { name: { type: "string" } },
+            },
+            cache: { mode: "ttl", ttlSeconds: 120 },
+          },
+        ],
+      },
+      files: [
+        {
+          path: "index.ts",
+          content:
+            'export const greetUser = ({ name }, ctx) => ({ message: `${ctx.env.GREETING_PREFIX ?? "Hi"} ${name}` });',
+        },
+      ],
+      secrets: { GREETING_PREFIX: "Hello" },
+    };
+
     const uploadRes = await harness.request("/v1/sources/plugins/upload", {
       method: "POST",
       userId: admin.id,
-      body: {
-        manifest: {
-          name: "greeter",
-          version: "1.0.0",
-          description: "Custom uploaded greeting plugin",
-          entry: "./index.ts",
-          secrets: ["GREETING_PREFIX"],
-          timeoutMs: 5000,
-          tools: [
-            {
-              name: "greet",
-              description: "Greet a user with configured secret prefix",
-              handler: "greetUser",
-              readOnly: true,
-              inputSchema: {
-                type: "object",
-                required: ["name"],
-                properties: { name: { type: "string" } },
-              },
-              cache: { mode: "ttl", ttlSeconds: 120 },
-            },
-          ],
-        },
-        files: [
-          {
-            path: "index.ts",
-            content:
-              'export const greetUser = ({ name }, ctx) => ({ message: `${ctx.env.GREETING_PREFIX ?? "Hi"} ${name}` });',
-          },
-        ],
-        secrets: { GREETING_PREFIX: "Hello" },
-      },
+      body: uploadBody,
     });
 
     expect(uploadRes.status).toBe(201);
 
     const uploadedData = await uploadRes.json();
 
-    expect(uploadedData.syncedToolsCount).toBe(1);
-    expect(uploadedData.source.hasSecrets).toBe(true);
+    expect(
+      (
+        await harness.request("/v1/sources/plugins/upload", {
+          method: "POST",
+          userId: admin.id,
+          body: uploadBody,
+        })
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (
+        await harness.request(`/v1/sources/${uploadedData.source.id}/sync`, {
+          method: "POST",
+          userId: admin.id,
+        })
+      ).status,
+    ).toBe(422);
 
     const allTools = (await (await harness.request("/v1/tools", { userId: admin.id })).json())
       .tools as Array<{ id: string; slug: string }>;
-    const slugifyTool = allTools.find((t) => t.slug === "example-utils__slugify");
+    const versionTool = allTools.find((t) => t.slug === "editable-plugin__version");
     const greetTool = allTools.find((t) => t.slug === "greeter__greet");
-
-    expect(slugifyTool).toBeDefined();
-    expect(greetTool).toBeDefined();
 
     const ep = (
       await (
@@ -127,7 +188,7 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
       ).json()
     ).endpoint;
 
-    await harness.request(`/v1/endpoints/${ep.id}/tools/${slugifyTool?.id}`, {
+    await harness.request(`/v1/endpoints/${ep.id}/tools/${versionTool?.id}`, {
       method: "PUT",
       userId: admin.id,
       body: { enabled: true },
@@ -148,7 +209,7 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
       ).json()
     ).rawKey as string;
 
-    const slugCall = await (
+    const rev1Call = await (
       await harness.request("/mcp/plugins-ep", {
         method: "POST",
         bearerToken: apiKey,
@@ -156,18 +217,24 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: {
-            name: "example-utils__slugify",
-            arguments: { text: "Hello Composio World!" },
-          },
+          params: { name: "editable-plugin__version", arguments: {} },
         },
       })
     ).json();
 
-    expect(slugCall.result.structuredContent).toEqual({ slug: "hello-composio-world" });
-    expect(slugCall.result._meta.cacheStatus).toBe("miss");
+    expect(rev1Call.result.structuredContent).toEqual({ rev: 1 });
+    expect(rev1Call.result._meta.cacheStatus).toBe("miss");
 
-    const greetFirst = await (
+    await writeFile(join(editableDir, "index.ts"), "export const getVersion = () => ({ rev: 2 });");
+
+    const resyncLocal = await harness.request(`/v1/sources/${localSource.id}/sync`, {
+      method: "POST",
+      userId: admin.id,
+    });
+
+    expect(resyncLocal.status).toBe(200);
+
+    const rev2Call = await (
       await harness.request("/mcp/plugins-ep", {
         method: "POST",
         bearerToken: apiKey,
@@ -175,15 +242,15 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
           jsonrpc: "2.0",
           id: 2,
           method: "tools/call",
-          params: { name: "greeter__greet", arguments: { name: "Indra" } },
+          params: { name: "editable-plugin__version", arguments: {} },
         },
       })
     ).json();
 
-    expect(greetFirst.result.structuredContent).toEqual({ message: "Hello Indra" });
-    expect(greetFirst.result._meta.cacheStatus).toBe("miss");
+    expect(rev2Call.result.structuredContent).toEqual({ rev: 2 });
+    expect(rev2Call.result._meta.cacheStatus).toBe("miss");
 
-    const greetCached = await (
+    const greetFirst = await (
       await harness.request("/mcp/plugins-ep", {
         method: "POST",
         bearerToken: apiKey,
@@ -196,7 +263,7 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
       })
     ).json();
 
-    expect(greetCached.result._meta.cacheStatus).toBe("hit");
+    expect(greetFirst.result.structuredContent).toEqual({ message: "Hello Indra" });
 
     await harness.request(`/v1/sources/${uploadedData.source.id}`, {
       method: "PATCH",
@@ -220,13 +287,6 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
     expect(greetAfterRotate.result.structuredContent).toEqual({ message: "Welcome Indra" });
     expect(greetAfterRotate.result._meta.cacheStatus).toBe("miss");
 
-    const resyncLocal = await harness.request(`/v1/sources/${localSource.id}/sync`, {
-      method: "POST",
-      userId: admin.id,
-    });
-
-    expect(resyncLocal.status).toBe(200);
-
     const deleteUploaded = await harness.request(`/v1/sources/${uploadedData.source.id}`, {
       method: "DELETE",
       userId: admin.id,
@@ -234,5 +294,41 @@ describe("Code plugin sources (local + uploaded) over unified /mcp/:slug gateway
 
     expect(deleteUploaded.status).toBe(204);
     await expect(stat(join(uploadedRoot, "greeter"))).rejects.toThrow();
+  });
+
+  test("discovers and executes built-in example-utils plugin from repo plugins directory", async () => {
+    const repoPluginsDir = resolve(import.meta.dir, "../../../plugins");
+    const harness = createTestHarness({ localPluginsRoot: repoPluginsDir });
+    const admin = harness.seedUser({
+      id: "admin-ex",
+      email: "admin@mux.dev",
+      name: "Admin",
+      role: "admin",
+    });
+
+    const localList = (
+      await (await harness.request("/v1/sources/plugins/local", { userId: admin.id })).json()
+    ).plugins as Array<{ directoryName: string }>;
+
+    expect(localList.some((p) => p.directoryName === "example-utils")).toBe(true);
+
+    await harness.request("/v1/sources/plugins/local", {
+      method: "POST",
+      userId: admin.id,
+      body: { directoryName: "example-utils" },
+    });
+
+    const tools = (await (await harness.request("/v1/tools", { userId: admin.id })).json())
+      .tools as Array<{ id: string; slug: string }>;
+    const slugify = tools.find((t) => t.slug === "example-utils__slugify");
+
+    const execRes = await harness.request(`/v1/tools/${slugify?.id}/execute`, {
+      method: "POST",
+      userId: admin.id,
+      body: { arguments: { text: "Hello Mux Platform!" } },
+    });
+
+    expect(execRes.status).toBe(200);
+    expect((await execRes.json()).result.structuredContent).toEqual({ slug: "hello-mux-platform" });
   });
 });

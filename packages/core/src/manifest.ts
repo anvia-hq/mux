@@ -8,6 +8,38 @@ const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
 const SAFE_ENTRY_PATTERN =
   /^(?:\.\/)?(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:ts|mts|js|mjs)$/;
 const RESERVED_HANDLER_NAMES = new Set(["__proto__", "constructor", "prototype"]);
+const RESERVED_ENV_NAMES = new Set([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "SHELL",
+  "USER",
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "NODE_EXTRA_CA_CERTS",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+]);
+const RESERVED_ENV_PREFIXES = ["LD_", "DYLD_", "BUN_", "NODE_"];
+
+export const isReservedSecretEnvName = (name: string): boolean => {
+  const upper = name.toUpperCase();
+
+  if (RESERVED_ENV_NAMES.has(upper)) {
+    return true;
+  }
+
+  for (const prefix of RESERVED_ENV_PREFIXES) {
+    if (upper.startsWith(prefix)) {
+      return true;
+    }
+  }
+
+  return false;
+};
 
 const isSafeRelativeEntry = (entry: string): boolean => {
   if (!SAFE_ENTRY_PATTERN.test(entry)) {
@@ -18,7 +50,7 @@ const isSafeRelativeEntry = (entry: string): boolean => {
   const segments = normalized.split("/");
 
   for (const segment of segments) {
-    if (segment === "." || segment === ".." || segment.length === 0) {
+    if (segment === "." || segment === ".." || segment.length === 0 || segment.startsWith(".")) {
       return false;
     }
   }
@@ -58,10 +90,17 @@ export const pluginManifestSchema = z
     version: z.string().regex(SEMVER_PATTERN, "Plugin version must be valid semver."),
     description: z.string().max(1000).optional(),
     entry: z.string().refine(isSafeRelativeEntry, {
-      message: "Plugin entry must be a safe relative .ts/.mts/.js/.mjs path.",
+      message: "Plugin entry must be a safe non-hidden relative .ts/.mts/.js/.mjs path.",
     }),
     secrets: z
-      .array(z.string().regex(ENV_NAME_PATTERN, "Secret names must be UPPER_SNAKE_CASE."))
+      .array(
+        z
+          .string()
+          .regex(ENV_NAME_PATTERN, "Secret names must be UPPER_SNAKE_CASE.")
+          .refine((name) => !isReservedSecretEnvName(name), {
+            message: "Reserved OS/runtime environment variable names are not allowed as secrets.",
+          }),
+      )
       .max(50)
       .default([]),
     timeoutMs: z.number().int().min(100).max(60_000).default(10_000),

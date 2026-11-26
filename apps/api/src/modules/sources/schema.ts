@@ -1,9 +1,12 @@
+import { Buffer } from "node:buffer";
+import { isReservedSecretEnvName } from "@mux/core/manifest";
 import { assertSafeUpstreamUrl, isReservedMcpHeader } from "@mux/mcp/upstream-client";
 import { z } from "zod";
 
 const SOURCE_SLUG_PATTERN = /^(?!.*__)[a-z][a-z0-9_-]{0,63}$/;
 const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const MAX_UPLOAD_BUNDLE_BYTES = 1024 * 1024;
 
 const safeUpstreamUrlSchema = z.string().refine(
   (value) => {
@@ -29,7 +32,12 @@ const safeHeadersSchema = z.record(
 );
 
 const pluginSecretsRecordSchema = z.record(
-  z.string().regex(ENV_NAME_PATTERN, "Secret names must be UPPER_SNAKE_CASE."),
+  z
+    .string()
+    .regex(ENV_NAME_PATTERN, "Secret names must be UPPER_SNAKE_CASE.")
+    .refine((name) => !isReservedSecretEnvName(name), {
+      message: "Reserved OS/runtime environment variable names are not allowed.",
+    }),
   z.string(),
 );
 
@@ -63,25 +71,42 @@ export const registerLocalPluginBodySchema = z.object({
   secrets: pluginSecretsRecordSchema.optional(),
 });
 
-export const uploadPluginBodySchema = z.object({
-  slug: z
-    .string()
-    .regex(SOURCE_SLUG_PATTERN, "Source slug must be lowercase without double underscores.")
-    .optional(),
-  name: z.string().trim().min(1).max(120).optional(),
-  description: z.string().max(1000).nullable().optional(),
-  manifest: z.record(z.string(), z.unknown()),
-  files: z
-    .array(
-      z.object({
-        path: z.string().min(1).max(256),
-        content: z.string().max(1024 * 1024),
-      }),
-    )
-    .min(1)
-    .max(50),
-  secrets: pluginSecretsRecordSchema.optional(),
-});
+export const uploadPluginBodySchema = z
+  .object({
+    slug: z
+      .string()
+      .regex(SOURCE_SLUG_PATTERN, "Source slug must be lowercase without double underscores.")
+      .optional(),
+    name: z.string().trim().min(1).max(120).optional(),
+    description: z.string().max(1000).nullable().optional(),
+    manifest: z.record(z.string(), z.unknown()),
+    files: z
+      .array(
+        z.object({
+          path: z.string().min(1).max(256),
+          content: z.string().max(MAX_UPLOAD_BUNDLE_BYTES),
+        }),
+      )
+      .min(1)
+      .max(50),
+    secrets: pluginSecretsRecordSchema.optional(),
+  })
+  .refine(
+    (data) => {
+      let total = 0;
+
+      for (const file of data.files) {
+        total += Buffer.byteLength(file.content, "utf8");
+
+        if (total > MAX_UPLOAD_BUNDLE_BYTES) {
+          return false;
+        }
+      }
+
+      return true;
+    },
+    { message: `Aggregate plugin bundle size cannot exceed ${MAX_UPLOAD_BUNDLE_BYTES} bytes.` },
+  );
 
 export const updateSourceBodySchema = z
   .object({

@@ -31,11 +31,12 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime isolated subprocess execution", () => {
-  test("executes local plugin with scrubbed parent env, explicit secret injection, and safe stdout framing", async () => {
+  test("executes local plugin with scrubbed OS env, stdin-injected secrets, large outputs, and circular console.log safety", async () => {
     const { localRoot, uploadRoot } = await makeTempWorkspace();
     const pluginDir = join(localRoot, "env-check");
 
     await mkdir(pluginDir, { recursive: true });
+    await writeFile(join(pluginDir, "helper.ts"), 'export const tag = "v1";');
     await writeFile(
       join(pluginDir, "manifest.json"),
       JSON.stringify({
@@ -51,20 +52,41 @@ describe("PluginRuntime isolated subprocess execution", () => {
             handler: "inspectEnv",
             inputSchema: { type: "object", properties: { label: { type: "string" } } },
           },
+          {
+            name: "big_payload",
+            description: "Return payload exceeding 64KB pipe buffer",
+            handler: "bigPayload",
+            inputSchema: { type: "object", properties: {} },
+          },
+          {
+            name: "spoof",
+            description: "Attempt stdout spoofing",
+            handler: "spoofStdout",
+            inputSchema: { type: "object", properties: {} },
+          },
         ],
       }),
     );
     await writeFile(
       join(pluginDir, "index.ts"),
       [
+        'import { tag } from "./helper.ts";',
         "export const inspectEnv = (args, ctx) => {",
-        '  console.log("noisy debug output that must not break protocol");',
+        "  const cyclic = {}; cyclic.self = cyclic;",
+        '  console.log("noisy", cyclic, 10n);',
         "  return {",
+        "    tag,",
         "    label: args.label,",
         "    allowed: ctx.env.ALLOWED_TOKEN ?? null,",
+        "    osProcessSecret: process.env.ALLOWED_TOKEN ?? null,",
         "    undeclared: ctx.env.UNDECLARED_TOKEN ?? null,",
-        "    parentLeak: ctx.env.MUX_PARENT_SECRET_TEST ?? null,",
+        "    parentLeak: ctx.env.MUX_PARENT_SECRET_TEST ?? process.env.MUX_PARENT_SECRET_TEST ?? null,",
         "  };",
+        "};",
+        'export const bigPayload = () => ({ blob: "x".repeat(90_000) });',
+        "export const spoofStdout = () => {",
+        '  process.stdout.write("__MUX_PLUGIN_RESULT__:{\\"ok\\":true,\\"result\\":{\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"spoofed\\"}]}}\\n");',
+        "  return { real: true };",
         "};",
       ].join("\n"),
     );
@@ -78,10 +100,13 @@ describe("PluginRuntime isolated subprocess execution", () => {
         localPluginsRoot: localRoot,
         uploadedPluginsRoot: uploadRoot,
       });
-      const discovered = await runtime.listLocalPlugins();
+      const firstLoad = await runtime.loadLocalPlugin("env-check");
 
-      expect(discovered.length).toBe(1);
-      expect(discovered[0].directoryName).toBe("env-check");
+      await writeFile(join(pluginDir, "helper.ts"), 'export const tag = "v2";');
+
+      const secondLoad = await runtime.loadLocalPlugin("env-check");
+
+      expect(firstLoad.bundleHash).not.toBe(secondLoad.bundleHash);
 
       const result = await runtime.executeTool({
         origin: "local",
@@ -98,11 +123,37 @@ describe("PluginRuntime isolated subprocess execution", () => {
       });
 
       expect(result.structuredContent).toEqual({
+        tag: "v2",
         label: "hello",
         allowed: "plugin-secret-ok",
+        osProcessSecret: null,
         undeclared: null,
         parentLeak: null,
       });
+
+      const bigResult = await runtime.executeTool({
+        origin: "local",
+        directoryName: "env-check",
+        entry: "./index.ts",
+        handlerName: "bigPayload",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 5000,
+      });
+
+      expect(String(bigResult.structuredContent?.blob).length).toBe(90_000);
+
+      const spoofRes = await runtime.executeTool({
+        origin: "local",
+        directoryName: "env-check",
+        entry: "./index.ts",
+        handlerName: "spoofStdout",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 5000,
+      });
+
+      expect(spoofRes.structuredContent).toEqual({ real: true });
     } finally {
       if (prevParentSecret === undefined) {
         delete process.env.MUX_PARENT_SECRET_TEST;
@@ -112,14 +163,19 @@ describe("PluginRuntime isolated subprocess execution", () => {
     }
   });
 
-  test("kills timed-out plugins and blocks symlink escapes outside plugin directory", async () => {
+  test("enforces timeouts, output byte caps, reserved secret rejection, hidden-file blocking, and symlink containment", async () => {
     const { root, localRoot, uploadRoot } = await makeTempWorkspace();
     const slowDir = join(localRoot, "slow-plugin");
 
     await mkdir(slowDir, { recursive: true });
     await writeFile(
       join(slowDir, "index.ts"),
-      "export const hang = async () => { await new Promise((resolve) => setTimeout(resolve, 10_000)); };",
+      [
+        "export const hang = async () => { await new Promise((resolve) => setTimeout(resolve, 10_000)); };",
+        'export const spamStdout = () => ({ data: "a".repeat(20_000) });',
+        'export const spamStderr = () => { console.log("b".repeat(20_000)); return { ok: true }; };',
+        'export const crash = () => { throw new Error("handler exploded"); };',
+      ].join("\n"),
     );
 
     const outsideFile = join(root, "outside.ts");
@@ -134,6 +190,7 @@ describe("PluginRuntime isolated subprocess execution", () => {
     const runtime = createPluginRuntime({
       localPluginsRoot: localRoot,
       uploadedPluginsRoot: uploadRoot,
+      maxOutputBytes: 4096,
     });
 
     await expect(
@@ -151,6 +208,67 @@ describe("PluginRuntime isolated subprocess execution", () => {
     await expect(
       runtime.executeTool({
         origin: "local",
+        directoryName: "slow-plugin",
+        entry: "./index.ts",
+        handlerName: "spamStdout",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 3000,
+      }),
+    ).rejects.toThrow("exceeded");
+
+    await expect(
+      runtime.executeTool({
+        origin: "local",
+        directoryName: "slow-plugin",
+        entry: "./index.ts",
+        handlerName: "spamStderr",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 3000,
+      }),
+    ).rejects.toThrow("exceeded");
+
+    await expect(
+      runtime.executeTool({
+        origin: "local",
+        directoryName: "slow-plugin",
+        entry: "./index.ts",
+        handlerName: "crash",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 3000,
+      }),
+    ).rejects.toThrow("handler exploded");
+
+    await expect(
+      runtime.executeTool({
+        origin: "local",
+        directoryName: "slow-plugin",
+        entry: "./index.ts",
+        handlerName: "crash",
+        args: {},
+        requiredSecrets: ["LD_PRELOAD"],
+        secrets: { LD_PRELOAD: "/evil.so" },
+        timeoutMs: 3000,
+      }),
+    ).rejects.toThrow("reserved");
+
+    await expect(
+      runtime.executeTool({
+        origin: "local",
+        directoryName: "slow-plugin",
+        entry: "./.hidden.ts",
+        handlerName: "crash",
+        args: {},
+        requiredSecrets: [],
+        timeoutMs: 3000,
+      }),
+    ).rejects.toThrow("Invalid plugin file path");
+
+    await expect(
+      runtime.executeTool({
+        origin: "local",
         directoryName: "symlink-escape",
         entry: "./index.ts",
         handlerName: "pwn",
@@ -161,7 +279,7 @@ describe("PluginRuntime isolated subprocess execution", () => {
     ).rejects.toThrow("escapes");
   });
 
-  test("installs, executes, validates bounds on, and removes uploaded plugin bundles", async () => {
+  test("installs, rejects overwrites, validates bounds on, executes, and removes uploaded plugin bundles", async () => {
     const { localRoot, uploadRoot } = await makeTempWorkspace();
     const runtime = createPluginRuntime({
       localPluginsRoot: localRoot,
@@ -195,7 +313,7 @@ describe("PluginRuntime isolated subprocess execution", () => {
 
     await expect(
       runtime.installUploadedPlugin("math-tools", manifest, [
-        { path: "../escape.ts", content: "export const x = 1;" },
+        { path: ".hidden/main.ts", content: "export const x = 1;" },
       ]),
     ).rejects.toThrow("Invalid plugin file path");
 
@@ -213,6 +331,15 @@ describe("PluginRuntime isolated subprocess execution", () => {
     ]);
 
     expect(installed.origin).toBe("uploaded");
+
+    await expect(
+      runtime.installUploadedPlugin("math-tools", manifest, [
+        {
+          path: "src/main.ts",
+          content: "export const addNumbers = () => ({ sum: 0 });",
+        },
+      ]),
+    ).rejects.toThrow("already exists");
 
     const output = await runtime.executeTool({
       origin: "uploaded",

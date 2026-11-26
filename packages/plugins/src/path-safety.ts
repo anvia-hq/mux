@@ -5,18 +5,25 @@ const SINGLE_SLUG_PATTERN = /^(?!.*__)[a-z][a-z0-9_-]{0,63}$/;
 const UPLOADED_FILE_PATTERN =
   /^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:ts|mts|js|mjs|json)$/;
 
+export class PluginValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PluginValidationError";
+  }
+}
+
 export const isSafePluginSlug = (slug: string): boolean => SINGLE_SLUG_PATTERN.test(slug);
 
 export const normalizeRelativeFilePath = (rawPath: string): string => {
   const normalized = rawPath.startsWith("./") ? rawPath.slice(2) : rawPath;
 
   if (!UPLOADED_FILE_PATTERN.test(normalized)) {
-    throw new Error(`Invalid plugin file path '${rawPath}'.`);
+    throw new PluginValidationError(`Invalid plugin file path '${rawPath}'.`);
   }
 
   for (const segment of normalized.split("/")) {
     if (segment === "." || segment === ".." || segment.length === 0 || segment.startsWith(".")) {
-      throw new Error(`Invalid plugin file path segment in '${rawPath}'.`);
+      throw new PluginValidationError(`Invalid plugin file path segment in '${rawPath}'.`);
     }
   }
 
@@ -44,14 +51,14 @@ export const resolvePathWithinRoot = (rootDir: string, relativeTarget: string): 
     relativeTarget.includes("\\") ||
     isAbsolute(relativeTarget)
   ) {
-    throw new Error(`Unsafe relative path '${relativeTarget}'.`);
+    throw new PluginValidationError(`Unsafe relative path '${relativeTarget}'.`);
   }
 
   const resolvedRoot = resolve(rootDir);
   const resolvedTarget = resolve(resolvedRoot, relativeTarget);
 
   if (!isPathStrictlyInside(resolvedRoot, resolvedTarget)) {
-    throw new Error(`Path '${relativeTarget}' escapes root directory.`);
+    throw new PluginValidationError(`Path '${relativeTarget}' escapes root directory.`);
   }
 
   return resolvedTarget;
@@ -66,7 +73,9 @@ export const resolveExistingPathWithinRoot = async (
   const realTarget = await realpath(tentative);
 
   if (!isPathStrictlyInside(realRoot, realTarget)) {
-    throw new Error(`Resolved path '${relativeTarget}' escapes root directory via symlink.`);
+    throw new PluginValidationError(
+      `Resolved path '${relativeTarget}' escapes root directory via symlink.`,
+    );
   }
 
   return realTarget;

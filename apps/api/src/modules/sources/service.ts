@@ -3,6 +3,7 @@ import { computeSchemaHash } from "@mux/core/canonical-json";
 import { buildToolSlug } from "@mux/core/manifest";
 import type { McpRemoteConfig, PluginCodeConfig } from "@mux/core/types";
 import { assertSafeUpstreamUrl } from "@mux/mcp/upstream-client";
+import { PluginValidationError } from "@mux/plugins/path-safety";
 import type { LoadedPlugin } from "@mux/plugins/types";
 import type { AuthenticatedUser } from "../../auth";
 import { ConflictError, NotFoundError, UnavailableError, UnprocessableError } from "../../errors";
@@ -33,6 +34,9 @@ const sanitizeToolSlugSegment = (rawName: string): string => {
 
   return normalized.length > 0 ? normalized : "tool";
 };
+
+const safePluginErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof PluginValidationError ? error.message : fallback;
 
 const buildPluginConfig = (loaded: LoadedPlugin): PluginCodeConfig => {
   const toolHandlers: Record<string, string> = {};
@@ -131,6 +135,52 @@ export const createSourcesService = ({
         }
       }),
     );
+  };
+
+  const persistPluginSource = async (input: {
+    actor: AuthenticatedUser;
+    slug: string;
+    name: string;
+    description: string | null;
+    loaded: LoadedPlugin;
+    secrets?: Record<string, string>;
+  }): Promise<RegisterPluginResult> => {
+    const hasSecrets = input.secrets !== undefined && Object.keys(input.secrets).length > 0;
+    const encryptedSecrets = hasSecrets ? secretVault.encryptJson({ env: input.secrets }) : null;
+    const created = await sourcesRepo.insert({
+      slug: input.slug,
+      name: input.name,
+      description: input.description,
+      kind: "plugin_code",
+      status: "active",
+      config: buildPluginConfig(input.loaded),
+      encryptedSecrets,
+      createdById: input.actor.id,
+    });
+
+    try {
+      const syncedItems = buildPluginSyncedTools(input.slug, input.loaded);
+
+      await toolsRepo.syncSourceTools(created.id, syncedItems);
+
+      const updated = await sourcesRepo.update(created.id, {
+        lastSyncedAt: new Date(),
+        lastError: null,
+      });
+
+      return {
+        source: toPublicToolSource(updated ?? created),
+        syncedToolsCount: syncedItems.length,
+      };
+    } catch (error) {
+      try {
+        await sourcesRepo.remove(created.id);
+      } catch {
+        void created.id;
+      }
+
+      throw error;
+    }
   };
 
   const syncMcpSourceInternal = async (source: ToolSourceRecord): Promise<SyncSourceResult> => {
@@ -247,19 +297,11 @@ export const createSourcesService = ({
     }
 
     const affectedEndpoints = await sourcesRepo.listAffectedEndpointIds(source.id);
+    const existingTools = await toolsRepo.list(source.id);
 
     try {
       const loaded = await pluginRuntime.loadLocalPlugin(source.config.directoryName);
       const syncedItems = buildPluginSyncedTools(source.slug, loaded);
-      const existingTools = await toolsRepo.list(source.id);
-      const incomingNames = new Set(syncedItems.map((item) => item.name));
-      const removedToolIds: string[] = [];
-
-      for (const existingTool of existingTools) {
-        if (!incomingNames.has(existingTool.name)) {
-          removedToolIds.push(existingTool.id);
-        }
-      }
 
       await toolsRepo.syncSourceTools(source.id, syncedItems);
 
@@ -271,7 +313,7 @@ export const createSourcesService = ({
         lastError: null,
       });
 
-      await invalidateTools(removedToolIds);
+      await invalidateTools(existingTools.map((tool) => tool.id));
       await invalidateEndpoints(affectedEndpoints);
 
       return {
@@ -279,15 +321,15 @@ export const createSourcesService = ({
         syncedToolsCount: syncedItems.length,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to reload local plugin.";
+      const safeMessage = safePluginErrorMessage(error, "Failed to reload local plugin.");
 
       await sourcesRepo.update(source.id, {
         status: source.status === "disabled" ? "disabled" : "error",
-        lastError: message,
+        lastError: safeMessage,
       });
       await invalidateEndpoints(affectedEndpoints);
 
-      throw new UnprocessableError(`Failed to sync local plugin '${source.slug}': ${message}`);
+      throw new UnprocessableError(`Failed to sync local plugin '${source.slug}': ${safeMessage}`);
     }
   };
 
@@ -397,9 +439,7 @@ export const createSourcesService = ({
       try {
         loaded = await pluginRuntime.loadLocalPlugin(input.directoryName);
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid local plugin.";
-
-        throw new UnprocessableError(message);
+        throw new UnprocessableError(safePluginErrorMessage(error, "Invalid local plugin."));
       }
 
       const slug = input.slug ?? loaded.manifest.name;
@@ -409,33 +449,14 @@ export const createSourcesService = ({
         throw new ConflictError(`Tool source slug '${slug}' already exists.`);
       }
 
-      const hasSecrets = input.secrets !== undefined && Object.keys(input.secrets).length > 0;
-      const encryptedSecrets = hasSecrets ? secretVault.encryptJson({ env: input.secrets }) : null;
-
-      const created = await sourcesRepo.insert({
+      return persistPluginSource({
+        actor,
         slug,
         name: input.name ?? loaded.manifest.name,
         description: input.description ?? loaded.manifest.description ?? null,
-        kind: "plugin_code",
-        status: "active",
-        config: buildPluginConfig(loaded),
-        encryptedSecrets,
-        createdById: actor.id,
+        loaded,
+        secrets: input.secrets,
       });
-
-      const syncedItems = buildPluginSyncedTools(slug, loaded);
-
-      await toolsRepo.syncSourceTools(created.id, syncedItems);
-
-      const updated = await sourcesRepo.update(created.id, {
-        lastSyncedAt: new Date(),
-        lastError: null,
-      });
-
-      return {
-        source: toPublicToolSource(updated ?? created),
-        syncedToolsCount: syncedItems.length,
-      };
     },
 
     uploadPlugin: async (
@@ -464,41 +485,29 @@ export const createSourcesService = ({
           input.files,
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Invalid plugin bundle.";
+        if (error instanceof PluginValidationError && error.message.includes("already exists")) {
+          throw new ConflictError(`Tool source slug '${requestedSlug}' already exists.`);
+        }
 
-        throw new UnprocessableError(message);
+        throw new UnprocessableError(safePluginErrorMessage(error, "Invalid plugin bundle."));
       }
 
-      const hasSecrets = input.secrets !== undefined && Object.keys(input.secrets).length > 0;
-      const encryptedSecrets = hasSecrets ? secretVault.encryptJson({ env: input.secrets }) : null;
-
       try {
-        const created = await sourcesRepo.insert({
+        return await persistPluginSource({
+          actor,
           slug: requestedSlug,
           name: input.name ?? loaded.manifest.name,
           description: input.description ?? loaded.manifest.description ?? null,
-          kind: "plugin_code",
-          status: "active",
-          config: buildPluginConfig(loaded),
-          encryptedSecrets,
-          createdById: actor.id,
+          loaded,
+          secrets: input.secrets,
         });
-
-        const syncedItems = buildPluginSyncedTools(requestedSlug, loaded);
-
-        await toolsRepo.syncSourceTools(created.id, syncedItems);
-
-        const updated = await sourcesRepo.update(created.id, {
-          lastSyncedAt: new Date(),
-          lastError: null,
-        });
-
-        return {
-          source: toPublicToolSource(updated ?? created),
-          syncedToolsCount: syncedItems.length,
-        };
       } catch (error) {
-        await pluginRuntime.removeUploadedPlugin(requestedSlug);
+        try {
+          await pluginRuntime.removeUploadedPlugin(requestedSlug);
+        } catch {
+          void requestedSlug;
+        }
+
         throw error;
       }
     },
@@ -617,12 +626,14 @@ export const createSourcesService = ({
         throw new NotFoundError("Tool source not found.");
       }
 
-      if (existing.config.kind === "plugin_code" && existing.config.origin === "uploaded") {
-        await pluginRuntime.removeUploadedPlugin(existing.config.directoryName);
+      try {
+        if (existing.config.kind === "plugin_code" && existing.config.origin === "uploaded") {
+          await pluginRuntime.removeUploadedPlugin(existing.config.directoryName);
+        }
+      } finally {
+        await invalidateTools(sourceTools.map((tool) => tool.id));
+        await invalidateEndpoints(affectedEndpoints);
       }
-
-      await invalidateTools(sourceTools.map((tool) => tool.id));
-      await invalidateEndpoints(affectedEndpoints);
     },
 
     syncSource: async (id: string): Promise<SyncSourceResult> => {

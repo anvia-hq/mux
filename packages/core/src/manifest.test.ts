@@ -53,6 +53,8 @@ describe("parsePluginManifest", () => {
       ".ts",
       "foo//bar.ts",
       "././index.ts",
+      "./.hidden/index.ts",
+      ".hidden/index.ts",
     ];
 
     for (const entry of invalidEntries) {
@@ -89,6 +91,16 @@ describe("parsePluginManifest", () => {
       };
 
       expect(() => parsePluginManifest(reservedHandler)).toThrow();
+    }
+
+    for (const secret of [
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "PATH",
+      "NODE_OPTIONS",
+      "BUN_INSTALL",
+    ]) {
+      expect(() => parsePluginManifest({ ...base, secrets: [secret] })).toThrow();
     }
   });
 });

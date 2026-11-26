@@ -1,4 +1,10 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const DEFAULT_PLUGINS_DIR = resolve(REPO_ROOT, "plugins");
+const DEFAULT_PLUGINS_DATA_DIR = resolve(REPO_ROOT, ".data/plugins");
 
 const parseAndValidateCorsOrigins = (raw: string, ctx: z.RefinementCtx): string[] => {
   const origins: string[] = [];
@@ -73,8 +79,8 @@ const envSchema = z.object({
     .string()
     .default("http://localhost:5173")
     .transform((raw, ctx) => parseAndValidateCorsOrigins(raw, ctx)),
-  PLUGINS_DIR: z.string().trim().min(1).default("./plugins"),
-  PLUGINS_DATA_DIR: z.string().trim().min(1).default("./.data/plugins"),
+  PLUGINS_DIR: z.string().trim().min(1).default(DEFAULT_PLUGINS_DIR),
+  PLUGINS_DATA_DIR: z.string().trim().min(1).default(DEFAULT_PLUGINS_DATA_DIR),
 });
 
 export type ApiConfig = z.infer<typeof envSchema>;
