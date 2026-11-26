@@ -8,6 +8,10 @@ export const parseKeyValueLines = (raw: string): Record<string, string> => {
       continue;
     }
 
+    if (trimmed.startsWith("=") || trimmed.startsWith(":")) {
+      throw new Error(`Invalid key-value line '${trimmed}'. Key cannot be empty.`);
+    }
+
     const eqIndex = trimmed.indexOf("=");
     const colonIndex = trimmed.indexOf(":");
     let splitIndex = -1;
@@ -35,7 +39,23 @@ export const parseKeyValueLines = (raw: string): Record<string, string> => {
   return out;
 };
 
-export const formatRelativeTime = (iso: string | null): string => {
+export const parseJsonObject = (raw: string, label: string): Record<string, unknown> => {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`${label} must be valid JSON.`);
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+
+  return parsed as Record<string, unknown>;
+};
+
+export const formatTimestamp = (iso: string | null): string => {
   if (!iso) {
     return "Never";
   }

@@ -24,3 +24,10 @@ export interface CreateEndpointInput {
   description?: string;
   mode: EndpointMode;
 }
+
+export interface UpdateEndpointInput {
+  id: string;
+  name?: string;
+  mode?: EndpointMode;
+  enabled?: boolean;
+}

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useUsers } from "../hooks/use-users";
 
 export function UsersPanel() {
-  const { users, isLoading, updateRole } = useUsers();
+  const { users, isLoading, error: queryError, updateRole } = useUsers();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   return (
@@ -16,6 +16,12 @@ export function UsersPanel() {
           Manage admin and member access across this Mux instance.
         </p>
       </div>
+
+      {queryError ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
+          Failed to load users: {queryError instanceof Error ? queryError.message : "Unknown error"}
+        </div>
+      ) : null}
 
       {errorMsg ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
@@ -29,7 +35,7 @@ export function UsersPanel() {
         </CardHeader>
         <CardContent>
           {isLoading ? <p className="text-xs text-muted-foreground">Loading users...</p> : null}
-          {!isLoading ? (
+          {!isLoading && !queryError ? (
             <div className="divide-y divide-border">
               {users.map((user) => (
                 <div

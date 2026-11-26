@@ -63,6 +63,7 @@ export const useSession = () => {
     user: sessionQuery.data ?? null,
     isLoading: sessionQuery.isPending,
     error: sessionQuery.error,
+    refetch: sessionQuery.refetch,
     signIn: signInMutation,
     signUp: signUpMutation,
     signOut: signOutMutation,

@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api-client";
-import type { CreateEndpointInput, EndpointItem, EndpointToolBinding } from "../types";
+import type {
+  CreateEndpointInput,
+  EndpointItem,
+  EndpointToolBinding,
+  UpdateEndpointInput,
+} from "../types";
 
 export const ENDPOINTS_QUERY_KEY = ["endpoints"] as const;
 
@@ -36,10 +41,24 @@ export const useEndpoints = (selectedEndpointId: string | null) => {
     },
   });
 
+  const updateEndpoint = useMutation({
+    mutationFn: ({ id, ...body }: UpdateEndpointInput) =>
+      apiRequest<{ endpoint: EndpointItem }>(`/v1/endpoints/${id}`, {
+        method: "PATCH",
+        body,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ENDPOINTS_QUERY_KEY });
+    },
+  });
+
   const deleteEndpoint = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/endpoints/${id}`, { method: "DELETE" }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ENDPOINTS_QUERY_KEY });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ENDPOINTS_QUERY_KEY }),
+        queryClient.invalidateQueries({ queryKey: ["api-keys"] }),
+      ]);
     },
   });
 
@@ -67,8 +86,12 @@ export const useEndpoints = (selectedEndpointId: string | null) => {
   return {
     endpoints: endpointsQuery.data ?? [],
     isLoading: endpointsQuery.isPending,
+    error: endpointsQuery.error,
     bindings: bindingsQuery.data ?? [],
+    isLoadingBindings: bindingsQuery.isPending || bindingsQuery.isFetching,
+    bindingsError: bindingsQuery.error,
     createEndpoint,
+    updateEndpoint,
     deleteEndpoint,
     attachTool,
     detachTool,

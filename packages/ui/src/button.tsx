@@ -4,9 +4,13 @@ import type { ComponentPropsWithoutRef } from "react";
 type ButtonVariant = "primary" | "secondary" | "ghost" | "destructive";
 type ButtonSize = "sm" | "md";
 
-export interface ButtonProps extends ComponentPropsWithoutRef<typeof BaseButton> {
+export interface ButtonProps extends Omit<
+  ComponentPropsWithoutRef<typeof BaseButton>,
+  "className"
+> {
   variant?: ButtonVariant;
   size?: ButtonSize;
+  className?: string;
 }
 
 const VARIANT_STYLES: Record<ButtonVariant, string> = {

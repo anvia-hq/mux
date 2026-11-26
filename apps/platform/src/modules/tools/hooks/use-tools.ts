@@ -43,6 +43,7 @@ export const useTools = () => {
   return {
     tools: toolsQuery.data ?? [],
     isLoading: toolsQuery.isPending,
+    error: toolsQuery.error,
     updateTool,
     invalidateToolCache,
     invalidateTagCache,

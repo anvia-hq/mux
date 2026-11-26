@@ -1,4 +1,4 @@
-import type { ToolCacheMode } from "@mux/core/types";
+import type { ToolCacheMode, ToolCachePolicy } from "@mux/core/types";
 import { Badge } from "@mux/ui/badge";
 import { Button } from "@mux/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@mux/ui/card";
@@ -14,14 +14,23 @@ import { useTools } from "../hooks/use-tools";
 import type { ToolItem } from "../types";
 
 export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
-  const { tools, isLoading, updateTool, invalidateToolCache, invalidateTagCache } = useTools();
+  const {
+    tools,
+    isLoading,
+    error: queryError,
+    updateTool,
+    invalidateToolCache,
+    invalidateTagCache,
+  } = useTools();
   const [search, setSearch] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [cacheMode, setCacheMode] = useState<ToolCacheMode>("off");
   const [ttlSeconds, setTtlSeconds] = useState("60");
+  const [staleSeconds, setStaleSeconds] = useState("60");
+  const [allowBypass, setAllowBypass] = useState(true);
   const [tagsInput, setTagsInput] = useState("");
   const [purgeTag, setPurgeTag] = useState("");
-  const [notice, setNotice] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ kind: "ok" | "err"; message: string } | null>(null);
 
   const filteredTools = tools.filter((tool) => {
     const q = search.trim().toLowerCase();
@@ -37,44 +46,138 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
     setSelectedToolId(tool.id);
     setCacheMode(tool.cachePolicy.mode);
     setTtlSeconds(String(tool.cachePolicy.ttlSeconds));
+    setStaleSeconds(String(tool.cachePolicy.staleSeconds ?? tool.cachePolicy.ttlSeconds));
+    setAllowBypass(tool.cachePolicy.allowBypass !== false);
     setTagsInput((tool.cachePolicy.tags ?? []).join(", "));
-    setNotice(null);
+    setFeedback(null);
   };
 
   const handleSaveCachePolicy = async (event: FormEvent) => {
     event.preventDefault();
+    setFeedback(null);
 
     if (!selectedToolId) {
       return;
     }
 
-    const parsedTtl = Math.max(1, Number.parseInt(ttlSeconds, 10) || 60);
-    const tags = parseCommaTags(tagsInput);
+    const existingTool = tools.find((tool) => tool.id === selectedToolId);
+    const parsedTtl = Number.parseInt(ttlSeconds, 10);
 
-    await updateTool.mutateAsync({
-      id: selectedToolId,
-      cachePolicy: {
-        mode: cacheMode,
-        ttlSeconds: parsedTtl,
-        allowBypass: true,
-        tags: tags.length > 0 ? tags : undefined,
-      },
-    });
-    setNotice("Updated Redis cache policy and invalidated stale entries.");
-    setSelectedToolId(null);
+    if (!Number.isInteger(parsedTtl) || parsedTtl < 1 || parsedTtl > 86_400) {
+      setFeedback({ kind: "err", message: "TTL must be an integer between 1 and 86400 seconds." });
+
+      return;
+    }
+
+    let parsedStale: number | undefined;
+
+    if (cacheMode === "stale_while_revalidate") {
+      const candidate = Number.parseInt(staleSeconds, 10);
+
+      if (!Number.isInteger(candidate) || candidate < 0 || candidate > 86_400) {
+        setFeedback({
+          kind: "err",
+          message: "Stale window must be an integer between 0 and 86400 seconds.",
+        });
+
+        return;
+      }
+
+      parsedStale = candidate;
+    }
+
+    const tags = parseCommaTags(tagsInput);
+    const nextPolicy: ToolCachePolicy = {
+      mode: cacheMode,
+      ttlSeconds: parsedTtl,
+      allowBypass,
+    };
+
+    if (parsedStale !== undefined) {
+      nextPolicy.staleSeconds = parsedStale;
+    }
+
+    if (existingTool?.cachePolicy.maxPayloadBytes !== undefined) {
+      nextPolicy.maxPayloadBytes = existingTool.cachePolicy.maxPayloadBytes;
+    }
+
+    if (tags.length > 0) {
+      nextPolicy.tags = tags;
+    }
+
+    try {
+      await updateTool.mutateAsync({
+        id: selectedToolId,
+        cachePolicy: nextPolicy,
+      });
+      setFeedback({
+        kind: "ok",
+        message: "Updated Redis cache policy and invalidated stale entries.",
+      });
+      setSelectedToolId(null);
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to update cache policy.",
+      });
+    }
+  };
+
+  const handleToggleTool = async (tool: ToolItem, enabled: boolean) => {
+    setFeedback(null);
+
+    try {
+      await updateTool.mutateAsync({ id: tool.id, enabled });
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to toggle tool state.",
+      });
+    }
+  };
+
+  const handlePurgeTool = async (tool: ToolItem) => {
+    setFeedback(null);
+
+    try {
+      const res = await invalidateToolCache.mutateAsync(tool.id);
+
+      setFeedback({
+        kind: "ok",
+        message: `Purged ${res.deleted} cached entries for ${tool.slug}.`,
+      });
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to purge tool cache.",
+      });
+    }
   };
 
   const handlePurgeTag = async (event: FormEvent) => {
     event.preventDefault();
+    setFeedback(null);
 
-    if (purgeTag.trim().length === 0) {
+    const tag = purgeTag.trim();
+
+    if (tag.length === 0) {
       return;
     }
 
-    const res = await invalidateTagCache.mutateAsync(purgeTag.trim());
+    try {
+      const res = await invalidateTagCache.mutateAsync(tag);
 
-    setNotice(`Purged ${res.deleted} cached entries for tag '${purgeTag.trim()}'.`);
-    setPurgeTag("");
+      setFeedback({
+        kind: "ok",
+        message: `Purged ${res.deleted} cached entries for tag '${tag}'.`,
+      });
+      setPurgeTag("");
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to purge tag cache.",
+      });
+    }
   };
 
   return (
@@ -88,6 +191,7 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         </div>
         <div className="w-64">
           <Input
+            aria-label="Filter tools by slug or description"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Filter tools by slug or description..."
@@ -95,9 +199,21 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         </div>
       </div>
 
-      {notice ? (
-        <div className="rounded-md border border-success/30 bg-success/10 px-3.5 py-2.5 text-xs text-success">
-          {notice}
+      {queryError ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
+          Failed to load tools: {queryError instanceof Error ? queryError.message : "Unknown error"}
+        </div>
+      ) : null}
+
+      {feedback ? (
+        <div
+          className={`rounded-md border px-3.5 py-2.5 text-xs ${
+            feedback.kind === "ok"
+              ? "border-success/30 bg-success/10 text-success"
+              : "border-destructive/30 bg-destructive/10 text-destructive"
+          }`}
+        >
+          {feedback.message}
         </div>
       ) : null}
 
@@ -112,6 +228,7 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
           <CardContent>
             <Form onSubmit={handlePurgeTag} className="flex max-w-md gap-2">
               <Input
+                aria-label="Cache tag to purge"
                 value={purgeTag}
                 onChange={(event) => setPurgeTag(event.target.value)}
                 placeholder="e.g. github:issues"
@@ -131,7 +248,7 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         </CardHeader>
         <CardContent>
           {isLoading ? <p className="text-xs text-muted-foreground">Loading tools...</p> : null}
-          {!isLoading && filteredTools.length === 0 ? (
+          {!isLoading && !queryError && filteredTools.length === 0 ? (
             <p className="text-xs text-muted-foreground">No tools discovered yet.</p>
           ) : null}
           {!isLoading && filteredTools.length > 0 ? (
@@ -168,10 +285,10 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                       {isAdmin ? (
                         <div className="flex items-center gap-2.5">
                           <Switch
+                            aria-label={`Enable or disable ${tool.slug}`}
+                            disabled={updateTool.isPending}
                             checked={tool.enabled}
-                            onCheckedChange={(checked) =>
-                              updateTool.mutate({ id: tool.id, enabled: checked })
-                            }
+                            onCheckedChange={(checked) => void handleToggleTool(tool, checked)}
                           />
                           <Button
                             size="sm"
@@ -185,12 +302,9 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                           <Button
                             size="sm"
                             variant="ghost"
+                            aria-label={`Purge cached entries for ${tool.slug}`}
                             disabled={invalidateToolCache.isPending}
-                            onClick={async () => {
-                              const res = await invalidateToolCache.mutateAsync(tool.id);
-
-                              setNotice(`Purged ${res.deleted} cached entries for ${tool.slug}.`);
-                            }}
+                            onClick={() => void handlePurgeTool(tool)}
                           >
                             <IconDatabaseOff size={15} stroke={1.75} />
                           </Button>
@@ -201,7 +315,7 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                     {isEditing ? (
                       <Form
                         onSubmit={handleSaveCachePolicy}
-                        className="mt-4 grid gap-3 rounded-md border border-border bg-muted/40 p-4 md:grid-cols-4"
+                        className="mt-4 grid gap-3 rounded-md border border-border bg-muted/40 p-4 md:grid-cols-5"
                       >
                         <Field label="Cache Mode">
                           <Select
@@ -222,6 +336,17 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                             onChange={(event) => setTtlSeconds(event.target.value)}
                           />
                         </Field>
+                        {cacheMode === "stale_while_revalidate" ? (
+                          <Field label="Stale Window (seconds)">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={86400}
+                              value={staleSeconds}
+                              onChange={(event) => setStaleSeconds(event.target.value)}
+                            />
+                          </Field>
+                        ) : null}
                         <Field label="Tags (comma-separated)">
                           <Input
                             value={tagsInput}
@@ -229,7 +354,15 @@ export function ToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                             placeholder="github:issues"
                           />
                         </Field>
-                        <div className="flex items-end">
+                        <div className="flex flex-col justify-between gap-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-muted-foreground">Allow bypass</span>
+                            <Switch
+                              aria-label="Allow cache bypass"
+                              checked={allowBypass}
+                              onCheckedChange={setAllowBypass}
+                            />
+                          </div>
                           <Button type="submit" size="sm" disabled={updateTool.isPending}>
                             Save Policy
                           </Button>

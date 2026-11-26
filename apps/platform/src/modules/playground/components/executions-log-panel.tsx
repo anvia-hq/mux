@@ -1,23 +1,11 @@
-import type { ToolCacheStatus } from "@mux/core/types";
 import { Badge } from "@mux/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@mux/ui/card";
-import { formatRelativeTime } from "@/lib/format";
+import { formatTimestamp } from "@/lib/format";
+import { cacheStatusBadgeVariant } from "../cache-badge";
 import { useExecutions } from "../hooks/use-playground";
 
-const cacheVariant = (status: ToolCacheStatus) => {
-  if (status === "hit") {
-    return "success";
-  }
-
-  if (status === "stale" || status === "bypass") {
-    return "warning";
-  }
-
-  return "muted";
-};
-
 export function ExecutionsLogPanel() {
-  const { data: logs = [], isPending } = useExecutions(50);
+  const { data: logs = [], isPending, error } = useExecutions(50);
 
   return (
     <div className="space-y-6">
@@ -28,13 +16,19 @@ export function ExecutionsLogPanel() {
         </p>
       </div>
 
+      {error ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
+          Failed to load execution logs: {error instanceof Error ? error.message : "Unknown error"}
+        </div>
+      ) : null}
+
       <Card>
         <CardHeader>
           <CardTitle>Recent Executions ({logs.length})</CardTitle>
         </CardHeader>
         <CardContent>
           {isPending ? <p className="text-xs text-muted-foreground">Loading logs...</p> : null}
-          {!isPending && logs.length === 0 ? (
+          {!isPending && !error && logs.length === 0 ? (
             <p className="text-xs text-muted-foreground">No tool executions recorded yet.</p>
           ) : null}
           {!isPending && logs.length > 0 ? (
@@ -52,7 +46,9 @@ export function ExecutionsLogPanel() {
                       <Badge variant={log.status === "success" ? "success" : "destructive"}>
                         {log.status}
                       </Badge>
-                      <Badge variant={cacheVariant(log.cacheStatus)}>{log.cacheStatus}</Badge>
+                      <Badge variant={cacheStatusBadgeVariant(log.cacheStatus)}>
+                        {log.cacheStatus}
+                      </Badge>
                       <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
                         {log.durationMs}ms
                       </span>
@@ -67,7 +63,7 @@ export function ExecutionsLogPanel() {
                     ) : null}
                   </div>
                   <span className="text-[11px] text-muted-foreground">
-                    {formatRelativeTime(log.createdAt)}
+                    {formatTimestamp(log.createdAt)}
                   </span>
                 </div>
               ))}

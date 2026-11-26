@@ -32,6 +32,12 @@ export interface RegisterMcpInput {
   headers?: Record<string, string>;
 }
 
+export interface RegisterMcpResult {
+  source: SourceItem;
+  syncedToolsCount: number;
+  syncError: string | null;
+}
+
 export interface RegisterLocalPluginInput {
   directoryName: string;
   slug?: string;

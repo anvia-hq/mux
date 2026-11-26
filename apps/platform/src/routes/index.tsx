@@ -1,16 +1,13 @@
 import { Badge } from "@mux/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@mux/ui/card";
 import { createFileRoute } from "@tanstack/react-router";
-import { useSession } from "@/modules/auth/hooks/use-session";
 import { useEndpoints } from "@/modules/endpoints/hooks/use-endpoints";
 import { useExecutions } from "@/modules/playground/hooks/use-playground";
 import { useSources } from "@/modules/sources/hooks/use-sources";
 import { useTools } from "@/modules/tools/hooks/use-tools";
 
 function OverviewPage() {
-  const { user } = useSession();
-  const isAdmin = user?.role === "admin";
-  const { sources } = useSources(isAdmin);
+  const { sources } = useSources(false);
   const { tools } = useTools();
   const { endpoints } = useEndpoints(null);
   const { data: logs = [] } = useExecutions(50);
@@ -19,7 +16,7 @@ function OverviewPage() {
   let cacheHits = 0;
 
   for (const log of logs) {
-    if (log.cacheStatus !== "disabled") {
+    if (log.cacheStatus !== "disabled" && log.cacheStatus !== "bypass") {
       cacheableCalls += 1;
 
       if (log.cacheStatus === "hit" || log.cacheStatus === "stale") {
@@ -61,7 +58,7 @@ function OverviewPage() {
         </Card>
         <Card>
           <CardHeader>
-            <CardDescription>Redis Cache Hit Rate</CardDescription>
+            <CardDescription>Recent Cache Hit Rate</CardDescription>
             <CardTitle className="text-2xl tabular-nums">{hitRate}%</CardTitle>
           </CardHeader>
         </Card>

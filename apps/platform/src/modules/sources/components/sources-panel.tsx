@@ -14,7 +14,7 @@ import {
   IconUpload,
 } from "@tabler/icons-react";
 import { useState, type FormEvent } from "react";
-import { formatRelativeTime, parseKeyValueLines } from "@/lib/format";
+import { formatTimestamp, parseJsonObject, parseKeyValueLines } from "@/lib/format";
 import { useSources } from "../hooks/use-sources";
 import type { SourceItem } from "../types";
 
@@ -64,6 +64,7 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
   const {
     sources,
     isLoading,
+    error: queryError,
     localPlugins,
     registerMcp,
     registerLocalPlugin,
@@ -74,7 +75,10 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
   } = useSources(isAdmin);
 
   const [tab, setTab] = useState<"mcp" | "local" | "upload">("mcp");
-  const [feedback, setFeedback] = useState<{ kind: "ok" | "err"; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<{
+    kind: "ok" | "warn" | "err";
+    message: string;
+  } | null>(null);
 
   const [mcpSlug, setMcpSlug] = useState("");
   const [mcpName, setMcpName] = useState("");
@@ -89,24 +93,40 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
   const [uploadCode, setUploadCode] = useState(DEFAULT_PLUGIN_CODE);
   const [uploadSecrets, setUploadSecrets] = useState("");
 
+  const selectTab = (next: "mcp" | "local" | "upload") => {
+    setFeedback(null);
+    setTab(next);
+  };
+
   const handleRegisterMcp = async (event: FormEvent) => {
     event.preventDefault();
     setFeedback(null);
 
     try {
       const headers = mcpHeaders.trim().length > 0 ? parseKeyValueLines(mcpHeaders) : undefined;
-
-      await registerMcp.mutateAsync({
+      const result = await registerMcp.mutateAsync({
         slug: mcpSlug.trim(),
         name: mcpName.trim(),
         url: mcpUrl.trim(),
         headers,
       });
+
       setMcpSlug("");
       setMcpName("");
       setMcpUrl("");
       setMcpHeaders("");
-      setFeedback({ kind: "ok", message: "MCP server registered and synced." });
+
+      if (result.syncError) {
+        setFeedback({
+          kind: "warn",
+          message: `MCP server saved, but initial sync failed: ${result.syncError}`,
+        });
+      } else {
+        setFeedback({
+          kind: "ok",
+          message: `MCP server registered and synced (${result.syncedToolsCount} tools).`,
+        });
+      }
     } catch (error) {
       setFeedback({
         kind: "err",
@@ -144,7 +164,7 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
     setFeedback(null);
 
     try {
-      const manifest = JSON.parse(uploadManifest) as Record<string, unknown>;
+      const manifest = parseJsonObject(uploadManifest, "manifest.json");
       const secrets =
         uploadSecrets.trim().length > 0 ? parseKeyValueLines(uploadSecrets) : undefined;
 
@@ -163,6 +183,57 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
     }
   };
 
+  const handleRowSync = async (source: SourceItem) => {
+    setFeedback(null);
+
+    try {
+      await syncSource.mutateAsync(source.id);
+      setFeedback({ kind: "ok", message: `Synced '${source.name}'.` });
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : `Failed to sync '${source.name}'.`,
+      });
+    }
+  };
+
+  const handleRowToggle = async (source: SourceItem) => {
+    setFeedback(null);
+
+    try {
+      const nextStatus = source.status === "disabled" ? "active" : "disabled";
+
+      await toggleStatus.mutateAsync({ id: source.id, status: nextStatus });
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to update source status.",
+      });
+    }
+  };
+
+  const handleRowDelete = async (source: SourceItem) => {
+    setFeedback(null);
+
+    try {
+      await deleteSource.mutateAsync(source.id);
+      setFeedback({ kind: "ok", message: `Deleted source '${source.name}'.` });
+    } catch (error) {
+      setFeedback({
+        kind: "err",
+        message: error instanceof Error ? error.message : "Failed to delete source.",
+      });
+    }
+  };
+
+  let feedbackStyle = "border-destructive/30 bg-destructive/10 text-destructive";
+
+  if (feedback?.kind === "ok") {
+    feedbackStyle = "border-success/30 bg-success/10 text-success";
+  } else if (feedback?.kind === "warn") {
+    feedbackStyle = "border-warning/30 bg-warning/10 text-warning";
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -172,14 +243,15 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
         </p>
       </div>
 
+      {queryError ? (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">
+          Failed to load sources:{" "}
+          {queryError instanceof Error ? queryError.message : "Unknown error"}
+        </div>
+      ) : null}
+
       {feedback ? (
-        <div
-          className={`rounded-md border px-3.5 py-2.5 text-xs ${
-            feedback.kind === "ok"
-              ? "border-success/30 bg-success/10 text-success"
-              : "border-destructive/30 bg-destructive/10 text-destructive"
-          }`}
-        >
+        <div className={`rounded-md border px-3.5 py-2.5 text-xs ${feedbackStyle}`}>
           {feedback.message}
         </div>
       ) : null}
@@ -196,25 +268,28 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
               </div>
               <div className="flex gap-1.5">
                 <Button
+                  type="button"
                   size="sm"
                   variant={tab === "mcp" ? "primary" : "secondary"}
-                  onClick={() => setTab("mcp")}
+                  onClick={() => selectTab("mcp")}
                 >
                   <IconPlugConnected size={14} stroke={1.75} />
                   <span>Remote MCP</span>
                 </Button>
                 <Button
+                  type="button"
                   size="sm"
                   variant={tab === "local" ? "primary" : "secondary"}
-                  onClick={() => setTab("local")}
+                  onClick={() => selectTab("local")}
                 >
                   <IconCode size={14} stroke={1.75} />
                   <span>Local Plugin</span>
                 </Button>
                 <Button
+                  type="button"
                   size="sm"
                   variant={tab === "upload" ? "primary" : "secondary"}
-                  onClick={() => setTab("upload")}
+                  onClick={() => selectTab("upload")}
                 >
                   <IconUpload size={14} stroke={1.75} />
                   <span>Upload Plugin</span>
@@ -364,7 +439,7 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
         </CardHeader>
         <CardContent>
           {isLoading ? <p className="text-xs text-muted-foreground">Loading sources...</p> : null}
-          {!isLoading && sources.length === 0 ? (
+          {!isLoading && !queryError && sources.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               No MCP servers or code plugins registered yet.
             </p>
@@ -394,7 +469,7 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
                         : `${source.config.origin}://${source.config.directoryName}/${source.config.entry} (v${source.config.version})`}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      Last synced: {formatRelativeTime(source.lastSyncedAt)}
+                      Last synced: {formatTimestamp(source.lastSyncedAt)}
                     </p>
                     {source.lastError ? (
                       <p className="text-xs text-destructive">{source.lastError}</p>
@@ -408,7 +483,7 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
                           size="sm"
                           variant="secondary"
                           disabled={syncSource.isPending}
-                          onClick={() => syncSource.mutate(source.id)}
+                          onClick={() => void handleRowSync(source)}
                         >
                           <IconRefresh size={14} stroke={1.75} />
                           <span>Sync</span>
@@ -418,20 +493,16 @@ export function SourcesPanel({ isAdmin }: { isAdmin: boolean }) {
                         size="sm"
                         variant="secondary"
                         disabled={toggleStatus.isPending}
-                        onClick={() =>
-                          toggleStatus.mutate({
-                            id: source.id,
-                            status: source.status === "disabled" ? "active" : "disabled",
-                          })
-                        }
+                        onClick={() => void handleRowToggle(source)}
                       >
                         {source.status === "disabled" ? "Enable" : "Disable"}
                       </Button>
                       <Button
                         size="sm"
                         variant="destructive"
+                        aria-label={`Delete source ${source.name}`}
                         disabled={deleteSource.isPending}
-                        onClick={() => deleteSource.mutate(source.id)}
+                        onClick={() => void handleRowDelete(source)}
                       >
                         <IconTrash size={14} stroke={1.75} />
                       </Button>

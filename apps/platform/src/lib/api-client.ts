@@ -64,12 +64,13 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
 
   const text = await response.text();
   let parsed: unknown = null;
+  let parseFailed = false;
 
   if (text.length > 0) {
     try {
       parsed = JSON.parse(text);
     } catch {
-      parsed = null;
+      parseFailed = true;
     }
   }
 
@@ -77,6 +78,14 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
     const details = extractErrorDetails(parsed, response.status);
 
     throw new ApiRequestError(response.status, details.code, details.message);
+  }
+
+  if (parseFailed) {
+    throw new ApiRequestError(
+      response.status,
+      "INVALID_JSON",
+      "Server returned an unexpected non-JSON response.",
+    );
   }
 
   return parsed as T;

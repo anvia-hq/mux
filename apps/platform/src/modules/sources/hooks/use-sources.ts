@@ -4,6 +4,7 @@ import type {
   LocalPluginItem,
   RegisterLocalPluginInput,
   RegisterMcpInput,
+  RegisterMcpResult,
   SourceItem,
   UploadPluginInput,
 } from "../types";
@@ -11,13 +12,14 @@ import type {
 export const SOURCES_QUERY_KEY = ["sources"] as const;
 export const LOCAL_PLUGINS_QUERY_KEY = ["local-plugins"] as const;
 
-export const useSources = (isAdmin: boolean) => {
+export const useSources = (discoverLocalPlugins: boolean) => {
   const queryClient = useQueryClient();
 
   const invalidateAll = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: SOURCES_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: ["tools"] }),
+      queryClient.invalidateQueries({ queryKey: ["endpoint-tools"] }),
     ]);
   };
 
@@ -32,7 +34,7 @@ export const useSources = (isAdmin: boolean) => {
 
   const localPluginsQuery = useQuery({
     queryKey: LOCAL_PLUGINS_QUERY_KEY,
-    enabled: isAdmin,
+    enabled: discoverLocalPlugins,
     queryFn: async () => {
       const res = await apiRequest<{ plugins: LocalPluginItem[] }>("/v1/sources/plugins/local");
 
@@ -42,8 +44,8 @@ export const useSources = (isAdmin: boolean) => {
 
   const registerMcp = useMutation({
     mutationFn: (input: RegisterMcpInput) =>
-      apiRequest("/v1/sources/mcp", { method: "POST", body: input }),
-    onSuccess: invalidateAll,
+      apiRequest<RegisterMcpResult>("/v1/sources/mcp", { method: "POST", body: input }),
+    onSettled: invalidateAll,
   });
 
   const registerLocalPlugin = useMutation({
@@ -60,7 +62,7 @@ export const useSources = (isAdmin: boolean) => {
 
   const syncSource = useMutation({
     mutationFn: (id: string) => apiRequest(`/v1/sources/${id}/sync`, { method: "POST", body: {} }),
-    onSuccess: invalidateAll,
+    onSettled: invalidateAll,
   });
 
   const toggleStatus = useMutation({
@@ -80,6 +82,7 @@ export const useSources = (isAdmin: boolean) => {
   return {
     sources: sourcesQuery.data ?? [],
     isLoading: sourcesQuery.isPending,
+    error: sourcesQuery.error,
     localPlugins: localPluginsQuery.data ?? [],
     registerMcp,
     registerLocalPlugin,

@@ -1,7 +1,9 @@
 import { Input as BaseInput } from "@base-ui/react/input";
 import type { ComponentPropsWithoutRef } from "react";
 
-export type InputProps = ComponentPropsWithoutRef<typeof BaseInput>;
+export interface InputProps extends Omit<ComponentPropsWithoutRef<typeof BaseInput>, "className"> {
+  className?: string;
+}
 
 export function Input({ className = "", ...props }: InputProps) {
   return (

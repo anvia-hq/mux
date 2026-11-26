@@ -34,6 +34,7 @@ export const useApiKeys = () => {
   return {
     apiKeys: keysQuery.data ?? [],
     isLoading: keysQuery.isPending,
+    error: keysQuery.error,
     createKey,
     revokeKey,
   };
