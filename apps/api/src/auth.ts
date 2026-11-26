@@ -100,20 +100,32 @@ export const createAuth = (config: AuthConfig) => {
     },
   });
 
-  const sessionResolver: SessionResolver = {
-    getSessionUser: async (headers: Headers): Promise<AuthenticatedUser | null> => {
-      const session = await instance.api.getSession({ headers });
+  const sessionCache = new WeakMap<Headers, Promise<AuthenticatedUser | null>>();
 
-      if (!session?.user) {
-        return null;
+  const sessionResolver: SessionResolver = {
+    getSessionUser: (headers: Headers): Promise<AuthenticatedUser | null> => {
+      const cached = sessionCache.get(headers);
+
+      if (cached) {
+        return cached;
       }
 
-      return {
-        id: session.user.id,
-        email: session.user.email,
-        name: session.user.name,
-        role: toUserRole(session.user.role),
-      };
+      const pending = instance.api.getSession({ headers }).then((session) => {
+        if (!session?.user) {
+          return null;
+        }
+
+        return {
+          id: session.user.id,
+          email: session.user.email,
+          name: session.user.name,
+          role: toUserRole(session.user.role),
+        };
+      });
+
+      sessionCache.set(headers, pending);
+
+      return pending;
     },
   };
 

@@ -13,6 +13,7 @@
     "@elysiajs/cors": "latest",
     "@mux/core": "workspace:*",
     "@mux/db": "workspace:*",
+    "@mux/mcp": "workspace:*",
     "better-auth": "latest",
     "drizzle-orm": "latest",
     "elysia": "latest",

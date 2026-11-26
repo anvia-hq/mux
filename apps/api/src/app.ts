@@ -1,4 +1,5 @@
 import { cors } from "@elysiajs/cors";
+import type { ToolCache } from "@mux/core/cache/types";
 import { Elysia } from "elysia";
 import type { SessionResolver } from "./auth";
 import { createErrorPlugin, errorPlugin } from "./errors";
@@ -6,6 +7,13 @@ import { createApiKeysRouter } from "./modules/api-keys/router";
 import type { ApiKeysService } from "./modules/api-keys/types";
 import { createEndpointsRouter } from "./modules/endpoints/router";
 import type { EndpointsService } from "./modules/endpoints/types";
+import { createExecutionsRouter } from "./modules/executions/router";
+import type { ToolExecutionService } from "./modules/executions/types";
+import { createGatewayRouter } from "./modules/gateway/router";
+import { createSourcesRouter } from "./modules/sources/router";
+import type { SourcesService } from "./modules/sources/types";
+import { createToolsRouter } from "./modules/tools/router";
+import type { ToolsRepository, ToolsService } from "./modules/tools/types";
 import { createUsersRouter } from "./modules/users/router";
 import type { UsersService } from "./modules/users/types";
 
@@ -16,6 +24,11 @@ export interface AppDeps {
   usersService: UsersService;
   apiKeysService: ApiKeysService;
   endpointsService: EndpointsService;
+  sourcesService: SourcesService;
+  toolsService: ToolsService;
+  toolsRepo: Pick<ToolsRepository, "listCanonicalToolsForEndpoint">;
+  toolCache: Pick<ToolCache, "getEndpointCatalog" | "setEndpointCatalog">;
+  executionService: ToolExecutionService;
   onUnexpectedError?: (error: unknown) => void;
 }
 
@@ -49,6 +62,33 @@ export const createApp = (deps: AppDeps) =>
       createEndpointsRouter({
         sessionResolver: deps.sessionResolver,
         endpointsService: deps.endpointsService,
+      }),
+    )
+    .use(
+      createSourcesRouter({
+        sessionResolver: deps.sessionResolver,
+        sourcesService: deps.sourcesService,
+      }),
+    )
+    .use(
+      createToolsRouter({
+        sessionResolver: deps.sessionResolver,
+        toolsService: deps.toolsService,
+      }),
+    )
+    .use(
+      createExecutionsRouter({
+        sessionResolver: deps.sessionResolver,
+        executionService: deps.executionService,
+      }),
+    )
+    .use(
+      createGatewayRouter({
+        apiKeysService: deps.apiKeysService,
+        endpointsService: deps.endpointsService,
+        toolsRepo: deps.toolsRepo,
+        toolCache: deps.toolCache,
+        executionService: deps.executionService,
       }),
     );
 

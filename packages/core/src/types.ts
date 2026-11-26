@@ -89,3 +89,8 @@ export interface GeneratedApiKey {
   keyPrefix: string;
   keyHash: string;
 }
+
+export interface JsonSchemaValidationResult {
+  valid: boolean;
+  errors: string[];
+}

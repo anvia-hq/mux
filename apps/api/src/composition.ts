@@ -2,6 +2,7 @@ import { createBunRedisBackend } from "@mux/core/cache/redis-backend";
 import { createToolCache } from "@mux/core/cache/tool-cache";
 import { createSecretVault } from "@mux/core/crypto";
 import { createDatabase } from "@mux/db";
+import { createUpstreamMcpClient } from "@mux/mcp/upstream-client";
 import { RedisClient } from "bun";
 import { createAuth } from "./auth";
 import { parseApiConfig } from "./config";
@@ -9,6 +10,12 @@ import { createDrizzleApiKeysRepository } from "./modules/api-keys/repository";
 import { createApiKeysService } from "./modules/api-keys/service";
 import { createDrizzleEndpointsRepository } from "./modules/endpoints/repository";
 import { createEndpointsService } from "./modules/endpoints/service";
+import { createDrizzleExecutionsRepository } from "./modules/executions/repository";
+import { createMcpSourceExecutor, createToolExecutionService } from "./modules/executions/service";
+import { createDrizzleSourcesRepository } from "./modules/sources/repository";
+import { createSourcesService } from "./modules/sources/service";
+import { createDrizzleToolsRepository } from "./modules/tools/repository";
+import { createToolsService } from "./modules/tools/service";
 import { createDrizzleUsersRepository } from "./modules/users/repository";
 import { createUsersService } from "./modules/users/service";
 
@@ -23,6 +30,7 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     },
   });
   const secretVault = createSecretVault(config.MUX_MASTER_KEY);
+  const mcpClient = createUpstreamMcpClient();
   const auth = createAuth({
     db,
     secret: config.BETTER_AUTH_SECRET,
@@ -33,6 +41,9 @@ export const createComposition = (env: Record<string, string | undefined> = proc
   const usersRepo = createDrizzleUsersRepository(db);
   const endpointsRepo = createDrizzleEndpointsRepository(db);
   const apiKeysRepo = createDrizzleApiKeysRepository(db);
+  const sourcesRepo = createDrizzleSourcesRepository(db);
+  const toolsRepo = createDrizzleToolsRepository(db);
+  const executionsRepo = createDrizzleExecutionsRepository(db);
 
   const usersService = createUsersService(usersRepo);
   const endpointsService = createEndpointsService({
@@ -47,6 +58,35 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     endpointsRepo,
     onBackgroundError: (error) => {
       console.error("Failed to update API key lastUsedAt:", error);
+    },
+  });
+  const sourcesService = createSourcesService({
+    sourcesRepo,
+    toolsRepo,
+    secretVault,
+    mcpClient,
+    toolCache,
+    onCacheError: (error, key) => {
+      console.error(`Failed to invalidate cache for ${key}:`, error);
+    },
+  });
+  const toolsService = createToolsService({
+    toolsRepo,
+    toolCache,
+    onCacheError: (error, key) => {
+      console.error(`Failed to invalidate cache for ${key}:`, error);
+    },
+  });
+  const executionService = createToolExecutionService({
+    executionsRepo,
+    sourcesRepo,
+    toolsRepo,
+    toolCache,
+    executors: {
+      mcp_remote: createMcpSourceExecutor({ mcpClient, secretVault }),
+    },
+    onAuditError: (error) => {
+      console.error("Failed to record tool execution audit log:", error);
     },
   });
 
@@ -83,11 +123,16 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     redisClient,
     toolCache,
     secretVault,
+    mcpClient,
     authHandler: auth.handler,
     sessionResolver: auth.sessionResolver,
     usersService,
     endpointsService,
     apiKeysService,
+    sourcesService,
+    toolsService,
+    toolsRepo,
+    executionService,
     shutdown,
   };
 };
