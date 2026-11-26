@@ -1,0 +1,6 @@
+node_modules
+dist
+.data
+.env
+.DS_Store
+apps/platform/src/routeTree.gen.ts

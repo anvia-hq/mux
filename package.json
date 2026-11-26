@@ -1,0 +1,24 @@
+{
+  "name": "mux",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "bun --filter @mux/api dev",
+    "dev:platform": "bun --filter @mux/platform dev",
+    "dev": "bun run dev:api & bun run dev:platform & wait",
+    "build": "bun --filter '*' build",
+    "typecheck": "bun --filter '*' typecheck",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.80.0",
+    "oxlint": "^1.95.0"
+  }
+}

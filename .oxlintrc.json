@@ -1,0 +1,69 @@
+{
+  "plugins": ["typescript", "unicorn", "oxc", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "**/routeTree.gen.ts",
+    "packages/db/drizzle",
+    "packages/ui/src"
+  ],
+  "jsPlugins": ["./tooling/oxlint/plugin.mjs"],
+  "rules": {
+    "zstack/no-comments": "error",
+    "zstack/no-conditional-spread": "error",
+    "zstack/no-atom-import": "error",
+    "zstack/no-barrel-file": "error",
+    "zstack/no-base-ui-outside-ui": "error",
+    "zstack/no-native-primitives": "error",
+    "zstack/padded-if": "error",
+    "eqeqeq": ["error", "smart"],
+    "import/no-duplicates": "error",
+    "no-inline-comments": "error",
+    "no-lonely-if": "error",
+    "no-nested-ternary": "error",
+    "no-useless-return": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-import-type-side-effects": "error",
+    "unicorn/prefer-includes": "error",
+    "unicorn/prefer-node-protocol": "error",
+    "unicorn/prefer-number-properties": "error",
+    "unicorn/prefer-structured-clone": "error",
+    "unicorn/throw-new-error": "error",
+    "zstack/no-reduce-accumulator-copy": "error",
+    "zstack/no-reflect-apply": "error",
+    "zstack/no-reflect-get": "error",
+    "zstack/no-array-filter-map": "error",
+    "zstack/no-chained-type-assertions": "error",
+    "zstack/no-unknown-type-aliases": "error",
+    "zstack/no-module-mocking": "error",
+    "oxc/no-accumulating-spread": "error",
+    "no-await-in-loop": "off",
+    "no-shadow": "off",
+    "no-underscore-dangle": "off",
+    "no-unmodified-loop-condition": "off",
+    "import/no-unassigned-import": "off",
+    "oxc/no-map-spread": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-fill-with-reference-type": "off",
+    "unicorn/no-array-reverse": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/prefer-add-event-listener": "off",
+    "unicorn/prefer-array-find": "off",
+    "unicorn/prefer-set-has": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "e2e/**", "**/testing/**"],
+      "rules": {
+        "zstack/no-chained-type-assertions": "off"
+      }
+    }
+  ]
+}
