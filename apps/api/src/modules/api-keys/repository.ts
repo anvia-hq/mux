@@ -1,7 +1,24 @@
 import type { Database } from "@mux/db";
 import { apiKeys } from "@mux/db/schema/api-keys";
 import { desc, eq } from "drizzle-orm";
+import { NotFoundError } from "../../errors";
 import type { ApiKeyRecord, ApiKeysRepository, InsertApiKeyData } from "./types";
+
+const hasPgErrorCode = (error: unknown, code: string): boolean => {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+
+  if ("code" in error && error.code === code) {
+    return true;
+  }
+
+  if ("cause" in error && typeof error.cause === "object" && error.cause !== null) {
+    return "code" in error.cause && error.cause.code === code;
+  }
+
+  return false;
+};
 
 export const createDrizzleApiKeysRepository = (db: Database): ApiKeysRepository => ({
   listAll: async (): Promise<ApiKeyRecord[]> =>
@@ -27,9 +44,22 @@ export const createDrizzleApiKeysRepository = (db: Database): ApiKeysRepository 
   },
 
   insert: async (data: InsertApiKeyData): Promise<ApiKeyRecord> => {
-    const rows = await db.insert(apiKeys).values(data).returning();
+    try {
+      const rows = await db.insert(apiKeys).values(data).returning();
+      const inserted = rows[0];
 
-    return rows[0];
+      if (!inserted) {
+        throw new Error("Failed to insert API key.");
+      }
+
+      return inserted;
+    } catch (error) {
+      if (hasPgErrorCode(error, "23503")) {
+        throw new NotFoundError("Referenced endpoint or user not found.");
+      }
+
+      throw error;
+    }
   },
 
   revoke: async (id: string, revokedAt: Date): Promise<ApiKeyRecord | null> => {

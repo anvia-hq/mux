@@ -48,9 +48,8 @@ export class UnavailableError extends DomainError {
   }
 }
 
-export const errorPlugin = new Elysia({ name: "mux-errors" }).onError(
-  { as: "global" },
-  ({ code, error, set }) => {
+export const createErrorPlugin = (onUnexpectedError?: (error: unknown) => void) =>
+  new Elysia({ name: "mux-errors" }).onError({ as: "global" }, ({ code, error, set }) => {
     if (error instanceof DomainError) {
       set.status = error.statusCode;
 
@@ -58,6 +57,17 @@ export const errorPlugin = new Elysia({ name: "mux-errors" }).onError(
         error: {
           code: error.code,
           message: error.message,
+        },
+      };
+    }
+
+    if (code === "PARSE") {
+      set.status = 400;
+
+      return {
+        error: {
+          code: "BAD_REQUEST",
+          message: "Malformed request body.",
         },
       };
     }
@@ -84,6 +94,14 @@ export const errorPlugin = new Elysia({ name: "mux-errors" }).onError(
       };
     }
 
+    if (onUnexpectedError) {
+      try {
+        onUnexpectedError(error);
+      } catch {
+        void error;
+      }
+    }
+
     set.status = 500;
 
     return {
@@ -92,5 +110,8 @@ export const errorPlugin = new Elysia({ name: "mux-errors" }).onError(
         message: "Internal server error.",
       },
     };
-  },
-);
+  });
+
+export const errorPlugin = createErrorPlugin((error) => {
+  console.error("Unhandled API error:", error);
+});

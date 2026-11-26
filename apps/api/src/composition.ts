@@ -1,7 +1,7 @@
 import { createBunRedisBackend } from "@mux/core/cache/redis-backend";
 import { createToolCache } from "@mux/core/cache/tool-cache";
 import { createSecretVault } from "@mux/core/crypto";
-import { client, db } from "@mux/db";
+import { createDatabase } from "@mux/db";
 import { RedisClient } from "bun";
 import { createAuth } from "./auth";
 import { parseApiConfig } from "./config";
@@ -12,25 +12,16 @@ import { createEndpointsService } from "./modules/endpoints/service";
 import { createDrizzleUsersRepository } from "./modules/users/repository";
 import { createUsersService } from "./modules/users/service";
 
-const parseCorsOrigins = (raw: string): string[] => {
-  const origins: string[] = [];
-
-  for (const part of raw.split(",")) {
-    const trimmed = part.trim();
-
-    if (trimmed.length > 0) {
-      origins.push(trimmed);
-    }
-  }
-
-  return origins;
-};
-
 export const createComposition = (env: Record<string, string | undefined> = process.env) => {
   const config = parseApiConfig(env);
-  const corsOrigins = parseCorsOrigins(config.CORS_ORIGIN);
+  const corsOrigins = config.CORS_ORIGIN;
+  const { client, db } = createDatabase(config.DATABASE_URL);
   const redisClient = new RedisClient(config.REDIS_URL);
-  const toolCache = createToolCache(createBunRedisBackend(redisClient));
+  const toolCache = createToolCache(createBunRedisBackend(redisClient), {
+    onCacheError: (error, key) => {
+      console.error(`Cache error for key ${key}:`, error);
+    },
+  });
   const secretVault = createSecretVault(config.MUX_MASTER_KEY);
   const auth = createAuth({
     db,
@@ -44,18 +35,51 @@ export const createComposition = (env: Record<string, string | undefined> = proc
   const apiKeysRepo = createDrizzleApiKeysRepository(db);
 
   const usersService = createUsersService(usersRepo);
-  const endpointsService = createEndpointsService({ endpointsRepo, toolCache });
-  const apiKeysService = createApiKeysService({ apiKeysRepo, endpointsRepo });
+  const endpointsService = createEndpointsService({
+    endpointsRepo,
+    toolCache,
+    onCacheError: (error, endpointId) => {
+      console.error(`Failed to invalidate endpoint catalog ${endpointId}:`, error);
+    },
+  });
+  const apiKeysService = createApiKeysService({
+    apiKeysRepo,
+    endpointsRepo,
+    onBackgroundError: (error) => {
+      console.error("Failed to update API key lastUsedAt:", error);
+    },
+  });
 
   const shutdown = async (): Promise<void> => {
-    await toolCache.flushPendingRevalidations();
-    redisClient.close();
-    await client.end({ timeout: 5 });
+    const errors: unknown[] = [];
+
+    try {
+      await toolCache.flushPendingRevalidations();
+    } catch (error) {
+      errors.push(error);
+    }
+
+    try {
+      redisClient.close();
+    } catch (error) {
+      errors.push(error);
+    }
+
+    try {
+      await client.end({ timeout: 5 });
+    } catch (error) {
+      errors.push(error);
+    }
+
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "One or more shutdown steps failed.");
+    }
   };
 
   return {
     config,
     corsOrigins,
+    db,
     redisClient,
     toolCache,
     secretVault,

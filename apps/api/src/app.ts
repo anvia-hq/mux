@@ -1,7 +1,7 @@
 import { cors } from "@elysiajs/cors";
 import { Elysia } from "elysia";
 import type { SessionResolver } from "./auth";
-import { errorPlugin } from "./errors";
+import { createErrorPlugin, errorPlugin } from "./errors";
 import { createApiKeysRouter } from "./modules/api-keys/router";
 import type { ApiKeysService } from "./modules/api-keys/types";
 import { createEndpointsRouter } from "./modules/endpoints/router";
@@ -16,6 +16,7 @@ export interface AppDeps {
   usersService: UsersService;
   apiKeysService: ApiKeysService;
   endpointsService: EndpointsService;
+  onUnexpectedError?: (error: unknown) => void;
 }
 
 export const createApp = (deps: AppDeps) =>
@@ -28,7 +29,7 @@ export const createApp = (deps: AppDeps) =>
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       }),
     )
-    .use(errorPlugin)
+    .use(deps.onUnexpectedError ? createErrorPlugin(deps.onUnexpectedError) : errorPlugin)
     .get("/", () => ({ name: "mux-api" }))
     .get("/health", () => ({ ok: true }))
     .all("/api/auth/*", ({ request }) => deps.authHandler(request))

@@ -5,6 +5,9 @@ import type { ApiKeysRouterDeps } from "./types";
 
 export const createApiKeysRouter = ({ sessionResolver, apiKeysService }: ApiKeysRouterDeps) =>
   new Elysia({ prefix: "/v1/api-keys" })
+    .onTransform(async ({ request }) => {
+      await requireSession(sessionResolver, request.headers);
+    })
     .get("/", async ({ request }) => {
       const user = await requireSession(sessionResolver, request.headers);
       const apiKeys = await apiKeysService.listForUser(user);

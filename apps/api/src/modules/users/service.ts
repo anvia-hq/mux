@@ -5,41 +5,17 @@ import type { UserRecord, UsersRepository, UsersService } from "./types";
 export const createUsersService = (repo: UsersRepository): UsersService => ({
   listUsers: async (): Promise<UserRecord[]> => repo.list(),
 
-  getUserById: async (id: string): Promise<UserRecord> => {
-    const user = await repo.findById(id);
-
-    if (!user) {
-      throw new NotFoundError("User not found.");
-    }
-
-    return user;
-  },
-
   updateUserRole: async (id: string, role: UserRole): Promise<UserRecord> => {
-    const existing = await repo.findById(id);
+    const outcome = await repo.updateRoleAtomic(id, role);
 
-    if (!existing) {
+    if (outcome.status === "not_found") {
       throw new NotFoundError("User not found.");
     }
 
-    if (existing.role === role) {
-      return existing;
+    if (outcome.status === "last_admin") {
+      throw new UnprocessableError("Cannot demote the last remaining admin.");
     }
 
-    if (existing.role === "admin" && role === "member") {
-      const adminCount = await repo.countByRole("admin");
-
-      if (adminCount <= 1) {
-        throw new UnprocessableError("Cannot demote the last remaining admin.");
-      }
-    }
-
-    const updated = await repo.updateRole(id, role);
-
-    if (!updated) {
-      throw new NotFoundError("User not found.");
-    }
-
-    return updated;
+    return outcome.user;
   },
 });

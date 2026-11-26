@@ -4,6 +4,9 @@ import { schema } from "@mux/db/schema";
 import { users } from "@mux/db/schema/users";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { and, eq, sql } from "drizzle-orm";
+
+export const ADMIN_ROLE_LOCK_ID = 738_192_041;
 
 export interface AuthenticatedUser {
   id: string;
@@ -21,11 +24,54 @@ export interface AuthConfig {
   secret: string;
   baseUrl: string;
   trustedOrigins: string[];
+  claimInitialAdmin?: (userId: string) => Promise<boolean>;
 }
 
 const toUserRole = (value: unknown): UserRole => (value === "admin" ? "admin" : "member");
 
+export const createBootstrapAdminClaimer =
+  (db: Database) =>
+  async (userId: string): Promise<boolean> =>
+    db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(${ADMIN_ROLE_LOCK_ID})`);
+
+      const existingAdmins = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.role, "admin"))
+        .limit(1);
+
+      if (existingAdmins.length > 0) {
+        return false;
+      }
+
+      const promoted = await tx
+        .update(users)
+        .set({ role: "admin", updatedAt: new Date() })
+        .where(and(eq(users.id, userId), eq(users.role, "member")))
+        .returning({ id: users.id });
+
+      return promoted.length > 0;
+    });
+
+export const createUserCreationHooks = (
+  claimInitialAdmin: (userId: string) => Promise<boolean>,
+) => ({
+  before: async <T extends Record<string, unknown>>(user: T) => ({
+    data: {
+      ...user,
+      role: "member" as const,
+    },
+  }),
+  after: async (user: { id: string }) => {
+    await claimInitialAdmin(user.id);
+  },
+});
+
 export const createAuth = (config: AuthConfig) => {
+  const claimInitialAdmin = config.claimInitialAdmin ?? createBootstrapAdminClaimer(config.db);
+  const userHooks = createUserCreationHooks(claimInitialAdmin);
+
   const instance = betterAuth({
     database: drizzleAdapter(config.db, {
       provider: "pg",
@@ -49,19 +95,7 @@ export const createAuth = (config: AuthConfig) => {
     },
     databaseHooks: {
       user: {
-        create: {
-          before: async (user) => {
-            const existing = await config.db.select({ id: users.id }).from(users).limit(1);
-            const assignedRole: UserRole = existing.length === 0 ? "admin" : "member";
-
-            return {
-              data: {
-                ...user,
-                role: assignedRole,
-              },
-            };
-          },
-        },
+        create: userHooks,
       },
     },
   });

@@ -13,12 +13,14 @@ import type {
   UpdateEndpointInput,
 } from "../modules/endpoints/types";
 import { createUsersService } from "../modules/users/service";
-import type { UserRecord, UsersRepository } from "../modules/users/types";
+import type { UpdateUserRoleOutcome, UserRecord, UsersRepository } from "../modules/users/types";
 
 export interface TestHarnessOptions {
   now?: () => number;
   knownToolIds?: string[];
   failCatalogInvalidation?: boolean;
+  failTouchLastUsed?: boolean;
+  failEndpointsList?: boolean;
 }
 
 export const createTestHarness = (options: TestHarnessOptions = {}) => {
@@ -29,6 +31,10 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
   const apiKeysStore = new Map<string, ApiKeyRecord>();
   const knownTools = new Set<string>(options.knownToolIds ?? []);
   const invalidatedEndpoints: string[] = [];
+  const authPathsCalled: string[] = [];
+  const backgroundErrors: unknown[] = [];
+  const unexpectedErrors: unknown[] = [];
+  let touchLastUsedCalls = 0;
 
   const seedUser = (input: { id: string; email: string; name: string; role: UserRole }) => {
     const timestamp = new Date(now());
@@ -50,35 +56,47 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
 
   const usersRepo: UsersRepository = {
     list: async () => [...usersStore.values()],
-    findById: async (id) => usersStore.get(id) ?? null,
-    countByRole: async (role) => {
-      let total = 0;
-
-      for (const user of usersStore.values()) {
-        if (user.role === role) {
-          total += 1;
-        }
-      }
-
-      return total;
-    },
-    updateRole: async (id, role) => {
+    updateRoleAtomic: async (id, role): Promise<UpdateUserRoleOutcome> => {
       const existing = usersStore.get(id);
 
       if (!existing) {
-        return null;
+        return { status: "not_found" };
+      }
+
+      if (existing.role === role) {
+        return { status: "updated", user: existing };
+      }
+
+      if (existing.role === "admin" && role === "member") {
+        let adminCount = 0;
+
+        for (const user of usersStore.values()) {
+          if (user.role === "admin") {
+            adminCount += 1;
+          }
+        }
+
+        if (adminCount <= 1) {
+          return { status: "last_admin" };
+        }
       }
 
       const updated: UserRecord = { ...existing, role, updatedAt: new Date(now()) };
 
       usersStore.set(id, updated);
 
-      return updated;
+      return { status: "updated", user: updated };
     },
   };
 
   const endpointsRepo: EndpointsRepository = {
-    list: async () => [...endpointsStore.values()],
+    list: async () => {
+      if (options.failEndpointsList) {
+        throw new Error("secret-database-credentials-must-not-leak");
+      }
+
+      return [...endpointsStore.values()];
+    },
     findById: async (id) => endpointsStore.get(id) ?? null,
     findBySlug: async (slug) => {
       for (const endpoint of endpointsStore.values()) {
@@ -248,6 +266,12 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
       return updated;
     },
     touchLastUsed: async (id, usedAt) => {
+      touchLastUsedCalls += 1;
+
+      if (options.failTouchLastUsed) {
+        throw new Error("touchLastUsed db failure");
+      }
+
       const existing = apiKeysStore.get(id);
 
       if (existing) {
@@ -293,21 +317,38 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
         return 1;
       },
     },
+    onCacheError: (error) => {
+      backgroundErrors.push(error);
+    },
   });
-  const apiKeysService = createApiKeysService({ apiKeysRepo, endpointsRepo, now });
+  const apiKeysService = createApiKeysService({
+    apiKeysRepo,
+    endpointsRepo,
+    now,
+    onBackgroundError: (error) => {
+      backgroundErrors.push(error);
+    },
+  });
 
   const app = createApp({
     corsOrigins: ["http://localhost:5173"],
-    authHandler: async () => Response.json({ ok: true }),
+    authHandler: async (req) => {
+      authPathsCalled.push(new URL(req.url).pathname);
+
+      return Response.json({ ok: true });
+    },
     sessionResolver,
     usersService,
     apiKeysService,
     endpointsService,
+    onUnexpectedError: (error) => {
+      unexpectedErrors.push(error);
+    },
   });
 
   const request = (
     path: string,
-    init: { method?: string; userId?: string; body?: unknown } = {},
+    init: { method?: string; userId?: string; body?: unknown; rawBody?: string } = {},
   ): Promise<Response> => {
     const headers = new Headers();
 
@@ -317,7 +358,10 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
 
     let body: string | undefined;
 
-    if (init.body !== undefined) {
+    if (init.rawBody !== undefined) {
+      headers.set("content-type", "application/json");
+      body = init.rawBody;
+    } else if (init.body !== undefined) {
       headers.set("content-type", "application/json");
       body = JSON.stringify(init.body);
     }
@@ -336,8 +380,13 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
     request,
     seedUser,
     apiKeysService,
+    apiKeysRepo,
     endpointsService,
     usersService,
     invalidatedEndpoints,
+    authPathsCalled,
+    backgroundErrors,
+    unexpectedErrors,
+    getTouchLastUsedCalls: () => touchLastUsedCalls,
   };
 };

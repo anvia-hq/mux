@@ -7,5 +7,5 @@ export const apiKeyIdParamSchema = z.object({
 export const createApiKeyBodySchema = z.object({
   name: z.string().trim().min(1).max(120),
   endpointId: z.uuid().nullable().optional(),
-  expiresAt: z.iso.datetime().nullable().optional(),
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
 });

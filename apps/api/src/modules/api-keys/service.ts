@@ -11,6 +11,8 @@ import type {
   PublicApiKey,
 } from "./types";
 
+const DEFAULT_LAST_USED_THROTTLE_MS = 60_000;
+
 const toPublicApiKey = (record: ApiKeyRecord): PublicApiKey => ({
   id: record.id,
   name: record.name,
@@ -28,6 +30,8 @@ export const createApiKeysService = ({
   apiKeysRepo,
   endpointsRepo,
   now = Date.now,
+  lastUsedThrottleMs = DEFAULT_LAST_USED_THROTTLE_MS,
+  onBackgroundError,
 }: ApiKeysServiceDeps): ApiKeysService => ({
   listForUser: async (actor: AuthenticatedUser): Promise<PublicApiKey[]> => {
     const rows =
@@ -121,7 +125,9 @@ export const createApiKeysService = ({
       throw new UnauthorizedError("API key has been revoked.");
     }
 
-    if (record.expiresAt !== null && record.expiresAt.getTime() <= now()) {
+    const currentMs = now();
+
+    if (record.expiresAt !== null && record.expiresAt.getTime() <= currentMs) {
       throw new UnauthorizedError("API key has expired.");
     }
 
@@ -133,10 +139,21 @@ export const createApiKeysService = ({
       throw new ForbiddenError("API key is not authorized for this endpoint.");
     }
 
-    try {
-      await apiKeysRepo.touchLastUsed(record.id, new Date(now()));
-    } catch {
-      void record.id;
+    const shouldTouch =
+      record.lastUsedAt === null || currentMs - record.lastUsedAt.getTime() >= lastUsedThrottleMs;
+
+    if (shouldTouch) {
+      try {
+        await apiKeysRepo.touchLastUsed(record.id, new Date(currentMs));
+      } catch (error) {
+        if (onBackgroundError) {
+          try {
+            onBackgroundError(error);
+          } catch {
+            void error;
+          }
+        }
+      }
     }
 
     return {

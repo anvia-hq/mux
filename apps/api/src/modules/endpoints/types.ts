@@ -89,6 +89,7 @@ export interface EndpointsService {
 export interface EndpointsServiceDeps {
   endpointsRepo: EndpointsRepository;
   toolCache: Pick<ToolCache, "invalidateEndpointCatalog">;
+  onCacheError?: (error: unknown, endpointId: string) => void;
 }
 
 export interface EndpointsRouterDeps {

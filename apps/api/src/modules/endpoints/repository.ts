@@ -4,7 +4,7 @@ import { endpointTools } from "@mux/db/schema/endpoint-tools";
 import { endpoints } from "@mux/db/schema/endpoints";
 import { tools } from "@mux/db/schema/tools";
 import { and, asc, desc, eq } from "drizzle-orm";
-import { ConflictError } from "../../errors";
+import { ConflictError, NotFoundError } from "../../errors";
 import type {
   EndpointRecord,
   EndpointToolRecord,
@@ -13,17 +13,17 @@ import type {
   UpdateEndpointInput,
 } from "./types";
 
-const isUniqueViolation = (error: unknown): boolean => {
+const hasPgErrorCode = (error: unknown, code: string): boolean => {
   if (typeof error !== "object" || error === null) {
     return false;
   }
 
-  if ("code" in error && error.code === "23505") {
+  if ("code" in error && error.code === code) {
     return true;
   }
 
   if ("cause" in error && typeof error.cause === "object" && error.cause !== null) {
-    return "code" in error.cause && error.cause.code === "23505";
+    return "code" in error.cause && error.cause.code === code;
   }
 
   return false;
@@ -48,10 +48,15 @@ export const createDrizzleEndpointsRepository = (db: Database): EndpointsReposit
   insert: async (data: InsertEndpointData): Promise<EndpointRecord> => {
     try {
       const rows = await db.insert(endpoints).values(data).returning();
+      const inserted = rows[0];
 
-      return rows[0];
+      if (!inserted) {
+        throw new Error("Failed to insert endpoint.");
+      }
+
+      return inserted;
     } catch (error) {
-      if (isUniqueViolation(error)) {
+      if (hasPgErrorCode(error, "23505")) {
         throw new ConflictError(`Endpoint slug '${data.slug}' already exists.`);
       }
 
@@ -113,26 +118,40 @@ export const createDrizzleEndpointsRepository = (db: Database): EndpointsReposit
     input: { enabled: boolean; cachePolicyOverride: ToolCachePolicy | null },
   ): Promise<EndpointToolRecord> => {
     const now = new Date();
-    const rows = await db
-      .insert(endpointTools)
-      .values({
-        endpointId,
-        toolId,
-        enabled: input.enabled,
-        cachePolicyOverride: input.cachePolicyOverride,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [endpointTools.endpointId, endpointTools.toolId],
-        set: {
+
+    try {
+      const rows = await db
+        .insert(endpointTools)
+        .values({
+          endpointId,
+          toolId,
           enabled: input.enabled,
           cachePolicyOverride: input.cachePolicyOverride,
           updatedAt: now,
-        },
-      })
-      .returning();
+        })
+        .onConflictDoUpdate({
+          target: [endpointTools.endpointId, endpointTools.toolId],
+          set: {
+            enabled: input.enabled,
+            cachePolicyOverride: input.cachePolicyOverride,
+            updatedAt: now,
+          },
+        })
+        .returning();
+      const binding = rows[0];
 
-    return rows[0];
+      if (!binding) {
+        throw new Error("Failed to upsert endpoint tool binding.");
+      }
+
+      return binding;
+    } catch (error) {
+      if (hasPgErrorCode(error, "23503")) {
+        throw new NotFoundError("Endpoint or tool not found.");
+      }
+
+      throw error;
+    }
   },
 
   removeTool: async (endpointId: string, toolId: string): Promise<boolean> => {

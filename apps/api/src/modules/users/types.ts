@@ -12,16 +12,18 @@ export interface UserRecord {
   updatedAt: Date;
 }
 
+export type UpdateUserRoleOutcome =
+  | { status: "updated"; user: UserRecord }
+  | { status: "not_found" }
+  | { status: "last_admin" };
+
 export interface UsersRepository {
   list: () => Promise<UserRecord[]>;
-  findById: (id: string) => Promise<UserRecord | null>;
-  countByRole: (role: UserRole) => Promise<number>;
-  updateRole: (id: string, role: UserRole) => Promise<UserRecord | null>;
+  updateRoleAtomic: (id: string, role: UserRole) => Promise<UpdateUserRoleOutcome>;
 }
 
 export interface UsersService {
   listUsers: () => Promise<UserRecord[]>;
-  getUserById: (id: string) => Promise<UserRecord>;
   updateUserRole: (id: string, role: UserRole) => Promise<UserRecord>;
 }
 

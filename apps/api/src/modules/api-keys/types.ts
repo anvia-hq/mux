@@ -77,6 +77,8 @@ export interface ApiKeysServiceDeps {
   apiKeysRepo: ApiKeysRepository;
   endpointsRepo: Pick<EndpointsRepository, "findById">;
   now?: () => number;
+  lastUsedThrottleMs?: number;
+  onBackgroundError?: (error: unknown) => void;
 }
 
 export interface ApiKeysRouterDeps {

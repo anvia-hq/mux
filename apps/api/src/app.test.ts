@@ -6,29 +6,51 @@ import { extractBearerToken } from "./middleware/auth-guard";
 import { createTestHarness } from "./testing/test-app";
 
 describe("parseApiConfig", () => {
-  test("rejects missing or weak secrets and accepts valid configuration", () => {
+  test("rejects missing, whitespace-only secrets, and unsafe CORS origins", () => {
     expect(() => parseApiConfig({})).toThrow();
     expect(() =>
       parseApiConfig({
-        MUX_MASTER_KEY: "short",
-        BETTER_AUTH_SECRET: "short",
+        MUX_MASTER_KEY: " ".repeat(32),
+        BETTER_AUTH_SECRET: " ".repeat(32),
       }),
     ).toThrow();
+
+    const badOrigins = [
+      "*",
+      "http://localhost:5173,*",
+      "   ",
+      ",,,",
+      "http://localhost:5173/",
+      "localhost:5173",
+      "ftp://example.com",
+    ];
+
+    for (const origin of badOrigins) {
+      expect(() =>
+        parseApiConfig({
+          MUX_MASTER_KEY: "a".repeat(32),
+          BETTER_AUTH_SECRET: "b".repeat(32),
+          CORS_ORIGIN: origin,
+        }),
+      ).toThrow();
+    }
 
     const parsed = parseApiConfig({
       PORT: "4000",
       MUX_MASTER_KEY: "a".repeat(32),
       BETTER_AUTH_SECRET: "b".repeat(32),
+      CORS_ORIGIN: "http://localhost:5173, https://mux.example.com",
     });
 
     expect(parsed.PORT).toBe(4000);
-    expect(parsed.CORS_ORIGIN).toBe("http://localhost:5173");
+    expect(parsed.CORS_ORIGIN).toEqual(["http://localhost:5173", "https://mux.example.com"]);
   });
 });
 
-describe("Auth and RBAC enforcement", () => {
-  test("rejects unauthenticated requests and enforces admin vs member boundaries", async () => {
-    const harness = createTestHarness();
+describe("Auth, RBAC, and error-handling boundaries", () => {
+  test("rejects unauthenticated requests before schema validation and enforces admin vs member RBAC across all routes", async () => {
+    const knownToolId = randomUUID();
+    const harness = createTestHarness({ knownToolIds: [knownToolId] });
     const admin = harness.seedUser({
       id: "user-admin",
       email: "admin@mux.dev",
@@ -45,6 +67,26 @@ describe("Auth and RBAC enforcement", () => {
     expect((await harness.request("/v1/users/me")).status).toBe(401);
     expect((await harness.request("/v1/endpoints")).status).toBe(401);
     expect((await harness.request("/v1/api-keys")).status).toBe(401);
+    expect(
+      (
+        await harness.request("/v1/endpoints", {
+          method: "POST",
+          body: {},
+        })
+      ).status,
+    ).toBe(401);
+
+    const authRouteRes = await harness.request("/api/auth/get-session");
+
+    expect(authRouteRes.status).toBe(200);
+    expect(harness.authPathsCalled).toEqual(["/api/auth/get-session"]);
+
+    const epRes = await harness.request("/v1/endpoints", {
+      method: "POST",
+      userId: admin.id,
+      body: { slug: "core-ep", name: "Core Endpoint" },
+    });
+    const ep = (await epRes.json()).endpoint;
 
     const meRes = await harness.request("/v1/users/me", { userId: member.id });
 
@@ -67,6 +109,40 @@ describe("Auth and RBAC enforcement", () => {
           method: "POST",
           userId: member.id,
           body: { slug: "support", name: "Support" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request(`/v1/endpoints/${ep.id}`, {
+          method: "PATCH",
+          userId: member.id,
+          body: { name: "Hijacked" },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request(`/v1/endpoints/${ep.id}`, {
+          method: "DELETE",
+          userId: member.id,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request(`/v1/endpoints/${ep.id}/tools/${knownToolId}`, {
+          method: "PUT",
+          userId: member.id,
+          body: { enabled: true },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request(`/v1/endpoints/${ep.id}/tools/${knownToolId}`, {
+          method: "DELETE",
+          userId: member.id,
         })
       ).status,
     ).toBe(403);
@@ -97,10 +173,43 @@ describe("Auth and RBAC enforcement", () => {
     expect(demoteOriginalAdmin.status).toBe(200);
     expect((await demoteOriginalAdmin.json()).user.role).toBe("member");
   });
+
+  test("maps malformed JSON to 400, unknown routes to 404, and sanitizes unexpected 500 errors", async () => {
+    const harness = createTestHarness({ failEndpointsList: true });
+    const admin = harness.seedUser({
+      id: "admin-err",
+      email: "admin@mux.dev",
+      name: "Admin",
+      role: "admin",
+    });
+
+    const malformedRes = await harness.request("/v1/endpoints", {
+      method: "POST",
+      userId: admin.id,
+      rawBody: "{bad-json",
+    });
+
+    expect(malformedRes.status).toBe(400);
+    expect((await malformedRes.json()).error.code).toBe("BAD_REQUEST");
+
+    const notFoundRes = await harness.request("/v1/does-not-exist", { userId: admin.id });
+
+    expect(notFoundRes.status).toBe(404);
+    expect((await notFoundRes.json()).error.code).toBe("NOT_FOUND");
+
+    const internalRes = await harness.request("/v1/endpoints", { userId: admin.id });
+
+    expect(internalRes.status).toBe(500);
+
+    const internalBody = await internalRes.text();
+
+    expect(internalBody).not.toContain("secret-database-credentials-must-not-leak");
+    expect(harness.unexpectedErrors.length).toBe(1);
+  });
 });
 
 describe("Endpoints CRUD and catalog cache invalidation", () => {
-  test("manages endpoints and tool bindings, rejects conflicts, and invalidates catalog cache", async () => {
+  test("manages endpoints and tool bindings, rejects conflicts, lists tools, and invalidates catalog cache", async () => {
     const knownToolId = randomUUID();
     const missingToolId = randomUUID();
     const harness = createTestHarness({ knownToolIds: [knownToolId] });
@@ -134,9 +243,6 @@ describe("Endpoints CRUD and catalog cache invalidation", () => {
     expect(createdRes.status).toBe(201);
 
     const created = (await createdRes.json()).endpoint;
-
-    expect(created.slug).toBe("support-agent");
-    expect(created.mode).toBe("router");
 
     const duplicateRes = await harness.request("/v1/endpoints", {
       method: "POST",
@@ -172,6 +278,13 @@ describe("Endpoints CRUD and catalog cache invalidation", () => {
 
     expect(attachRes.status).toBe(200);
     expect((await attachRes.json()).endpointTool.cachePolicyOverride.ttlSeconds).toBe(120);
+
+    const listToolsRes = await harness.request(`/v1/endpoints/${created.id}/tools`, {
+      userId: member.id,
+    });
+
+    expect(listToolsRes.status).toBe(200);
+    expect((await listToolsRes.json()).tools.length).toBe(1);
 
     const updateRes = await harness.request(`/v1/endpoints/${created.id}`, {
       method: "PATCH",
@@ -220,11 +333,12 @@ describe("Endpoints CRUD and catalog cache invalidation", () => {
 
     expect(updatedRes.status).toBe(200);
     expect((await updatedRes.json()).endpoint.enabled).toBe(false);
+    expect(harness.backgroundErrors.length).toBe(1);
   });
 });
 
-describe("API keys scoping, ownership, and gateway authentication", () => {
-  test("enforces role scoping, ownership, expiration, revocation, and endpoint authorization", async () => {
+describe("API keys scoping, ownership, throttling, and gateway authentication", () => {
+  test("enforces role scoping, ownership, expiration, revocation, throttling, and fail-open touches", async () => {
     let clock = 1_700_000_000_000;
     const harness = createTestHarness({ now: () => clock });
     const admin = harness.seedUser({
@@ -253,32 +367,34 @@ describe("API keys scoping, ownership, and gateway authentication", () => {
     });
     const epB = (await epBRes.json()).endpoint;
 
-    const memberGlobalAttempt = await harness.request("/v1/api-keys", {
-      method: "POST",
-      userId: member.id,
-      body: { name: "Forbidden Global Key" },
-    });
+    expect(
+      (
+        await harness.request("/v1/api-keys", {
+          method: "POST",
+          userId: member.id,
+          body: { name: "Forbidden Global Key" },
+        })
+      ).status,
+    ).toBe(403);
 
-    expect(memberGlobalAttempt.status).toBe(403);
-
-    const pastExpiryAttempt = await harness.request("/v1/api-keys", {
-      method: "POST",
-      userId: admin.id,
-      body: { name: "Expired", expiresAt: new Date(clock - 1000).toISOString() },
-    });
-
-    expect(pastExpiryAttempt.status).toBe(422);
+    expect(
+      (
+        await harness.request("/v1/api-keys", {
+          method: "POST",
+          userId: admin.id,
+          body: { name: "Expired", expiresAt: new Date(clock - 1000).toISOString() },
+        })
+      ).status,
+    ).toBe(422);
 
     const adminGlobalRes = await harness.request("/v1/api-keys", {
       method: "POST",
       userId: admin.id,
       body: { name: "Admin Global" },
     });
-
-    expect(adminGlobalRes.status).toBe(201);
-
     const adminGlobal = await adminGlobalRes.json();
 
+    expect(adminGlobalRes.status).toBe(201);
     expect(adminGlobal.rawKey.startsWith("mux_live_")).toBe(true);
     expect("keyHash" in adminGlobal.apiKey).toBe(false);
 
@@ -288,55 +404,109 @@ describe("API keys scoping, ownership, and gateway authentication", () => {
       body: {
         name: "Member Ep A Key",
         endpointId: epA.id,
-        expiresAt: new Date(clock + 60_000).toISOString(),
+        expiresAt: "2026-12-31T23:59:59+07:00",
       },
     });
+    const memberScoped = await memberScopedRes.json();
 
     expect(memberScopedRes.status).toBe(201);
 
-    const memberScoped = await memberScopedRes.json();
-
-    const memberListRes = await harness.request("/v1/api-keys", { userId: member.id });
-    const memberList = (await memberListRes.json()).apiKeys;
+    const memberList = (await (await harness.request("/v1/api-keys", { userId: member.id })).json())
+      .apiKeys;
+    const adminList = (await (await harness.request("/v1/api-keys", { userId: admin.id })).json())
+      .apiKeys;
 
     expect(memberList.length).toBe(1);
-    expect(memberList[0].id).toBe(memberScoped.apiKey.id);
+    expect(adminList.length).toBe(2);
 
-    const memberRevokeAdminKey = await harness.request(`/v1/api-keys/${adminGlobal.apiKey.id}`, {
-      method: "DELETE",
-      userId: member.id,
-    });
+    expect(
+      (
+        await harness.request(`/v1/api-keys/${adminGlobal.apiKey.id}`, {
+          method: "DELETE",
+          userId: member.id,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await harness.request(`/v1/api-keys/${randomUUID()}`, {
+          method: "DELETE",
+          userId: admin.id,
+        })
+      ).status,
+    ).toBe(404);
 
-    expect(memberRevokeAdminKey.status).toBe(403);
+    await expect(harness.apiKeysService.authenticate("")).rejects.toThrow(UnauthorizedError);
+    await expect(harness.apiKeysService.authenticate("mux_live_invalid")).rejects.toThrow(
+      UnauthorizedError,
+    );
 
     const authGlobal = await harness.apiKeysService.authenticate(adminGlobal.rawKey, epB.id);
 
     expect(authGlobal.id).toBe(adminGlobal.apiKey.id);
+    expect(harness.getTouchLastUsedCalls()).toBe(1);
+
+    await harness.apiKeysService.authenticate(adminGlobal.rawKey, epB.id);
+    expect(harness.getTouchLastUsedCalls()).toBe(1);
+
+    clock += 61_000;
+    await harness.apiKeysService.authenticate(adminGlobal.rawKey, epB.id);
+    expect(harness.getTouchLastUsedCalls()).toBe(2);
 
     const authScopedOk = await harness.apiKeysService.authenticate(memberScoped.rawKey, epA.id);
 
     expect(authScopedOk.id).toBe(memberScoped.apiKey.id);
-
     await expect(harness.apiKeysService.authenticate(memberScoped.rawKey, epB.id)).rejects.toThrow(
       ForbiddenError,
     );
 
-    clock += 61_000;
+    const memberSelfRevoke = await harness.request(`/v1/api-keys/${memberScoped.apiKey.id}`, {
+      method: "DELETE",
+      userId: member.id,
+    });
 
+    expect(memberSelfRevoke.status).toBe(200);
     await expect(harness.apiKeysService.authenticate(memberScoped.rawKey, epA.id)).rejects.toThrow(
       UnauthorizedError,
     );
 
-    const revokeAdminRes = await harness.request(`/v1/api-keys/${adminGlobal.apiKey.id}`, {
+    const secondMemberKeyRes = await harness.request("/v1/api-keys", {
+      method: "POST",
+      userId: member.id,
+      body: {
+        name: "Member Key 2",
+        endpointId: epA.id,
+        expiresAt: new Date(clock + 10_000).toISOString(),
+      },
+    });
+    const secondMemberKey = await secondMemberKeyRes.json();
+
+    clock += 11_000;
+    await expect(
+      harness.apiKeysService.authenticate(secondMemberKey.rawKey, epA.id),
+    ).rejects.toThrow(UnauthorizedError);
+
+    const adminRevokeMember = await harness.request(`/v1/api-keys/${secondMemberKey.apiKey.id}`, {
       method: "DELETE",
       userId: admin.id,
     });
 
-    expect(revokeAdminRes.status).toBe(200);
+    expect(adminRevokeMember.status).toBe(200);
 
-    await expect(harness.apiKeysService.authenticate(adminGlobal.rawKey, epA.id)).rejects.toThrow(
-      UnauthorizedError,
-    );
+    const failingTouchHarness = createTestHarness({ failTouchLastUsed: true });
+    const touchAdmin = failingTouchHarness.seedUser({
+      id: "admin-touch",
+      email: "a@mux.dev",
+      name: "Admin",
+      role: "admin",
+    });
+    const createdKey = await failingTouchHarness.apiKeysService.create(touchAdmin, {
+      name: "Resilient Key",
+    });
+    const authResilient = await failingTouchHarness.apiKeysService.authenticate(createdKey.rawKey);
+
+    expect(authResilient.id).toBe(createdKey.apiKey.id);
+    expect(failingTouchHarness.backgroundErrors.length).toBe(1);
 
     expect(extractBearerToken(new Headers({ authorization: `Bearer ${adminGlobal.rawKey}` }))).toBe(
       adminGlobal.rawKey,

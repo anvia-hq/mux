@@ -11,6 +11,9 @@ import type { EndpointsRouterDeps } from "./types";
 
 export const createEndpointsRouter = ({ sessionResolver, endpointsService }: EndpointsRouterDeps) =>
   new Elysia({ prefix: "/v1/endpoints" })
+    .onTransform(async ({ request }) => {
+      await requireSession(sessionResolver, request.headers);
+    })
     .get("/", async ({ request }) => {
       await requireSession(sessionResolver, request.headers);
       const endpoints = await endpointsService.list();

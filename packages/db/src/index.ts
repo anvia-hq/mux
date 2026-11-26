@@ -2,8 +2,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { schema } from "./schema";
 
-const url = process.env.DATABASE_URL ?? "postgres://postgres@localhost:5432/mux";
+export const createDatabase = (url: string) => {
+  const client = postgres(url);
+  const db = drizzle(client, { schema });
 
-export const client = postgres(url);
-export const db = drizzle(client, { schema });
-export type Database = typeof db;
+  return { client, db };
+};
+
+export type DatabaseConnection = ReturnType<typeof createDatabase>;
+export type Database = DatabaseConnection["db"];

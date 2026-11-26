@@ -13,12 +13,19 @@ import type {
 export const createEndpointsService = ({
   endpointsRepo,
   toolCache,
+  onCacheError,
 }: EndpointsServiceDeps): EndpointsService => {
   const invalidateCatalog = async (endpointId: string): Promise<void> => {
     try {
       await toolCache.invalidateEndpointCatalog(endpointId);
-    } catch {
-      void endpointId;
+    } catch (error) {
+      if (onCacheError) {
+        try {
+          onCacheError(error, endpointId);
+        } catch {
+          void error;
+        }
+      }
     }
   };
 

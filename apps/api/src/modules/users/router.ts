@@ -5,6 +5,9 @@ import type { UsersRouterDeps } from "./types";
 
 export const createUsersRouter = ({ sessionResolver, usersService }: UsersRouterDeps) =>
   new Elysia({ prefix: "/v1/users" })
+    .onTransform(async ({ request }) => {
+      await requireSession(sessionResolver, request.headers);
+    })
     .get("/me", async ({ request }) => {
       const user = await requireSession(sessionResolver, request.headers);
 
