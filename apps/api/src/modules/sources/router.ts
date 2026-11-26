@@ -1,6 +1,12 @@
 import { Elysia } from "elysia";
 import { requireAdmin, requireSession } from "../../middleware/auth-guard";
-import { createMcpSourceBodySchema, sourceIdParamSchema, updateSourceBodySchema } from "./schema";
+import {
+  createMcpSourceBodySchema,
+  registerLocalPluginBodySchema,
+  sourceIdParamSchema,
+  updateSourceBodySchema,
+  uploadPluginBodySchema,
+} from "./schema";
 import type { SourcesRouterDeps } from "./types";
 
 export const createSourcesRouter = ({ sessionResolver, sourcesService }: SourcesRouterDeps) =>
@@ -13,6 +19,12 @@ export const createSourcesRouter = ({ sessionResolver, sourcesService }: Sources
       const sources = await sourcesService.list();
 
       return { sources };
+    })
+    .get("/plugins/local", async ({ request }) => {
+      await requireAdmin(sessionResolver, request.headers);
+      const plugins = await sourcesService.listLocalPlugins();
+
+      return { plugins };
     })
     .get(
       "/:id",
@@ -38,6 +50,34 @@ export const createSourcesRouter = ({ sessionResolver, sourcesService }: Sources
       },
       {
         body: createMcpSourceBodySchema,
+      },
+    )
+    .post(
+      "/plugins/local",
+      async ({ request, body, set }) => {
+        const user = await requireAdmin(sessionResolver, request.headers);
+        const result = await sourcesService.registerLocalPlugin(user, body);
+
+        set.status = 201;
+
+        return result;
+      },
+      {
+        body: registerLocalPluginBodySchema,
+      },
+    )
+    .post(
+      "/plugins/upload",
+      async ({ request, body, set }) => {
+        const user = await requireAdmin(sessionResolver, request.headers);
+        const result = await sourcesService.uploadPlugin(user, body);
+
+        set.status = 201;
+
+        return result;
+      },
+      {
+        body: uploadPluginBodySchema,
       },
     )
     .patch(
@@ -69,7 +109,7 @@ export const createSourcesRouter = ({ sessionResolver, sourcesService }: Sources
       async ({ request, params }) => {
         await requireAdmin(sessionResolver, request.headers);
 
-        return sourcesService.syncMcpSource(params.id);
+        return sourcesService.syncSource(params.id);
       },
       {
         params: sourceIdParamSchema,

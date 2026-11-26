@@ -38,11 +38,12 @@ export interface McpRemoteConfig {
 export interface PluginCodeConfig {
   kind: "plugin_code";
   origin: "local" | "uploaded";
-  directoryPath?: string;
+  directoryName: string;
   entry: string;
   version: string;
   timeoutMs: number;
   requiredSecrets: string[];
+  toolHandlers: Record<string, string>;
   bundleHash?: string;
 }
 

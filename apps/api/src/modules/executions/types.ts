@@ -9,6 +9,7 @@ import type {
   ToolSourceKind,
 } from "@mux/core/types";
 import type { UpstreamMcpClient } from "@mux/mcp/types";
+import type { PluginRuntime } from "@mux/plugins/types";
 import type { SessionResolver } from "../../auth";
 import type { SourcesRepository, ToolSourceRecord } from "../sources/types";
 import type { ToolsRepository } from "../tools/types";
@@ -107,6 +108,11 @@ export interface ToolExecutionServiceDeps {
 
 export interface McpExecutorDeps {
   mcpClient: UpstreamMcpClient;
+  secretVault: SecretVault;
+}
+
+export interface PluginExecutorDeps {
+  pluginRuntime: PluginRuntime;
   secretVault: SecretVault;
 }
 

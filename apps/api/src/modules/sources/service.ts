@@ -1,8 +1,9 @@
 import { createDefaultCachePolicy } from "@mux/core/cache/schema";
 import { computeSchemaHash } from "@mux/core/canonical-json";
 import { buildToolSlug } from "@mux/core/manifest";
-import type { McpRemoteConfig } from "@mux/core/types";
+import type { McpRemoteConfig, PluginCodeConfig } from "@mux/core/types";
 import { assertSafeUpstreamUrl } from "@mux/mcp/upstream-client";
+import type { LoadedPlugin } from "@mux/plugins/types";
 import type { AuthenticatedUser } from "../../auth";
 import { ConflictError, NotFoundError, UnavailableError, UnprocessableError } from "../../errors";
 import type { UpsertSyncedToolInput } from "../tools/types";
@@ -10,13 +11,17 @@ import { decryptMcpHeaders } from "./secrets";
 import type {
   CreateMcpSourceInput,
   CreateMcpSourceResult,
+  DiscoverableLocalPlugin,
   PublicToolSource,
+  RegisterLocalPluginInput,
+  RegisterPluginResult,
   SourcesService,
   SourcesServiceDeps,
   SyncSourceResult,
   ToolSourceRecord,
   UpdateSourceData,
   UpdateSourceInput,
+  UploadPluginInput,
 } from "./types";
 
 const sanitizeToolSlugSegment = (rawName: string): string => {
@@ -28,6 +33,44 @@ const sanitizeToolSlugSegment = (rawName: string): string => {
 
   return normalized.length > 0 ? normalized : "tool";
 };
+
+const buildPluginConfig = (loaded: LoadedPlugin): PluginCodeConfig => {
+  const toolHandlers: Record<string, string> = {};
+
+  for (const tool of loaded.manifest.tools) {
+    toolHandlers[tool.name] = tool.handler;
+  }
+
+  return {
+    kind: "plugin_code",
+    origin: loaded.origin,
+    directoryName: loaded.directoryName,
+    entry: loaded.manifest.entry,
+    version: loaded.manifest.version,
+    timeoutMs: loaded.manifest.timeoutMs,
+    requiredSecrets: loaded.manifest.secrets,
+    toolHandlers,
+    bundleHash: loaded.bundleHash,
+  };
+};
+
+const buildPluginSyncedTools = (
+  sourceSlug: string,
+  loaded: LoadedPlugin,
+): UpsertSyncedToolInput[] =>
+  loaded.manifest.tools.map((tool) => ({
+    name: tool.name,
+    slug: buildToolSlug(sourceSlug, tool.name),
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    annotations: {
+      readOnlyHint: tool.readOnly,
+      destructiveHint: tool.destructive,
+      idempotentHint: tool.idempotent,
+    },
+    defaultCachePolicy: tool.cache ?? createDefaultCachePolicy(),
+    schemaHash: computeSchemaHash(tool.inputSchema),
+  }));
 
 export const toPublicToolSource = (record: ToolSourceRecord): PublicToolSource => ({
   id: record.id,
@@ -50,6 +93,7 @@ export const createSourcesService = ({
   toolsRepo,
   secretVault,
   mcpClient,
+  pluginRuntime,
   toolCache,
   onCacheError,
 }: SourcesServiceDeps): SourcesService => {
@@ -193,6 +237,60 @@ export const createSourcesService = ({
     }
   };
 
+  const syncLocalPluginInternal = async (source: ToolSourceRecord): Promise<SyncSourceResult> => {
+    if (source.config.kind !== "plugin_code") {
+      throw new UnprocessableError("Source is not a code plugin.");
+    }
+
+    if (source.config.origin !== "local") {
+      throw new UnprocessableError("Uploaded plugins are updated by uploading a new bundle.");
+    }
+
+    const affectedEndpoints = await sourcesRepo.listAffectedEndpointIds(source.id);
+
+    try {
+      const loaded = await pluginRuntime.loadLocalPlugin(source.config.directoryName);
+      const syncedItems = buildPluginSyncedTools(source.slug, loaded);
+      const existingTools = await toolsRepo.list(source.id);
+      const incomingNames = new Set(syncedItems.map((item) => item.name));
+      const removedToolIds: string[] = [];
+
+      for (const existingTool of existingTools) {
+        if (!incomingNames.has(existingTool.name)) {
+          removedToolIds.push(existingTool.id);
+        }
+      }
+
+      await toolsRepo.syncSourceTools(source.id, syncedItems);
+
+      const nextConfig = buildPluginConfig(loaded);
+      const updated = await sourcesRepo.update(source.id, {
+        config: nextConfig,
+        status: source.status === "disabled" ? "disabled" : "active",
+        lastSyncedAt: new Date(),
+        lastError: null,
+      });
+
+      await invalidateTools(removedToolIds);
+      await invalidateEndpoints(affectedEndpoints);
+
+      return {
+        source: toPublicToolSource(updated ?? source),
+        syncedToolsCount: syncedItems.length,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reload local plugin.";
+
+      await sourcesRepo.update(source.id, {
+        status: source.status === "disabled" ? "disabled" : "error",
+        lastError: message,
+      });
+      await invalidateEndpoints(affectedEndpoints);
+
+      throw new UnprocessableError(`Failed to sync local plugin '${source.slug}': ${message}`);
+    }
+  };
+
   return {
     list: async (): Promise<PublicToolSource[]> => {
       const rows = await sourcesRepo.list();
@@ -208,6 +306,20 @@ export const createSourcesService = ({
       }
 
       return toPublicToolSource(source);
+    },
+
+    listLocalPlugins: async (): Promise<DiscoverableLocalPlugin[]> => {
+      const loaded = await pluginRuntime.listLocalPlugins();
+
+      return loaded.map((item) => ({
+        directoryName: item.directoryName,
+        name: item.manifest.name,
+        version: item.manifest.version,
+        description: item.manifest.description ?? null,
+        entry: item.manifest.entry,
+        requiredSecrets: item.manifest.secrets,
+        toolCount: item.manifest.tools.length,
+      }));
     },
 
     createMcpSource: async (
@@ -273,6 +385,121 @@ export const createSourcesService = ({
           syncedToolsCount: 0,
           syncError: message,
         };
+      }
+    },
+
+    registerLocalPlugin: async (
+      actor: AuthenticatedUser,
+      input: RegisterLocalPluginInput,
+    ): Promise<RegisterPluginResult> => {
+      let loaded: LoadedPlugin;
+
+      try {
+        loaded = await pluginRuntime.loadLocalPlugin(input.directoryName);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid local plugin.";
+
+        throw new UnprocessableError(message);
+      }
+
+      const slug = input.slug ?? loaded.manifest.name;
+      const existing = await sourcesRepo.findBySlug(slug);
+
+      if (existing) {
+        throw new ConflictError(`Tool source slug '${slug}' already exists.`);
+      }
+
+      const hasSecrets = input.secrets !== undefined && Object.keys(input.secrets).length > 0;
+      const encryptedSecrets = hasSecrets ? secretVault.encryptJson({ env: input.secrets }) : null;
+
+      const created = await sourcesRepo.insert({
+        slug,
+        name: input.name ?? loaded.manifest.name,
+        description: input.description ?? loaded.manifest.description ?? null,
+        kind: "plugin_code",
+        status: "active",
+        config: buildPluginConfig(loaded),
+        encryptedSecrets,
+        createdById: actor.id,
+      });
+
+      const syncedItems = buildPluginSyncedTools(slug, loaded);
+
+      await toolsRepo.syncSourceTools(created.id, syncedItems);
+
+      const updated = await sourcesRepo.update(created.id, {
+        lastSyncedAt: new Date(),
+        lastError: null,
+      });
+
+      return {
+        source: toPublicToolSource(updated ?? created),
+        syncedToolsCount: syncedItems.length,
+      };
+    },
+
+    uploadPlugin: async (
+      actor: AuthenticatedUser,
+      input: UploadPluginInput,
+    ): Promise<RegisterPluginResult> => {
+      const requestedSlug =
+        input.slug ?? (typeof input.manifest.name === "string" ? input.manifest.name : "");
+
+      if (requestedSlug.length === 0) {
+        throw new UnprocessableError("Plugin slug or manifest.name is required.");
+      }
+
+      const existing = await sourcesRepo.findBySlug(requestedSlug);
+
+      if (existing) {
+        throw new ConflictError(`Tool source slug '${requestedSlug}' already exists.`);
+      }
+
+      let loaded: LoadedPlugin;
+
+      try {
+        loaded = await pluginRuntime.installUploadedPlugin(
+          requestedSlug,
+          input.manifest,
+          input.files,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Invalid plugin bundle.";
+
+        throw new UnprocessableError(message);
+      }
+
+      const hasSecrets = input.secrets !== undefined && Object.keys(input.secrets).length > 0;
+      const encryptedSecrets = hasSecrets ? secretVault.encryptJson({ env: input.secrets }) : null;
+
+      try {
+        const created = await sourcesRepo.insert({
+          slug: requestedSlug,
+          name: input.name ?? loaded.manifest.name,
+          description: input.description ?? loaded.manifest.description ?? null,
+          kind: "plugin_code",
+          status: "active",
+          config: buildPluginConfig(loaded),
+          encryptedSecrets,
+          createdById: actor.id,
+        });
+
+        const syncedItems = buildPluginSyncedTools(requestedSlug, loaded);
+
+        await toolsRepo.syncSourceTools(created.id, syncedItems);
+
+        const updated = await sourcesRepo.update(created.id, {
+          lastSyncedAt: new Date(),
+          lastError: null,
+        });
+
+        return {
+          source: toPublicToolSource(updated ?? created),
+          syncedToolsCount: syncedItems.length,
+        };
+      } catch (error) {
+        await pluginRuntime.removeUploadedPlugin(requestedSlug);
+        throw error;
       }
     },
 
@@ -343,6 +570,20 @@ export const createSourcesService = ({
         }
       }
 
+      if (input.secrets !== undefined) {
+        if (existing.config.kind !== "plugin_code") {
+          throw new UnprocessableError("Plugin secrets apply only to code plugin sources.");
+        }
+
+        upstreamChanged = true;
+
+        if (input.secrets === null || Object.keys(input.secrets).length === 0) {
+          patch.encryptedSecrets = null;
+        } else {
+          patch.encryptedSecrets = secretVault.encryptJson({ env: input.secrets });
+        }
+      }
+
       const affectedEndpoints = await sourcesRepo.listAffectedEndpointIds(id);
       const updated = await sourcesRepo.update(id, patch);
 
@@ -376,15 +617,23 @@ export const createSourcesService = ({
         throw new NotFoundError("Tool source not found.");
       }
 
+      if (existing.config.kind === "plugin_code" && existing.config.origin === "uploaded") {
+        await pluginRuntime.removeUploadedPlugin(existing.config.directoryName);
+      }
+
       await invalidateTools(sourceTools.map((tool) => tool.id));
       await invalidateEndpoints(affectedEndpoints);
     },
 
-    syncMcpSource: async (id: string): Promise<SyncSourceResult> => {
+    syncSource: async (id: string): Promise<SyncSourceResult> => {
       const source = await sourcesRepo.findById(id);
 
       if (!source) {
         throw new NotFoundError("Tool source not found.");
+      }
+
+      if (source.kind === "plugin_code") {
+        return syncLocalPluginInternal(source);
       }
 
       return syncMcpSourceInternal(source);

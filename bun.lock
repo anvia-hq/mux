@@ -16,6 +16,7 @@
         "@mux/core": "workspace:*",
         "@mux/db": "workspace:*",
         "@mux/mcp": "workspace:*",
+        "@mux/plugins": "workspace:*",
         "better-auth": "latest",
         "drizzle-orm": "latest",
         "elysia": "latest",
@@ -70,6 +71,17 @@
     },
     "packages/mcp": {
       "name": "@mux/mcp",
+      "dependencies": {
+        "@mux/core": "workspace:*",
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "latest",
+      },
+    },
+    "packages/plugins": {
+      "name": "@mux/plugins",
       "dependencies": {
         "@mux/core": "workspace:*",
         "zod": "^4.0.0",
@@ -212,6 +224,8 @@
     "@mux/mcp": ["@mux/mcp@workspace:packages/mcp"],
 
     "@mux/platform": ["@mux/platform@workspace:apps/platform"],
+
+    "@mux/plugins": ["@mux/plugins@workspace:packages/plugins"],
 
     "@noble/ciphers": ["@noble/ciphers@2.4.0", "", {}, "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw=="],
 

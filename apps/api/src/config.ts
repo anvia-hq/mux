@@ -73,6 +73,8 @@ const envSchema = z.object({
     .string()
     .default("http://localhost:5173")
     .transform((raw, ctx) => parseAndValidateCorsOrigins(raw, ctx)),
+  PLUGINS_DIR: z.string().trim().min(1).default("./plugins"),
+  PLUGINS_DATA_DIR: z.string().trim().min(1).default("./.data/plugins"),
 });
 
 export type ApiConfig = z.infer<typeof envSchema>;

@@ -14,6 +14,7 @@
     "@mux/core": "workspace:*",
     "@mux/db": "workspace:*",
     "@mux/mcp": "workspace:*",
+    "@mux/plugins": "workspace:*",
     "better-auth": "latest",
     "drizzle-orm": "latest",
     "elysia": "latest",

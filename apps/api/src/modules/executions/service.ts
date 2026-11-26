@@ -6,7 +6,7 @@ import type {
   ToolExecutionStatus,
 } from "@mux/core/types";
 import { NotFoundError, UnavailableError, UnprocessableError } from "../../errors";
-import { decryptMcpHeaders } from "../sources/secrets";
+import { decryptMcpHeaders, decryptPluginSecrets } from "../sources/secrets";
 import type { ToolSourceRecord } from "../sources/types";
 import type {
   ExecuteCanonicalToolInput,
@@ -14,6 +14,7 @@ import type {
   ExecuteToolOutput,
   ListExecutionsFilter,
   McpExecutorDeps,
+  PluginExecutorDeps,
   ToolExecutionRecord,
   ToolExecutionService,
   ToolExecutionServiceDeps,
@@ -100,6 +101,37 @@ export const createMcpSourceExecutor = ({
       toolName,
       args,
     );
+  },
+});
+
+export const createPluginSourceExecutor = ({
+  pluginRuntime,
+  secretVault,
+}: PluginExecutorDeps): ToolSourceExecutor => ({
+  execute: async ({ source, toolName, args }): Promise<ToolExecutionResult> => {
+    if (source.config.kind !== "plugin_code") {
+      throw new UnprocessableError("Source is not configured as a code plugin.");
+    }
+
+    const { toolHandlers } = source.config;
+
+    if (!Object.hasOwn(toolHandlers, toolName)) {
+      throw new UnprocessableError(`No handler registered for plugin tool '${toolName}'.`);
+    }
+
+    const handlerName = toolHandlers[toolName];
+    const secrets = decryptPluginSecrets(secretVault, source.encryptedSecrets);
+
+    return pluginRuntime.executeTool({
+      origin: source.config.origin,
+      directoryName: source.config.directoryName,
+      entry: source.config.entry,
+      handlerName,
+      args,
+      requiredSecrets: source.config.requiredSecrets,
+      secrets,
+      timeoutMs: source.config.timeoutMs,
+    });
   },
 });
 

@@ -1,0 +1,30 @@
+{
+  "name": "example-utils",
+  "version": "1.0.0",
+  "description": "Built-in example code plugin with deterministic utility tools",
+  "entry": "./index.ts",
+  "secrets": [],
+  "timeoutMs": 5000,
+  "tools": [
+    {
+      "name": "slugify",
+      "description": "Convert arbitrary text into a URL-safe lowercase slug",
+      "handler": "slugifyText",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["example-utils"]
+      }
+    }
+  ]
+}

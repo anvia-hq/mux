@@ -6,6 +6,7 @@ import type {
   ToolSourceStatus,
 } from "@mux/core/types";
 import type { UpstreamMcpClient } from "@mux/mcp/types";
+import type { PluginRuntime, UploadedPluginFile } from "@mux/plugins/types";
 import type { AuthenticatedUser, SessionResolver } from "../../auth";
 import type { ToolsRepository } from "../tools/types";
 
@@ -41,15 +42,42 @@ export interface PublicToolSource {
   updatedAt: Date;
 }
 
+export interface DiscoverableLocalPlugin {
+  directoryName: string;
+  name: string;
+  version: string;
+  description: string | null;
+  entry: string;
+  requiredSecrets: string[];
+  toolCount: number;
+}
+
 export interface CreateMcpSourceInput {
   slug: string;
   name: string;
   description?: string | null;
   url: string;
-  transport?: "streamable_http" | "sse";
+  transport?: "streamable_http";
   timeoutMs?: number;
   headers?: Record<string, string>;
   autoSync?: boolean;
+}
+
+export interface RegisterLocalPluginInput {
+  directoryName: string;
+  slug?: string;
+  name?: string;
+  description?: string | null;
+  secrets?: Record<string, string>;
+}
+
+export interface UploadPluginInput {
+  slug?: string;
+  name?: string;
+  description?: string | null;
+  manifest: Record<string, unknown>;
+  files: UploadedPluginFile[];
+  secrets?: Record<string, string>;
 }
 
 export interface UpdateSourceInput {
@@ -57,9 +85,10 @@ export interface UpdateSourceInput {
   description?: string | null;
   status?: "active" | "disabled";
   url?: string;
-  transport?: "streamable_http" | "sse";
+  transport?: "streamable_http";
   timeoutMs?: number;
   headers?: Record<string, string> | null;
+  secrets?: Record<string, string> | null;
 }
 
 export interface InsertSourceData {
@@ -94,6 +123,11 @@ export interface CreateMcpSourceResult {
   syncError: string | null;
 }
 
+export interface RegisterPluginResult {
+  source: PublicToolSource;
+  syncedToolsCount: number;
+}
+
 export interface SourcesRepository {
   list: () => Promise<ToolSourceRecord[]>;
   findById: (id: string) => Promise<ToolSourceRecord | null>;
@@ -107,13 +141,22 @@ export interface SourcesRepository {
 export interface SourcesService {
   list: () => Promise<PublicToolSource[]>;
   getById: (id: string) => Promise<PublicToolSource>;
+  listLocalPlugins: () => Promise<DiscoverableLocalPlugin[]>;
   createMcpSource: (
     actor: AuthenticatedUser,
     input: CreateMcpSourceInput,
   ) => Promise<CreateMcpSourceResult>;
+  registerLocalPlugin: (
+    actor: AuthenticatedUser,
+    input: RegisterLocalPluginInput,
+  ) => Promise<RegisterPluginResult>;
+  uploadPlugin: (
+    actor: AuthenticatedUser,
+    input: UploadPluginInput,
+  ) => Promise<RegisterPluginResult>;
   update: (id: string, input: UpdateSourceInput) => Promise<PublicToolSource>;
   remove: (id: string) => Promise<void>;
-  syncMcpSource: (id: string) => Promise<SyncSourceResult>;
+  syncSource: (id: string) => Promise<SyncSourceResult>;
 }
 
 export interface SourcesServiceDeps {
@@ -121,6 +164,7 @@ export interface SourcesServiceDeps {
   toolsRepo: Pick<ToolsRepository, "list" | "syncSourceTools">;
   secretVault: SecretVault;
   mcpClient: UpstreamMcpClient;
+  pluginRuntime: PluginRuntime;
   toolCache: Pick<ToolCache, "invalidateEndpointCatalog" | "invalidateTool">;
   onCacheError?: (error: unknown, key: string) => void;
 }

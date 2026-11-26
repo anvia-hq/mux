@@ -9,6 +9,7 @@ import type {
   UserRole,
 } from "@mux/core/types";
 import type { DiscoveredMcpTool, UpstreamMcpClient, UpstreamMcpTarget } from "@mux/mcp/types";
+import { createPluginRuntime } from "@mux/plugins/runtime";
 import { createApp } from "../app";
 import type { AuthenticatedUser, SessionResolver } from "../auth";
 import { createApiKeysService } from "../modules/api-keys/service";
@@ -21,7 +22,11 @@ import type {
   InsertEndpointData,
   UpdateEndpointInput,
 } from "../modules/endpoints/types";
-import { createMcpSourceExecutor, createToolExecutionService } from "../modules/executions/service";
+import {
+  createMcpSourceExecutor,
+  createPluginSourceExecutor,
+  createToolExecutionService,
+} from "../modules/executions/service";
 import type {
   ExecutionsRepository,
   InsertExecutionData,
@@ -51,6 +56,8 @@ export interface TestHarnessOptions {
   failCatalogInvalidation?: boolean;
   failTouchLastUsed?: boolean;
   failEndpointsList?: boolean;
+  localPluginsRoot?: string;
+  uploadedPluginsRoot?: string;
   upstreamMcp?: {
     listTools?: (target: UpstreamMcpTarget) => Promise<DiscoveredMcpTool[]>;
     callTool?: (
@@ -78,6 +85,10 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
   let touchLastUsedCalls = 0;
 
   const secretVault = createSecretVault("mux-test-master-key-with-more-than-32-characters");
+  const pluginRuntime = createPluginRuntime({
+    localPluginsRoot: options.localPluginsRoot ?? "./plugins",
+    uploadedPluginsRoot: options.uploadedPluginsRoot ?? "./.data/test-plugins",
+  });
   const memoryRedis = createMemoryRedisBackend(now);
   const rawToolCache = createToolCache(memoryRedis, {
     now,
@@ -698,6 +709,7 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
     toolsRepo,
     secretVault,
     mcpClient,
+    pluginRuntime,
     toolCache,
     onCacheError: (error) => {
       backgroundErrors.push(error);
@@ -717,6 +729,7 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
     toolCache,
     executors: {
       mcp_remote: createMcpSourceExecutor({ mcpClient, secretVault }),
+      plugin_code: createPluginSourceExecutor({ pluginRuntime, secretVault }),
     },
     now,
     onAuditError: (error) => {

@@ -3,6 +3,7 @@ import { createToolCache } from "@mux/core/cache/tool-cache";
 import { createSecretVault } from "@mux/core/crypto";
 import { createDatabase } from "@mux/db";
 import { createUpstreamMcpClient } from "@mux/mcp/upstream-client";
+import { createPluginRuntime } from "@mux/plugins/runtime";
 import { RedisClient } from "bun";
 import { createAuth } from "./auth";
 import { parseApiConfig } from "./config";
@@ -11,7 +12,11 @@ import { createApiKeysService } from "./modules/api-keys/service";
 import { createDrizzleEndpointsRepository } from "./modules/endpoints/repository";
 import { createEndpointsService } from "./modules/endpoints/service";
 import { createDrizzleExecutionsRepository } from "./modules/executions/repository";
-import { createMcpSourceExecutor, createToolExecutionService } from "./modules/executions/service";
+import {
+  createMcpSourceExecutor,
+  createPluginSourceExecutor,
+  createToolExecutionService,
+} from "./modules/executions/service";
 import { createDrizzleSourcesRepository } from "./modules/sources/repository";
 import { createSourcesService } from "./modules/sources/service";
 import { createDrizzleToolsRepository } from "./modules/tools/repository";
@@ -34,6 +39,10 @@ export const createComposition = (env: Record<string, string | undefined> = proc
   });
   const secretVault = createSecretVault(config.MUX_MASTER_KEY);
   const mcpClient = createUpstreamMcpClient();
+  const pluginRuntime = createPluginRuntime({
+    localPluginsRoot: config.PLUGINS_DIR,
+    uploadedPluginsRoot: config.PLUGINS_DATA_DIR,
+  });
   const auth = createAuth({
     db,
     secret: config.BETTER_AUTH_SECRET,
@@ -68,6 +77,7 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     toolsRepo,
     secretVault,
     mcpClient,
+    pluginRuntime,
     toolCache,
     onCacheError: (error, key) => {
       console.error(`Failed to invalidate cache for ${key}:`, error);
@@ -87,6 +97,7 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     toolCache,
     executors: {
       mcp_remote: createMcpSourceExecutor({ mcpClient, secretVault }),
+      plugin_code: createPluginSourceExecutor({ pluginRuntime, secretVault }),
     },
     onAuditError: (error) => {
       console.error("Failed to record tool execution audit log:", error);
