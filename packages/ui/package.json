@@ -1,0 +1,31 @@
+{
+  "name": "@mux/ui",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./button": "./src/button.tsx",
+    "./input": "./src/input.tsx",
+    "./textarea": "./src/textarea.tsx",
+    "./select": "./src/select.tsx",
+    "./field": "./src/field.tsx",
+    "./form": "./src/form.tsx",
+    "./switch": "./src/switch.tsx",
+    "./card": "./src/card.tsx",
+    "./badge": "./src/badge.tsx"
+  },
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@base-ui/react": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "react": "^19",
+    "typescript": "latest"
+  },
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19"
+  }
+}

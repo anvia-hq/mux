@@ -6,9 +6,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "test": "bun test"
   },
   "dependencies": {
+    "@mux/core": "workspace:*",
+    "@mux/ui": "workspace:*",
+    "@tabler/icons-react": "latest",
     "@tanstack/react-query": "latest",
     "@tanstack/react-router": "latest",
     "react": "^19",
@@ -17,6 +21,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "latest",
     "@tanstack/router-plugin": "latest",
+    "@types/bun": "latest",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "latest",
