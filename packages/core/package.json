@@ -1,0 +1,25 @@
+{
+  "name": "@mux/core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./types": "./src/types.ts",
+    "./canonical-json": "./src/canonical-json.ts",
+    "./crypto": "./src/crypto.ts",
+    "./manifest": "./src/manifest.ts",
+    "./cache/types": "./src/cache/types.ts",
+    "./cache/redis-backend": "./src/cache/redis-backend.ts",
+    "./cache/tool-cache": "./src/cache/tool-cache.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "latest"
+  }
+}

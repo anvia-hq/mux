@@ -3,4 +3,5 @@ dist
 .data
 .env
 .DS_Store
+.changes-verification-receipt.json
 apps/platform/src/routeTree.gen.ts

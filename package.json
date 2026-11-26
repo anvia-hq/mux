@@ -11,6 +11,7 @@
     "dev": "bun run dev:api & bun run dev:platform & wait",
     "build": "bun --filter '*' build",
     "typecheck": "bun --filter '*' typecheck",
+    "test": "bun --filter '*' test",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",

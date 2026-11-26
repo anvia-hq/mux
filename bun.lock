@@ -39,9 +39,20 @@
         "vite": "latest",
       },
     },
+    "packages/core": {
+      "name": "@mux/core",
+      "dependencies": {
+        "zod": "^4.0.0",
+      },
+      "devDependencies": {
+        "@types/bun": "latest",
+        "typescript": "latest",
+      },
+    },
     "packages/db": {
       "name": "@mux/db",
       "dependencies": {
+        "@mux/core": "workspace:*",
         "drizzle-orm": "latest",
         "postgres": "latest",
       },
@@ -156,6 +167,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@mux/api": ["@mux/api@workspace:apps/api"],
+
+    "@mux/core": ["@mux/core@workspace:packages/core"],
 
     "@mux/db": ["@mux/db@workspace:packages/db"],
 

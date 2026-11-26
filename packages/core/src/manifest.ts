@@ -1,0 +1,122 @@
+import { z } from "zod";
+import type { ToolCachePolicy } from "./types";
+
+const SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const HANDLER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
+const ENTRY_EXTENSION_PATTERN = /\.(?:ts|mts|js|mjs)$/;
+
+const isSafeRelativeEntry = (entry: string): boolean => {
+  if (entry.length === 0 || entry.startsWith("/") || entry.startsWith("\\")) {
+    return false;
+  }
+
+  if (entry.includes("\\") || entry.includes("\0")) {
+    return false;
+  }
+
+  if (!ENTRY_EXTENSION_PATTERN.test(entry)) {
+    return false;
+  }
+
+  const segments = entry.split("/");
+
+  for (const segment of segments) {
+    if (segment === "..") {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+export const toolCachePolicySchema = z.object({
+  mode: z.enum(["off", "ttl", "stale_while_revalidate"]).default("off"),
+  ttlSeconds: z.number().int().min(1).max(86_400).default(60),
+  staleSeconds: z.number().int().min(0).max(86_400).optional(),
+  maxPayloadBytes: z.number().int().min(1024).max(10_485_760).optional(),
+  tags: z.array(z.string().min(1).max(128)).max(20).optional(),
+  allowBypass: z.boolean().default(true),
+});
+
+export const jsonSchemaObjectSchema = z
+  .record(z.string(), z.unknown())
+  .refine((schema) => schema.type === "object", {
+    message: "Tool inputSchema must declare top-level type: 'object'.",
+  });
+
+export const pluginToolManifestSchema = z.object({
+  name: z.string().regex(SLUG_PATTERN, "Tool name must be a lowercase slug."),
+  description: z.string().min(1).max(1000),
+  handler: z.string().regex(HANDLER_PATTERN, "Handler must be a valid exported identifier."),
+  readOnly: z.boolean().default(false),
+  destructive: z.boolean().default(false),
+  idempotent: z.boolean().default(false),
+  inputSchema: jsonSchemaObjectSchema,
+  cache: toolCachePolicySchema.optional(),
+});
+
+export const pluginManifestSchema = z
+  .object({
+    name: z.string().regex(SLUG_PATTERN, "Plugin name must be a lowercase slug."),
+    version: z.string().regex(SEMVER_PATTERN, "Plugin version must be valid semver."),
+    description: z.string().max(1000).optional(),
+    entry: z.string().refine(isSafeRelativeEntry, {
+      message: "Plugin entry must be a safe relative .ts/.mts/.js/.mjs path.",
+    }),
+    secrets: z
+      .array(z.string().regex(ENV_NAME_PATTERN, "Secret names must be UPPER_SNAKE_CASE."))
+      .max(50)
+      .default([]),
+    timeoutMs: z.number().int().min(100).max(60_000).default(10_000),
+    tools: z.array(pluginToolManifestSchema).min(1).max(100),
+  })
+  .superRefine((manifest, ctx) => {
+    const seenTools = new Set<string>();
+
+    for (let i = 0; i < manifest.tools.length; i += 1) {
+      const tool = manifest.tools[i];
+
+      if (seenTools.has(tool.name)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tools", i, "name"],
+          message: `Duplicate tool name '${tool.name}' in plugin manifest.`,
+        });
+      }
+
+      seenTools.add(tool.name);
+    }
+
+    const seenSecrets = new Set<string>();
+
+    for (let i = 0; i < manifest.secrets.length; i += 1) {
+      const secret = manifest.secrets[i];
+
+      if (seenSecrets.has(secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secrets", i],
+          message: `Duplicate secret '${secret}' in plugin manifest.`,
+        });
+      }
+
+      seenSecrets.add(secret);
+    }
+  });
+
+export type PluginToolManifest = z.infer<typeof pluginToolManifestSchema>;
+export type PluginManifest = z.infer<typeof pluginManifestSchema>;
+
+export const parsePluginManifest = (raw: unknown): PluginManifest =>
+  pluginManifestSchema.parse(raw);
+
+export const createDefaultCachePolicy = (): ToolCachePolicy => ({
+  mode: "off",
+  ttlSeconds: 60,
+  allowBypass: true,
+});
+
+export const buildToolSlug = (sourceSlug: string, toolName: string): string =>
+  `${sourceSlug}__${toolName}`;
