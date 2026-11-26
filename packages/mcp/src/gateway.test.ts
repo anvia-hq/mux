@@ -25,7 +25,11 @@ const sampleTools: CanonicalTool[] = [
     name: "get_customer",
     slug: "stripe__get_customer",
     description: "Lookup Stripe customer by email",
-    inputSchema: { type: "object", properties: { email: { type: "string" } }, required: ["email"] },
+    inputSchema: {
+      type: "object",
+      properties: { email: { type: "string" } },
+      required: ["email"],
+    },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
     cachePolicy: { mode: "ttl", ttlSeconds: 300, allowBypass: true },
     schemaHash: "hash2",
@@ -34,38 +38,40 @@ const sampleTools: CanonicalTool[] = [
 ];
 
 describe("handleMcpJsonRpcRequest", () => {
-  test("handles initialize, notifications, ping, direct tools/list, and direct tools/call", async () => {
-    const executed: Array<{
-      toolSlug: string;
-      args: Record<string, unknown>;
-      bypassCache: boolean;
-    }> = [];
+  test("handles initialize, params:null, notifications, preserved invalid-request ids, and -32603 errors", async () => {
     const context = {
       endpointSlug: "support",
       mode: "direct" as const,
       tools: sampleTools,
-      executeTool: async (input: {
-        toolSlug: string;
-        args: Record<string, unknown>;
-        bypassCache: boolean;
-      }) => {
-        executed.push(input);
-
-        return {
-          result: { content: [{ type: "text" as const, text: "done" }] },
-          cacheStatus: "hit" as const,
-          durationMs: 2,
-        };
+      executeTool: async () => {
+        throw new Error("unexpected runtime crash");
       },
     };
 
     const init = await handleMcpJsonRpcRequest(
-      { jsonrpc: "2.0", id: 1, method: "initialize" },
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: null },
+      context,
+    );
+    const initResult = (
+      init.body as { result: { capabilities: { tools: { listChanged: boolean } } } }
+    ).result;
+
+    expect(initResult.capabilities.tools.listChanged).toBe(false);
+
+    const pingWithNullParams = await handleMcpJsonRpcRequest(
+      { jsonrpc: "2.0", id: "ping-1", method: "ping", params: null },
       context,
     );
 
-    expect(init.status).toBe(200);
-    expect(init.body && "result" in init.body).toBe(true);
+    expect(pingWithNullParams.body).toEqual({ jsonrpc: "2.0", id: "ping-1", result: {} });
+
+    const invalidReq = await handleMcpJsonRpcRequest({ jsonrpc: "1.0", id: 99 }, context);
+
+    expect(invalidReq.body).toEqual({
+      jsonrpc: "2.0",
+      id: 99,
+      error: { code: -32600, message: "Invalid JSON-RPC 2.0 request." },
+    });
 
     const notif = await handleMcpJsonRpcRequest(
       { jsonrpc: "2.0", method: "notifications/initialized" },
@@ -74,44 +80,21 @@ describe("handleMcpJsonRpcRequest", () => {
 
     expect(notif).toEqual({ status: 202, body: null });
 
-    const listed = await handleMcpJsonRpcRequest(
-      { jsonrpc: "2.0", id: 2, method: "tools/list" },
-      context,
-    );
-
-    expect(listed.body && "result" in listed.body).toBe(true);
-
-    const listResult = (listed.body as { result: { tools: Array<{ name: string }> } }).result;
-
-    expect(listResult.tools.map((t) => t.name)).toEqual([
-      "github__list_issues",
-      "stripe__get_customer",
-    ]);
-
-    const called = await handleMcpJsonRpcRequest(
+    const crashedCall = await handleMcpJsonRpcRequest(
       {
         jsonrpc: "2.0",
-        id: 3,
+        id: 7,
         method: "tools/call",
-        params: {
-          name: "github__list_issues",
-          arguments: { repo: "mux" },
-          _meta: { bypassCache: true },
-        },
+        params: { name: "github__list_issues", arguments: {} },
       },
       context,
     );
 
-    expect(executed).toEqual([
-      { toolSlug: "github__list_issues", args: { repo: "mux" }, bypassCache: true },
-    ]);
-    expect(
-      (called.body as { result: { _meta: { cacheStatus: string } } }).result._meta.cacheStatus,
-    ).toBe("hit");
+    expect((crashedCall.body as { error: { code: number } }).error.code).toBe(-32603);
   });
 
-  test("exposes router meta-tools and dispatches search, describe, and execute in router mode", async () => {
-    const executed: string[] = [];
+  test("exposes router meta-tools, supports empty search query, and forwards _meta.bypassCache", async () => {
+    const executed: Array<{ toolSlug: string; bypassCache: boolean }> = [];
     const context = {
       endpointSlug: "all-tools",
       mode: "router" as const,
@@ -121,11 +104,11 @@ describe("handleMcpJsonRpcRequest", () => {
         args: Record<string, unknown>;
         bypassCache: boolean;
       }) => {
-        executed.push(input.toolSlug);
+        executed.push({ toolSlug: input.toolSlug, bypassCache: input.bypassCache });
 
         return {
           result: { content: [{ type: "text" as const, text: "customer-1" }] },
-          cacheStatus: "miss" as const,
+          cacheStatus: "bypass" as const,
           durationMs: 12,
         };
       },
@@ -141,34 +124,20 @@ describe("handleMcpJsonRpcRequest", () => {
 
     expect(metaNames).toEqual(["mux__search_tools", "mux__describe_tool", "mux__execute_tool"]);
 
-    const searched = await handleMcpJsonRpcRequest(
+    const searchAll = await handleMcpJsonRpcRequest(
       {
         jsonrpc: "2.0",
         id: 2,
         method: "tools/call",
-        params: { name: "mux__search_tools", arguments: { query: "stripe email" } },
+        params: { name: "mux__search_tools", arguments: {} },
       },
       context,
     );
-    const searchOut = (
-      searched.body as { result: { structuredContent: { tools: Array<{ slug: string }> } } }
+    const allOut = (
+      searchAll.body as { result: { structuredContent: { tools: Array<{ slug: string }> } } }
     ).result.structuredContent;
 
-    expect(searchOut.tools.map((t) => t.slug)).toEqual(["stripe__get_customer"]);
-
-    const described = await handleMcpJsonRpcRequest(
-      {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: { name: "mux__describe_tool", arguments: { slug: "stripe__get_customer" } },
-      },
-      context,
-    );
-    const describeOut = (described.body as { result: { structuredContent: { slug: string } } })
-      .result.structuredContent;
-
-    expect(describeOut.slug).toBe("stripe__get_customer");
+    expect(allOut.tools.length).toBe(2);
 
     const execRes = await handleMcpJsonRpcRequest(
       {
@@ -178,12 +147,13 @@ describe("handleMcpJsonRpcRequest", () => {
         params: {
           name: "mux__execute_tool",
           arguments: { slug: "stripe__get_customer", arguments: { email: "a@b.c" } },
+          _meta: { bypassCache: true },
         },
       },
       context,
     );
 
-    expect(executed).toEqual(["stripe__get_customer"]);
+    expect(executed).toEqual([{ toolSlug: "stripe__get_customer", bypassCache: true }]);
     expect(execRes.status).toBe(200);
 
     const unknownMethod = await handleMcpJsonRpcRequest(

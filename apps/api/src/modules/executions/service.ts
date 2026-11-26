@@ -5,8 +5,9 @@ import type {
   ToolExecutionResult,
   ToolExecutionStatus,
 } from "@mux/core/types";
-import { z } from "zod";
 import { NotFoundError, UnavailableError, UnprocessableError } from "../../errors";
+import { decryptMcpHeaders } from "../sources/secrets";
+import type { ToolSourceRecord } from "../sources/types";
 import type {
   ExecuteCanonicalToolInput,
   ExecuteToolInput,
@@ -20,13 +21,23 @@ import type {
 } from "./types";
 
 const SENSITIVE_KEY_PATTERN =
-  /(?:token|secret|password|passwd|api[-_]?key|auth|authorization|cookie|credential|private)/i;
+  /(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|signing[-_]?key|bearer|jwt|session|auth|authorization|cookie|credential|private)/i;
+const BEARER_VALUE_PATTERN = /^Bearer\s+\S+/i;
+const EMBEDDED_CREDS_URL_PATTERN = /^https?:\/\/[^/\s@]+:[^/\s@]+@/i;
 const MAX_SUMMARY_DEPTH = 4;
 const MAX_SUMMARY_STRING_LENGTH = 256;
 
-const mcpSecretsSchema = z.object({
-  headers: z.record(z.string(), z.string()),
-});
+const sanitizeString = (value: string): string => {
+  if (BEARER_VALUE_PATTERN.test(value.trim()) || EMBEDDED_CREDS_URL_PATTERN.test(value.trim())) {
+    return "[redacted]";
+  }
+
+  if (value.length > MAX_SUMMARY_STRING_LENGTH) {
+    return `${value.slice(0, MAX_SUMMARY_STRING_LENGTH)}...`;
+  }
+
+  return value;
+};
 
 const sanitizeValue = (value: unknown, depth: number): unknown => {
   if (depth > MAX_SUMMARY_DEPTH) {
@@ -34,11 +45,7 @@ const sanitizeValue = (value: unknown, depth: number): unknown => {
   }
 
   if (typeof value === "string") {
-    if (value.length > MAX_SUMMARY_STRING_LENGTH) {
-      return `${value.slice(0, MAX_SUMMARY_STRING_LENGTH)}...`;
-    }
-
-    return value;
+    return sanitizeString(value);
   }
 
   if (Array.isArray(value)) {
@@ -81,15 +88,7 @@ export const createMcpSourceExecutor = ({
       throw new UnprocessableError("Source is not configured as a remote MCP server.");
     }
 
-    let headers: Record<string, string> | undefined;
-
-    if (source.encryptedSecrets) {
-      const decrypted = secretVault.decryptJson(source.encryptedSecrets, (val) =>
-        mcpSecretsSchema.parse(val),
-      );
-
-      headers = decrypted.headers;
-    }
+    const headers = decryptMcpHeaders(secretVault, source.encryptedSecrets);
 
     return mcpClient.callTool(
       {
@@ -112,7 +111,32 @@ export const createToolExecutionService = ({
   executors,
   now = Date.now,
   onAuditError,
+  onExecutionError,
 }: ToolExecutionServiceDeps): ToolExecutionService => {
+  const reportAuditError = (error: unknown): void => {
+    if (!onAuditError) {
+      return;
+    }
+
+    try {
+      onAuditError(error);
+    } catch {
+      void error;
+    }
+  };
+
+  const reportExecutionError = (error: unknown, toolSlug: string): void => {
+    if (!onExecutionError) {
+      return;
+    }
+
+    try {
+      onExecutionError(error, toolSlug);
+    } catch {
+      void error;
+    }
+  };
+
   const recordAudit = async (input: {
     toolId: string | null;
     toolSlug: string;
@@ -141,17 +165,14 @@ export const createToolExecutionService = ({
         errorMessage: input.errorMessage,
       });
     } catch (error) {
-      if (onAuditError) {
-        try {
-          onAuditError(error);
-        } catch {
-          void error;
-        }
-      }
+      reportAuditError(error);
     }
   };
 
-  const executeCanonical = async (input: ExecuteCanonicalToolInput): Promise<ExecuteToolOutput> => {
+  const executeWithSource = async (
+    input: ExecuteCanonicalToolInput,
+    source: ToolSourceRecord,
+  ): Promise<ExecuteToolOutput> => {
     const startedMs = now();
     const { tool } = input;
 
@@ -163,12 +184,6 @@ export const createToolExecutionService = ({
 
     if (!validation.valid) {
       throw new UnprocessableError(`Invalid tool arguments: ${validation.errors.join("; ")}`);
-    }
-
-    const source = await sourcesRepo.findById(tool.sourceId);
-
-    if (!source) {
-      throw new NotFoundError("Tool source not found.");
     }
 
     if (source.status !== "active") {
@@ -183,6 +198,8 @@ export const createToolExecutionService = ({
       );
     }
 
+    const bypass = input.bypassCache ?? false;
+
     try {
       const cached = await toolCache.executeWithCache({
         toolId: tool.id,
@@ -190,7 +207,7 @@ export const createToolExecutionService = ({
         args: input.args,
         policy: tool.cachePolicy,
         scopeKey: input.endpointId ?? "playground",
-        bypass: input.bypassCache ?? false,
+        bypass,
         execute: () =>
           executor.execute({
             source,
@@ -222,7 +239,18 @@ export const createToolExecutionService = ({
       };
     } catch (error) {
       const durationMs = Math.max(0, now() - startedMs);
-      const message = error instanceof Error ? error.message : "Tool execution failed.";
+
+      reportExecutionError(error, tool.slug);
+
+      let errorCacheStatus: ToolCacheStatus = "miss";
+
+      if (tool.cachePolicy.mode === "off") {
+        errorCacheStatus = "disabled";
+      } else if (bypass && tool.cachePolicy.allowBypass !== false) {
+        errorCacheStatus = "bypass";
+      }
+
+      const publicErrorMessage = `Execution of '${tool.slug}' failed.`;
 
       await recordAudit({
         toolId: tool.id,
@@ -232,14 +260,24 @@ export const createToolExecutionService = ({
         apiKeyId: input.apiKeyId ?? null,
         userId: input.userId ?? null,
         status: "error",
-        cacheStatus: tool.cachePolicy.mode === "off" ? "disabled" : "miss",
+        cacheStatus: errorCacheStatus,
         durationMs,
         args: input.args,
-        errorMessage: message,
+        errorMessage: publicErrorMessage,
       });
 
-      throw new UnavailableError(`Execution of '${tool.slug}' failed: ${message}`);
+      throw new UnavailableError(publicErrorMessage);
     }
+  };
+
+  const executeCanonical = async (input: ExecuteCanonicalToolInput): Promise<ExecuteToolOutput> => {
+    const source = await sourcesRepo.findById(input.tool.sourceId);
+
+    if (!source) {
+      throw new NotFoundError("Tool source not found.");
+    }
+
+    return executeWithSource(input, source);
   };
 
   const executeByToolId = async (input: ExecuteToolInput): Promise<ExecuteToolOutput> => {
@@ -270,14 +308,17 @@ export const createToolExecutionService = ({
       enabled: tool.enabled,
     };
 
-    return executeCanonical({
-      tool: canonical,
-      args: input.args,
-      bypassCache: input.bypassCache,
-      endpointId: input.endpointId,
-      apiKeyId: input.apiKeyId,
-      userId: input.userId,
-    });
+    return executeWithSource(
+      {
+        tool: canonical,
+        args: input.args,
+        bypassCache: input.bypassCache,
+        endpointId: input.endpointId,
+        apiKeyId: input.apiKeyId,
+        userId: input.userId,
+      },
+      source,
+    );
   };
 
   return {

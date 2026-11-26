@@ -14,26 +14,42 @@ const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_TOOL_LIST_PAGES = 50;
 
 const BLOCKED_METADATA_HOSTS = new Set([
-  "169.254.169.254",
-  "169.254.170.2",
+  "100.100.100.200",
   "metadata.google.internal",
   "metadata.goog",
-  "[fd00:ec2::254]",
   "fd00:ec2::254",
 ]);
 
-const jsonRpcEnvelopeSchema = z.object({
-  jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number(), z.null()]).optional(),
-  result: z.unknown().optional(),
-  error: z
-    .object({
-      code: z.number(),
-      message: z.string(),
-      data: z.unknown().optional(),
-    })
-    .optional(),
-});
+const RESERVED_MCP_HEADERS = new Set([
+  "host",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+  "content-type",
+  "accept",
+  "mcp-session-id",
+]);
+
+const IPV4_LINK_LOCAL_PATTERN = /^169\.254\.\d{1,3}\.\d{1,3}$/;
+const IPV6_MAPPED_LINK_LOCAL_PATTERN = /^::ffff:(?:169\.254\.\d{1,3}\.\d{1,3}|a9fe:[0-9a-f]{1,4})$/;
+const IPV6_LINK_LOCAL_PATTERN = /^fe[89ab][0-9a-f]:/;
+
+const jsonRpcEnvelopeSchema = z
+  .object({
+    jsonrpc: z.literal("2.0"),
+    id: z.union([z.string(), z.number(), z.null()]),
+    result: z.unknown().optional(),
+    error: z
+      .object({
+        code: z.number(),
+        message: z.string(),
+        data: z.unknown().optional(),
+      })
+      .optional(),
+  })
+  .refine((env) => env.result !== undefined || env.error !== undefined, {
+    message: "JSON-RPC response must contain either result or error.",
+  });
 
 const rawToolSchema = z.object({
   name: z.string().min(1),
@@ -68,6 +84,23 @@ const callToolResultSchema = z.object({
   isError: z.boolean().optional(),
 });
 
+export const isReservedMcpHeader = (headerName: string): boolean =>
+  RESERVED_MCP_HEADERS.has(headerName.trim().toLowerCase());
+
+const normalizeHostForCheck = (hostname: string): string => {
+  let normalized = hostname.toLowerCase();
+
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    normalized = normalized.slice(1, -1);
+  }
+
+  while (normalized.endsWith(".")) {
+    normalized = normalized.slice(0, -1);
+  }
+
+  return normalized;
+};
+
 export const assertSafeUpstreamUrl = (rawUrl: string): URL => {
   let parsed: URL;
 
@@ -81,9 +114,18 @@ export const assertSafeUpstreamUrl = (rawUrl: string): URL => {
     throw new Error("Upstream MCP URL must use http or https protocol.");
   }
 
-  const host = parsed.hostname.toLowerCase();
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    throw new Error("Upstream MCP URL must not contain embedded credentials; use headers instead.");
+  }
 
-  if (BLOCKED_METADATA_HOSTS.has(host)) {
+  const host = normalizeHostForCheck(parsed.hostname);
+
+  if (
+    BLOCKED_METADATA_HOSTS.has(host) ||
+    IPV4_LINK_LOCAL_PATTERN.test(host) ||
+    IPV6_MAPPED_LINK_LOCAL_PATTERN.test(host) ||
+    IPV6_LINK_LOCAL_PATTERN.test(host)
+  ) {
     throw new Error(`Upstream MCP host '${host}' is not allowed.`);
   }
 
@@ -97,6 +139,7 @@ const readBoundedText = async (response: Response, maxBytes: number): Promise<st
     const declared = Number.parseInt(lengthHeader, 10);
 
     if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel();
       throw new Error(`Upstream MCP response exceeded ${maxBytes} bytes.`);
     }
   }
@@ -144,7 +187,6 @@ const parseSseForJsonRpc = (
   expectedId: JsonRpcId,
 ): z.infer<typeof jsonRpcEnvelopeSchema> => {
   const events = sseText.split(/\r?\n\r?\n/);
-  let fallbackEnvelope: z.infer<typeof jsonRpcEnvelopeSchema> | null = null;
 
   for (const block of events) {
     const dataLines: string[] = [];
@@ -169,25 +211,15 @@ const parseSseForJsonRpc = (
       const parsed: unknown = JSON.parse(payload);
       const checked = jsonRpcEnvelopeSchema.safeParse(parsed);
 
-      if (!checked.success) {
-        continue;
-      }
-
-      if (checked.data.id === expectedId) {
+      if (checked.success && checked.data.id === expectedId) {
         return checked.data;
       }
-
-      fallbackEnvelope = checked.data;
     } catch {
       continue;
     }
   }
 
-  if (fallbackEnvelope) {
-    return fallbackEnvelope;
-  }
-
-  throw new Error("Upstream MCP SSE stream did not contain a valid JSON-RPC response.");
+  throw new Error("Upstream MCP SSE stream did not contain a matching JSON-RPC response.");
 };
 
 const normalizeInputSchema = (
@@ -219,12 +251,44 @@ const normalizeAnnotations = (
   return annotations;
 };
 
+const buildRequestHeaders = (
+  customHeaders: Record<string, string> | undefined,
+  sessionId?: string,
+): Headers => {
+  const headers = new Headers({
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  });
+
+  if (customHeaders) {
+    for (const [key, value] of Object.entries(customHeaders)) {
+      if (isReservedMcpHeader(key)) {
+        throw new Error(`Header '${key}' is reserved and cannot be overridden.`);
+      }
+
+      headers.set(key, value);
+    }
+  }
+
+  if (sessionId) {
+    headers.set("mcp-session-id", sessionId);
+  }
+
+  return headers;
+};
+
 export const createUpstreamMcpClient = (
   options: UpstreamMcpClientOptions = {},
 ): UpstreamMcpClient => {
   const fetchImpl = options.fetchImpl ?? fetch;
   const defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
+
+  const assertSupportedTransport = (target: UpstreamMcpTarget): void => {
+    if (target.transport !== "streamable_http") {
+      throw new Error(`Transport '${target.transport}' is not supported; use streamable_http.`);
+    }
+  };
 
   const sendRpc = async (
     target: UpstreamMcpTarget,
@@ -233,26 +297,16 @@ export const createUpstreamMcpClient = (
     id: number,
     sessionId?: string,
   ): Promise<{ result: unknown; sessionId?: string }> => {
+    assertSupportedTransport(target);
+
     const url = assertSafeUpstreamUrl(target.url);
     const timeoutMs = target.timeoutMs ?? defaultTimeoutMs;
-    const headers = new Headers({
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    });
-
-    if (target.headers) {
-      for (const [key, value] of Object.entries(target.headers)) {
-        headers.set(key, value);
-      }
-    }
-
-    if (sessionId) {
-      headers.set("mcp-session-id", sessionId);
-    }
+    const headers = buildRequestHeaders(target.headers, sessionId);
 
     const response = await fetchImpl(url.toString(), {
       method: "POST",
       headers,
+      redirect: "error",
       body: JSON.stringify({
         jsonrpc: "2.0",
         id,
@@ -263,6 +317,7 @@ export const createUpstreamMcpClient = (
     });
 
     if (!response.ok) {
+      await response.body?.cancel();
       throw new Error(`Upstream MCP server returned HTTP ${response.status}.`);
     }
 
@@ -270,9 +325,19 @@ export const createUpstreamMcpClient = (
     const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
     const rawText = await readBoundedText(response, maxResponseBytes);
 
-    const envelope = contentType.includes("text/event-stream")
-      ? parseSseForJsonRpc(rawText, id)
-      : jsonRpcEnvelopeSchema.parse(JSON.parse(rawText));
+    let envelope: z.infer<typeof jsonRpcEnvelopeSchema>;
+
+    if (contentType.includes("text/event-stream")) {
+      envelope = parseSseForJsonRpc(rawText, id);
+    } else {
+      const parsed: unknown = JSON.parse(rawText);
+
+      envelope = jsonRpcEnvelopeSchema.parse(parsed);
+
+      if (envelope.id !== id) {
+        throw new Error("Upstream MCP JSON-RPC response id mismatch.");
+      }
+    }
 
     if (envelope.error) {
       throw new Error(`Upstream MCP error (${envelope.error.code}): ${envelope.error.message}`);
@@ -282,6 +347,33 @@ export const createUpstreamMcpClient = (
       result: envelope.result,
       sessionId: returnedSessionId,
     };
+  };
+
+  const sendNotification = async (
+    target: UpstreamMcpTarget,
+    method: string,
+    sessionId?: string,
+  ): Promise<void> => {
+    const url = assertSafeUpstreamUrl(target.url);
+    const timeoutMs = target.timeoutMs ?? defaultTimeoutMs;
+    const headers = buildRequestHeaders(target.headers, sessionId);
+
+    try {
+      const response = await fetchImpl(url.toString(), {
+        method: "POST",
+        headers,
+        redirect: "error",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+
+      await response.body?.cancel();
+    } catch {
+      void method;
+    }
   };
 
   const initializeSession = async (target: UpstreamMcpTarget): Promise<string | undefined> => {
@@ -298,6 +390,8 @@ export const createUpstreamMcpClient = (
       },
       1,
     );
+
+    await sendNotification(target, "notifications/initialized", init.sessionId);
 
     return init.sessionId;
   };
@@ -332,7 +426,7 @@ export const createUpstreamMcpClient = (
         }
 
         if (!parsed.nextCursor) {
-          break;
+          return discovered;
         }
 
         if (seenCursors.has(parsed.nextCursor)) {
@@ -343,7 +437,9 @@ export const createUpstreamMcpClient = (
         cursor = parsed.nextCursor;
       }
 
-      return discovered;
+      throw new Error(
+        `Upstream MCP tools/list exceeded maximum pagination limit (${MAX_TOOL_LIST_PAGES} pages).`,
+      );
     },
 
     callTool: async (

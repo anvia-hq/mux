@@ -31,6 +31,10 @@ export const createDrizzleExecutionsRepository = (db: Database): ExecutionsRepos
       conditions.push(eq(toolExecutions.endpointId, filter.endpointId));
     }
 
+    if (filter.userId) {
+      conditions.push(eq(toolExecutions.userId, filter.userId));
+    }
+
     if (conditions.length === 0) {
       return db
         .select()

@@ -2,7 +2,7 @@ import type { CanonicalTool } from "@mux/core/types";
 import { handleMcpJsonRpcRequest } from "@mux/mcp/gateway";
 import { Elysia } from "elysia";
 import { z } from "zod";
-import { DomainError, NotFoundError, UnauthorizedError } from "../../errors";
+import { DomainError, ForbiddenError, NotFoundError, UnauthorizedError } from "../../errors";
 import { extractBearerToken } from "../../middleware/auth-guard";
 import type { GatewayRouterDeps } from "./types";
 
@@ -48,13 +48,27 @@ export const createGatewayRouter = ({
       throw new UnauthorizedError("Bearer API key is required.");
     }
 
+    const apiKey = await apiKeysService.authenticate(rawKey);
+
+    if (apiKey.endpointId !== null) {
+      const boundEndpoint = await endpointsService.getById(apiKey.endpointId);
+
+      if (boundEndpoint.slug !== slug) {
+        throw new ForbiddenError("API key is not authorized for this endpoint.");
+      }
+
+      if (!boundEndpoint.enabled) {
+        throw new NotFoundError("Endpoint is disabled.");
+      }
+
+      return { endpoint: boundEndpoint, apiKey };
+    }
+
     const endpoint = await endpointsService.getBySlug(slug);
 
     if (!endpoint.enabled) {
       throw new NotFoundError("Endpoint is disabled.");
     }
-
-    const apiKey = await apiKeysService.authenticate(rawKey, endpoint.id);
 
     return { endpoint, apiKey };
   };

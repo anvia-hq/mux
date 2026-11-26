@@ -38,7 +38,7 @@ export const createApp = (deps: AppDeps) =>
       cors({
         origin: deps.corsOrigins,
         credentials: true,
-        allowedHeaders: ["Content-Type", "Authorization"],
+        allowedHeaders: ["Content-Type", "Authorization", "Mcp-Session-Id", "Mcp-Protocol-Version"],
         methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       }),
     )

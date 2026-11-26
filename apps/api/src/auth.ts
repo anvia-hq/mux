@@ -110,18 +110,24 @@ export const createAuth = (config: AuthConfig) => {
         return cached;
       }
 
-      const pending = instance.api.getSession({ headers }).then((session) => {
-        if (!session?.user) {
-          return null;
-        }
+      const pending = instance.api
+        .getSession({ headers })
+        .then((session) => {
+          if (!session?.user) {
+            return null;
+          }
 
-        return {
-          id: session.user.id,
-          email: session.user.email,
-          name: session.user.name,
-          role: toUserRole(session.user.role),
-        };
-      });
+          return {
+            id: session.user.id,
+            email: session.user.email,
+            name: session.user.name,
+            role: toUserRole(session.user.role),
+          };
+        })
+        .catch((error: unknown) => {
+          sessionCache.delete(headers);
+          throw error;
+        });
 
       sessionCache.set(headers, pending);
 

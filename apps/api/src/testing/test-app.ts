@@ -480,9 +480,20 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
     syncSourceTools: async (sourceId: string, items: UpsertSyncedToolInput[]) => {
       const incomingNames = new Set(items.map((item) => item.name));
 
+      const removedIds = new Set<string>();
+
       for (const [toolId, existing] of toolsStore.entries()) {
         if (existing.sourceId === sourceId && !incomingNames.has(existing.name)) {
           toolsStore.delete(toolId);
+          removedIds.add(toolId);
+        }
+      }
+
+      if (removedIds.size > 0) {
+        for (const [key, binding] of endpointToolsStore.entries()) {
+          if (removedIds.has(binding.toolId)) {
+            endpointToolsStore.delete(key);
+          }
         }
       }
 
@@ -625,6 +636,10 @@ export const createTestHarness = (options: TestHarnessOptions = {}) => {
         }
 
         if (filter.endpointId && record.endpointId !== filter.endpointId) {
+          continue;
+        }
+
+        if (filter.userId && record.userId !== filter.userId) {
           continue;
         }
 

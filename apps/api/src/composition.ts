@@ -28,6 +28,9 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     onCacheError: (error, key) => {
       console.error(`Cache error for key ${key}:`, error);
     },
+    onBackgroundError: (error, key) => {
+      console.error(`Background SWR revalidation error for key ${key}:`, error);
+    },
   });
   const secretVault = createSecretVault(config.MUX_MASTER_KEY);
   const mcpClient = createUpstreamMcpClient();
@@ -87,6 +90,9 @@ export const createComposition = (env: Record<string, string | undefined> = proc
     },
     onAuditError: (error) => {
       console.error("Failed to record tool execution audit log:", error);
+    },
+    onExecutionError: (error, toolSlug) => {
+      console.error(`Tool execution failed for ${toolSlug}:`, error);
     },
   });
 

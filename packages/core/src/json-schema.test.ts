@@ -34,4 +34,24 @@ describe("validateAgainstJsonSchema", () => {
 
     expect(missingRequired.valid).toBe(false);
   });
+
+  test("enforces additionalProperties: false without properties and JSON equality for enums", () => {
+    const zeroArgSchema = { type: "object", additionalProperties: false };
+
+    expect(validateAgainstJsonSchema({}, zeroArgSchema).valid).toBe(true);
+    expect(validateAgainstJsonSchema({ unexpected: 1 }, zeroArgSchema).valid).toBe(false);
+
+    const enumSchema = {
+      type: "object",
+      properties: {
+        num: { enum: [0, 1] },
+        obj: { enum: [{ a: 1, b: 2 }] },
+      },
+    };
+
+    expect(validateAgainstJsonSchema({ num: -0, obj: { b: 2, a: 1 } }, enumSchema).valid).toBe(
+      true,
+    );
+    expect(validateAgainstJsonSchema({ obj: { a: 1, b: 3 } }, enumSchema).valid).toBe(false);
+  });
 });

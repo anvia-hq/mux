@@ -4,11 +4,13 @@ import type { JsonRpcId, JsonRpcResponse, McpGatewayContext, McpGatewayHttpResul
 
 const MCP_PROTOCOL_VERSION = "2025-03-26";
 
+const jsonRpcIdSchema = z.union([z.string(), z.number(), z.null()]);
+
 const jsonRpcRequestSchema = z.object({
   jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number(), z.null()]).optional(),
+  id: jsonRpcIdSchema.optional(),
   method: z.string().min(1),
-  params: z.record(z.string(), z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).nullable().optional(),
 });
 
 const callToolParamsSchema = z.object({
@@ -49,7 +51,6 @@ const ROUTER_META_TOOLS = [
         },
         limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
       },
-      required: ["query"],
     },
     annotations: {
       readOnlyHint: true,
@@ -63,7 +64,10 @@ const ROUTER_META_TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        slug: { type: "string", description: "Canonical tool slug returned by mux__search_tools." },
+        slug: {
+          type: "string",
+          description: "Canonical tool slug returned by mux__search_tools.",
+        },
       },
       required: ["slug"],
     },
@@ -92,6 +96,18 @@ const ROUTER_META_TOOLS = [
     },
   },
 ];
+
+const extractRawId = (rawBody: unknown): JsonRpcId => {
+  if (typeof rawBody === "object" && rawBody !== null && "id" in rawBody) {
+    const parsed = jsonRpcIdSchema.safeParse(rawBody.id);
+
+    if (parsed.success) {
+      return parsed.data;
+    }
+  }
+
+  return null;
+};
 
 const okResponse = (id: JsonRpcId, result: unknown): McpGatewayHttpResult => ({
   status: 200,
@@ -157,10 +173,31 @@ const searchTools = (tools: CanonicalTool[], query: string, limit: number) => {
   return matches;
 };
 
+const safeExecuteTool = async (
+  id: JsonRpcId,
+  context: McpGatewayContext,
+  input: { toolSlug: string; args: Record<string, unknown>; bypassCache: boolean },
+): Promise<McpGatewayHttpResult> => {
+  try {
+    const outcome = await context.executeTool(input);
+
+    return okResponse(id, {
+      ...outcome.result,
+      _meta: {
+        cacheStatus: outcome.cacheStatus,
+        durationMs: outcome.durationMs,
+      },
+    });
+  } catch {
+    return errorResponse(id, -32603, "Internal tool execution error.");
+  }
+};
+
 const handleRouterMetaCall = async (
   id: JsonRpcId,
   toolName: string,
   rawArgs: Record<string, unknown>,
+  metaBypassCache: boolean,
   context: McpGatewayContext,
 ): Promise<McpGatewayHttpResult> => {
   if (toolName === "mux__search_tools") {
@@ -215,18 +252,10 @@ const handleRouterMetaCall = async (
       return errorResponse(id, -32602, "Invalid arguments for mux__execute_tool.");
     }
 
-    const outcome = await context.executeTool({
+    return safeExecuteTool(id, context, {
       toolSlug: parsed.data.slug,
       args: parsed.data.arguments,
-      bypassCache: parsed.data.bypassCache,
-    });
-
-    return okResponse(id, {
-      ...outcome.result,
-      _meta: {
-        cacheStatus: outcome.cacheStatus,
-        durationMs: outcome.durationMs,
-      },
+      bypassCache: parsed.data.bypassCache || metaBypassCache,
     });
   }
 
@@ -240,7 +269,7 @@ export const handleMcpJsonRpcRequest = async (
   const parsed = jsonRpcRequestSchema.safeParse(rawBody);
 
   if (!parsed.success) {
-    return errorResponse(null, -32600, "Invalid JSON-RPC 2.0 request.");
+    return errorResponse(extractRawId(rawBody), -32600, "Invalid JSON-RPC 2.0 request.");
   }
 
   const request = parsed.data;
@@ -256,7 +285,7 @@ export const handleMcpJsonRpcRequest = async (
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
         tools: {
-          listChanged: true,
+          listChanged: false,
         },
       },
       serverInfo: {
@@ -277,30 +306,23 @@ export const handleMcpJsonRpcRequest = async (
   }
 
   if (request.method === "tools/call") {
-    const callParams = callToolParamsSchema.safeParse(request.params);
+    const callParams = callToolParamsSchema.safeParse(request.params ?? {});
 
     if (!callParams.success) {
       return errorResponse(id, -32602, "Invalid tools/call parameters.");
     }
 
     const args = callParams.data.arguments ?? {};
+    const metaBypass = callParams.data._meta?.bypassCache ?? false;
 
     if (context.mode === "router") {
-      return handleRouterMetaCall(id, callParams.data.name, args, context);
+      return handleRouterMetaCall(id, callParams.data.name, args, metaBypass, context);
     }
 
-    const outcome = await context.executeTool({
+    return safeExecuteTool(id, context, {
       toolSlug: callParams.data.name,
       args,
-      bypassCache: callParams.data._meta?.bypassCache ?? false,
-    });
-
-    return okResponse(id, {
-      ...outcome.result,
-      _meta: {
-        cacheStatus: outcome.cacheStatus,
-        durationMs: outcome.durationMs,
-      },
+      bypassCache: metaBypass,
     });
   }
 

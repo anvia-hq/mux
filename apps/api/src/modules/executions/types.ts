@@ -46,6 +46,7 @@ export interface InsertExecutionData {
 export interface ListExecutionsFilter {
   toolId?: string;
   endpointId?: string;
+  userId?: string;
   limit: number;
 }
 
@@ -101,6 +102,7 @@ export interface ToolExecutionServiceDeps {
   executors: Partial<Record<ToolSourceKind, ToolSourceExecutor>>;
   now?: () => number;
   onAuditError?: (error: unknown) => void;
+  onExecutionError?: (error: unknown, toolSlug: string) => void;
 }
 
 export interface McpExecutorDeps {

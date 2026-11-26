@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { CanonicalTool } from "@mux/core/types";
 import type { Database } from "@mux/db";
 import { endpointTools } from "@mux/db/schema/endpoint-tools";
@@ -44,6 +45,20 @@ export const createDrizzleToolsRepository = (db: Database): ToolsRepository => (
       await tx
         .delete(tools)
         .where(and(eq(tools.sourceId, sourceId), notInArray(tools.name, names)));
+
+      const existingRows = await tx.select().from(tools).where(eq(tools.sourceId, sourceId));
+      const existingByName = new Map(existingRows.map((row) => [row.name, row]));
+
+      for (const item of items) {
+        const existing = existingByName.get(item.name);
+
+        if (existing && existing.slug !== item.slug) {
+          await tx
+            .update(tools)
+            .set({ slug: `__tmp_${randomUUID()}` })
+            .where(eq(tools.id, existing.id));
+        }
+      }
 
       const synced: ToolRecord[] = [];
 

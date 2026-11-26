@@ -3,10 +3,10 @@ import { computeSchemaHash } from "@mux/core/canonical-json";
 import { buildToolSlug } from "@mux/core/manifest";
 import type { McpRemoteConfig } from "@mux/core/types";
 import { assertSafeUpstreamUrl } from "@mux/mcp/upstream-client";
-import { z } from "zod";
 import type { AuthenticatedUser } from "../../auth";
 import { ConflictError, NotFoundError, UnavailableError, UnprocessableError } from "../../errors";
 import type { UpsertSyncedToolInput } from "../tools/types";
+import { decryptMcpHeaders } from "./secrets";
 import type {
   CreateMcpSourceInput,
   CreateMcpSourceResult,
@@ -18,10 +18,6 @@ import type {
   UpdateSourceData,
   UpdateSourceInput,
 } from "./types";
-
-const mcpSecretsSchema = z.object({
-  headers: z.record(z.string(), z.string()),
-});
 
 const sanitizeToolSlugSegment = (rawName: string): string => {
   const normalized = rawName
@@ -70,13 +66,27 @@ export const createSourcesService = ({
   };
 
   const invalidateEndpoints = async (endpointIds: string[]): Promise<void> => {
-    for (const endpointId of endpointIds) {
-      try {
-        await toolCache.invalidateEndpointCatalog(endpointId);
-      } catch (error) {
-        reportCacheError(error, endpointId);
-      }
-    }
+    await Promise.allSettled(
+      endpointIds.map(async (endpointId) => {
+        try {
+          await toolCache.invalidateEndpointCatalog(endpointId);
+        } catch (error) {
+          reportCacheError(error, endpointId);
+        }
+      }),
+    );
+  };
+
+  const invalidateTools = async (toolIds: string[]): Promise<void> => {
+    await Promise.allSettled(
+      toolIds.map(async (toolId) => {
+        try {
+          await toolCache.invalidateTool(toolId);
+        } catch (error) {
+          reportCacheError(error, toolId);
+        }
+      }),
+    );
   };
 
   const syncMcpSourceInternal = async (source: ToolSourceRecord): Promise<SyncSourceResult> => {
@@ -84,37 +94,58 @@ export const createSourcesService = ({
       throw new UnprocessableError("Only remote MCP sources can be synced via MCP discovery.");
     }
 
-    let headers: Record<string, string> | undefined;
-
-    if (source.encryptedSecrets) {
-      const decrypted = secretVault.decryptJson(source.encryptedSecrets, (val) =>
-        mcpSecretsSchema.parse(val),
-      );
-
-      headers = decrypted.headers;
-    }
+    const affectedEndpoints = await sourcesRepo.listAffectedEndpointIds(source.id);
 
     try {
+      const headers = decryptMcpHeaders(secretVault, source.encryptedSecrets);
       const discovered = await mcpClient.listTools({
         url: source.config.url,
         transport: source.config.transport,
         headers,
         timeoutMs: source.config.timeoutMs,
       });
-      const usedSlugs = new Set<string>();
-      const syncedItems: UpsertSyncedToolInput[] = [];
+
+      const dedupedByName = new Map<string, (typeof discovered)[number]>();
 
       for (const tool of discovered) {
-        const baseSegment = sanitizeToolSlugSegment(tool.name);
-        let slug = buildToolSlug(source.slug, baseSegment);
-        let suffix = 2;
+        if (!dedupedByName.has(tool.name)) {
+          dedupedByName.set(tool.name, tool);
+        }
+      }
 
-        while (usedSlugs.has(slug)) {
-          slug = buildToolSlug(source.slug, `${baseSegment}_${suffix}`);
-          suffix += 1;
+      const existingTools = await toolsRepo.list(source.id);
+      const existingByName = new Map(existingTools.map((item) => [item.name, item]));
+      const usedSlugs = new Set<string>();
+
+      for (const existingTool of existingTools) {
+        if (dedupedByName.has(existingTool.name)) {
+          usedSlugs.add(existingTool.slug);
+        }
+      }
+
+      const syncedItems: UpsertSyncedToolInput[] = [];
+
+      for (const tool of dedupedByName.values()) {
+        const existingTool = existingByName.get(tool.name);
+        let slug: string;
+
+        if (existingTool) {
+          slug = existingTool.slug;
+        } else {
+          const baseSegment = sanitizeToolSlugSegment(tool.name);
+
+          slug = buildToolSlug(source.slug, baseSegment);
+
+          let suffix = 2;
+
+          while (usedSlugs.has(slug)) {
+            slug = buildToolSlug(source.slug, `${baseSegment}_${suffix}`);
+            suffix += 1;
+          }
+
+          usedSlugs.add(slug);
         }
 
-        usedSlugs.add(slug);
         syncedItems.push({
           name: tool.name,
           slug,
@@ -126,7 +157,13 @@ export const createSourcesService = ({
         });
       }
 
-      const affectedEndpoints = await sourcesRepo.listAffectedEndpointIds(source.id);
+      const removedToolIds: string[] = [];
+
+      for (const existingTool of existingTools) {
+        if (!dedupedByName.has(existingTool.name)) {
+          removedToolIds.push(existingTool.id);
+        }
+      }
 
       await toolsRepo.syncSourceTools(source.id, syncedItems);
 
@@ -136,6 +173,7 @@ export const createSourcesService = ({
         lastError: null,
       });
 
+      await invalidateTools(removedToolIds);
       await invalidateEndpoints(affectedEndpoints);
 
       return {
@@ -146,11 +184,12 @@ export const createSourcesService = ({
       const message = error instanceof Error ? error.message : "Failed to sync upstream MCP.";
 
       await sourcesRepo.update(source.id, {
-        status: "error",
+        status: source.status === "disabled" ? "disabled" : "error",
         lastError: message,
       });
+      await invalidateEndpoints(affectedEndpoints);
 
-      throw new UnavailableError(`Failed to sync MCP source '${source.slug}': ${message}`);
+      throw new UnavailableError(`Failed to sync MCP source '${source.slug}'.`);
     }
   };
 
@@ -245,6 +284,7 @@ export const createSourcesService = ({
       }
 
       const patch: UpdateSourceData = {};
+      let upstreamChanged = false;
 
       if (input.name !== undefined) {
         patch.name = input.name;
@@ -269,6 +309,10 @@ export const createSourcesService = ({
 
         if (input.url !== undefined) {
           assertSafeUpstreamUrl(input.url);
+
+          if (input.url !== existing.config.url) {
+            upstreamChanged = true;
+          }
         }
 
         const nextConfig: McpRemoteConfig = {
@@ -286,6 +330,12 @@ export const createSourcesService = ({
       }
 
       if (input.headers !== undefined) {
+        if (existing.config.kind !== "mcp_remote") {
+          throw new UnprocessableError("HTTP headers apply only to remote MCP sources.");
+        }
+
+        upstreamChanged = true;
+
         if (input.headers === null || Object.keys(input.headers).length === 0) {
           patch.encryptedSecrets = null;
         } else {
@@ -298,6 +348,12 @@ export const createSourcesService = ({
 
       if (!updated) {
         throw new NotFoundError("Tool source not found.");
+      }
+
+      if (upstreamChanged) {
+        const sourceTools = await toolsRepo.list(id);
+
+        await invalidateTools(sourceTools.map((tool) => tool.id));
       }
 
       await invalidateEndpoints(affectedEndpoints);
@@ -320,14 +376,7 @@ export const createSourcesService = ({
         throw new NotFoundError("Tool source not found.");
       }
 
-      for (const tool of sourceTools) {
-        try {
-          await toolCache.invalidateTool(tool.id);
-        } catch (error) {
-          reportCacheError(error, tool.id);
-        }
-      }
-
+      await invalidateTools(sourceTools.map((tool) => tool.id));
       await invalidateEndpoints(affectedEndpoints);
     },
 

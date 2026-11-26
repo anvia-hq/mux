@@ -1,4 +1,7 @@
+import { canonicalizeJson } from "./canonical-json";
 import type { JsonSchemaValidationResult } from "./types";
+
+const MAX_SCHEMA_DEPTH = 32;
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,8 +62,15 @@ const validateNode = (
   value: unknown,
   schema: Record<string, unknown>,
   path: string,
+  depth: number,
   errors: string[],
 ): void => {
+  if (depth > MAX_SCHEMA_DEPTH) {
+    errors.push(`${path}: maximum schema validation depth exceeded.`);
+
+    return;
+  }
+
   if (schema.type !== undefined) {
     const allowedTypes = extractAllowedTypes(schema.type);
 
@@ -75,7 +85,8 @@ const validateNode = (
   }
 
   if (Array.isArray(schema.enum)) {
-    const matched = schema.enum.some((option) => Object.is(option, value));
+    const canonicalValue = canonicalizeJson(value);
+    const matched = schema.enum.some((option) => canonicalizeJson(option) === canonicalValue);
 
     if (!matched) {
       errors.push(`${path}: value is not one of the allowed enum values.`);
@@ -113,7 +124,7 @@ const validateNode = (
 
     if (isPlainObject(schema.items)) {
       for (let i = 0; i < value.length; i += 1) {
-        validateNode(value[i], schema.items, `${path}[${i}]`, errors);
+        validateNode(value[i], schema.items, `${path}[${i}]`, depth + 1, errors);
       }
     }
   }
@@ -132,14 +143,14 @@ const validateNode = (
     if (properties) {
       for (const [key, propSchema] of Object.entries(properties)) {
         if (Object.hasOwn(value, key) && isPlainObject(propSchema)) {
-          validateNode(value[key], propSchema, `${path}.${key}`, errors);
+          validateNode(value[key], propSchema, `${path}.${key}`, depth + 1, errors);
         }
       }
     }
 
-    if (schema.additionalProperties === false && properties) {
+    if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!Object.hasOwn(properties, key)) {
+        if (!properties || !Object.hasOwn(properties, key)) {
           errors.push(`${path}.${key}: additional property is not allowed.`);
         }
       }
@@ -153,7 +164,7 @@ export const validateAgainstJsonSchema = (
 ): JsonSchemaValidationResult => {
   const errors: string[] = [];
 
-  validateNode(value, schema, "$", errors);
+  validateNode(value, schema, "$", 0, errors);
 
   return {
     valid: errors.length === 0,

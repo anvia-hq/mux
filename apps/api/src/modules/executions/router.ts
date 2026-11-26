@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { requireSession } from "../../middleware/auth-guard";
+import { requireAdmin, requireSession } from "../../middleware/auth-guard";
 import { executeToolBodySchema, executeToolParamSchema, listExecutionsQuerySchema } from "./schema";
 import type { ExecutionsRouterDeps } from "./types";
 
@@ -14,10 +14,11 @@ export const createExecutionsRouter = ({
     .get(
       "/v1/executions",
       async ({ request, query }) => {
-        await requireSession(sessionResolver, request.headers);
+        const user = await requireSession(sessionResolver, request.headers);
         const executions = await executionService.listExecutions({
           toolId: query.toolId,
           endpointId: query.endpointId,
+          userId: user.role === "admin" ? undefined : user.id,
           limit: query.limit,
         });
 
@@ -30,7 +31,7 @@ export const createExecutionsRouter = ({
     .post(
       "/v1/tools/:id/execute",
       async ({ request, params, body }) => {
-        const user = await requireSession(sessionResolver, request.headers);
+        const user = await requireAdmin(sessionResolver, request.headers);
 
         return executionService.executeByToolId({
           toolId: params.id,

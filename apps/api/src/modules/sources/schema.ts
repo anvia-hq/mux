@@ -1,4 +1,4 @@
-import { assertSafeUpstreamUrl } from "@mux/mcp/upstream-client";
+import { assertSafeUpstreamUrl, isReservedMcpHeader } from "@mux/mcp/upstream-client";
 import { z } from "zod";
 
 const SOURCE_SLUG_PATTERN = /^(?!.*__)[a-z][a-z0-9_-]{0,63}$/;
@@ -14,11 +14,16 @@ const safeUpstreamUrlSchema = z.string().refine(
       return false;
     }
   },
-  { message: "Must be a valid http/https upstream URL (metadata endpoints blocked)." },
+  { message: "Must be a valid http/https upstream URL without credentials or metadata hosts." },
 );
 
 const safeHeadersSchema = z.record(
-  z.string().regex(HEADER_NAME_PATTERN, "Invalid HTTP header name."),
+  z
+    .string()
+    .regex(HEADER_NAME_PATTERN, "Invalid HTTP header name.")
+    .refine((name) => !isReservedMcpHeader(name), {
+      message: "Reserved HTTP/MCP transport headers cannot be configured.",
+    }),
   z.string().refine((val) => !/[\r\n]/.test(val), "Header values cannot contain newlines."),
 );
 
@@ -33,7 +38,7 @@ export const createMcpSourceBodySchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().max(1000).nullable().optional(),
   url: safeUpstreamUrlSchema,
-  transport: z.enum(["streamable_http", "sse"]).default("streamable_http"),
+  transport: z.literal("streamable_http").default("streamable_http"),
   timeoutMs: z.number().int().min(500).max(60_000).optional(),
   headers: safeHeadersSchema.optional(),
   autoSync: z.boolean().default(true),
@@ -45,7 +50,7 @@ export const updateSourceBodySchema = z
     description: z.string().max(1000).nullable().optional(),
     status: z.enum(["active", "disabled"]).optional(),
     url: safeUpstreamUrlSchema.optional(),
-    transport: z.enum(["streamable_http", "sse"]).optional(),
+    transport: z.literal("streamable_http").optional(),
     timeoutMs: z.number().int().min(500).max(60_000).optional(),
     headers: safeHeadersSchema.nullable().optional(),
   })
