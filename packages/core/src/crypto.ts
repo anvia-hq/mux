@@ -10,6 +10,7 @@ import { sha256Hex } from "./canonical-json";
 import type { GeneratedApiKey, SecretVault } from "./types";
 
 const TOKEN_VERSION = "v1";
+const TOKEN_AAD = Buffer.from(TOKEN_VERSION, "utf8");
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const MIN_KEY_LENGTH = 32;
@@ -50,6 +51,9 @@ export const createSecretVault = (masterKey: string): SecretVault => {
   const encrypt = (plaintext: string): string => {
     const iv = randomBytes(IV_BYTES);
     const cipher = createCipheriv("aes-256-gcm", key, iv);
+
+    cipher.setAAD(TOKEN_AAD);
+
     const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
     const authTag = cipher.getAuthTag();
 
@@ -78,6 +82,7 @@ export const createSecretVault = (masterKey: string): SecretVault => {
 
     const decipher = createDecipheriv("aes-256-gcm", key, iv);
 
+    decipher.setAAD(TOKEN_AAD);
     decipher.setAuthTag(authTag);
 
     const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
@@ -85,7 +90,15 @@ export const createSecretVault = (masterKey: string): SecretVault => {
     return decrypted.toString("utf8");
   };
 
-  const encryptJson = (value: unknown): string => encrypt(JSON.stringify(value));
+  const encryptJson = (value: unknown): string => {
+    const serialized = JSON.stringify(value);
+
+    if (serialized === undefined) {
+      throw new TypeError("Cannot encrypt a value that serializes to undefined.");
+    }
+
+    return encrypt(serialized);
+  };
 
   const decryptJson = <T>(token: string, parse: (value: unknown) => T): T => {
     const parsed: unknown = JSON.parse(decrypt(token));
@@ -113,13 +126,13 @@ export const generateApiKey = (prefix = "mux_live"): GeneratedApiKey => {
 };
 
 export const verifyApiKeyHash = (rawKey: string, expectedHash: string): boolean => {
+  if (!HEX_KEY_PATTERN.test(expectedHash)) {
+    return false;
+  }
+
   const actualHash = hashApiKey(rawKey);
   const actualBuf = Buffer.from(actualHash, "hex");
   const expectedBuf = Buffer.from(expectedHash, "hex");
-
-  if (actualBuf.length !== expectedBuf.length) {
-    return false;
-  }
 
   return timingSafeEqual(actualBuf, expectedBuf);
 };

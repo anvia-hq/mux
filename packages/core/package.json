@@ -8,6 +8,7 @@
     "./crypto": "./src/crypto.ts",
     "./manifest": "./src/manifest.ts",
     "./cache/types": "./src/cache/types.ts",
+    "./cache/schema": "./src/cache/schema.ts",
     "./cache/redis-backend": "./src/cache/redis-backend.ts",
     "./cache/tool-cache": "./src/cache/tool-cache.ts"
   },

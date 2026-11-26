@@ -64,10 +64,13 @@ export const createMemoryRedisBackend = (now: () => number = Date.now): RedisBac
       let deleted = 0;
 
       for (const key of keys) {
-        const removedString = strings.delete(key);
-        const removedSet = sets.delete(key);
+        const hadString = pruneString(key) !== undefined;
+        const hadSet = pruneSet(key) !== undefined;
 
-        if (removedString || removedSet) {
+        strings.delete(key);
+        sets.delete(key);
+
+        if (hadString || hadSet) {
           deleted += 1;
         }
       }
@@ -117,6 +120,26 @@ export const createMemoryRedisBackend = (now: () => number = Date.now): RedisBac
       if (setEntry) {
         setEntry.expiresAtMs = now() + ttlSeconds * 1000;
       }
+    },
+
+    ttl: async (key) => {
+      const stringEntry = pruneString(key);
+
+      if (stringEntry) {
+        return Math.max(0, Math.ceil((stringEntry.expiresAtMs - now()) / 1000));
+      }
+
+      const setEntry = pruneSet(key);
+
+      if (setEntry) {
+        if (setEntry.expiresAtMs === null) {
+          return -1;
+        }
+
+        return Math.max(0, Math.ceil((setEntry.expiresAtMs - now()) / 1000));
+      }
+
+      return -2;
     },
   };
 };

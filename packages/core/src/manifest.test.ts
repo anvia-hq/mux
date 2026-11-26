@@ -5,7 +5,7 @@ const createValidManifest = () => ({
   name: "stripe-helper",
   version: "1.0.0",
   description: "Custom Stripe lookup tools",
-  entry: "./index.ts",
+  entry: "./src/index.ts",
   secrets: ["STRIPE_API_KEY"],
   tools: [
     {
@@ -38,8 +38,22 @@ describe("parsePluginManifest", () => {
     expect(buildToolSlug(parsed.name, parsed.tools[0].name)).toBe("stripe-helper__get_customer");
   });
 
-  test("rejects unsafe entry paths attempting traversal or non-JS/TS targets", () => {
-    const invalidEntries = ["../escape.ts", "sub/../../escape.ts", "/etc/passwd.ts", "./index.sh"];
+  test("rejects traversal, URL schemes, drive prefixes, smuggling, and malformed entry paths", () => {
+    const invalidEntries = [
+      "../escape.ts",
+      "sub/../../escape.ts",
+      "/etc/passwd.ts",
+      "./index.sh",
+      "file:///etc/passwd.ts",
+      "https://evil.com/pwn.mjs",
+      "C:evil.ts",
+      "index.ts?x=.ts",
+      "index.ts#.ts",
+      "%2e%2e/escape.ts",
+      ".ts",
+      "foo//bar.ts",
+      "././index.ts",
+    ];
 
     for (const entry of invalidEntries) {
       const manifest = { ...createValidManifest(), entry };
@@ -48,7 +62,7 @@ describe("parsePluginManifest", () => {
     }
   });
 
-  test("rejects duplicate tool names, duplicate secrets, and non-object input schemas", () => {
+  test("rejects double-underscore slugs, reserved prototype handlers, duplicates, and non-object schemas", () => {
     const base = createValidManifest();
     const duplicateTools = { ...base, tools: [base.tools[0], base.tools[0]] };
     const duplicateSecrets = { ...base, secrets: ["STRIPE_API_KEY", "STRIPE_API_KEY"] };
@@ -56,9 +70,25 @@ describe("parsePluginManifest", () => {
       ...base,
       tools: [{ ...base.tools[0], inputSchema: { type: "array" } }],
     };
+    const doubleUnderscorePlugin = { ...base, name: "stripe__helper" };
+    const doubleUnderscoreTool = {
+      ...base,
+      tools: [{ ...base.tools[0], name: "get__customer" }],
+    };
 
     expect(() => parsePluginManifest(duplicateTools)).toThrow();
     expect(() => parsePluginManifest(duplicateSecrets)).toThrow();
     expect(() => parsePluginManifest(badSchema)).toThrow();
+    expect(() => parsePluginManifest(doubleUnderscorePlugin)).toThrow();
+    expect(() => parsePluginManifest(doubleUnderscoreTool)).toThrow();
+
+    for (const handler of ["__proto__", "constructor", "prototype"]) {
+      const reservedHandler = {
+        ...base,
+        tools: [{ ...base.tools[0], handler }],
+      };
+
+      expect(() => parsePluginManifest(reservedHandler)).toThrow();
+    }
   });
 });

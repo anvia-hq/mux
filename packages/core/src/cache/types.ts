@@ -12,6 +12,7 @@ export interface RedisBackend {
   sadd: (key: string, members: string[]) => Promise<number>;
   smembers: (key: string) => Promise<string[]>;
   expire: (key: string, ttlSeconds: number) => Promise<void>;
+  ttl: (key: string) => Promise<number>;
 }
 
 export interface BuildToolCacheKeyInput {
@@ -44,6 +45,7 @@ export interface ToolCacheOptions {
   defaultCatalogTtlSeconds?: number;
   now?: () => number;
   onBackgroundError?: (error: unknown, cacheKey: string) => void;
+  onCacheError?: (error: unknown, cacheKey: string) => void;
 }
 
 export interface ToolCache {

@@ -1,8 +1,8 @@
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { canonicalizeJson, sha256Hex } from "../canonical-json";
-import { toolCachePolicySchema } from "../manifest";
 import type { CanonicalTool, ToolCachePolicy, ToolExecutionResult } from "../types";
+import { toolCachePolicySchema } from "./schema";
 import type {
   BuildToolCacheKeyInput,
   ExecuteWithCacheInput,
@@ -38,6 +38,10 @@ const storedCacheEnvelopeSchema = z.object({
   staleUntilMs: z.number(),
 });
 
+const catalogCachePolicySchema = toolCachePolicySchema.extend({
+  ttlSeconds: z.number().int().min(0).max(86_400).default(60),
+});
+
 const canonicalToolSchema = z.object({
   id: z.string(),
   sourceId: z.string(),
@@ -53,7 +57,7 @@ const canonicalToolSchema = z.object({
     idempotentHint: z.boolean(),
     openWorldHint: z.boolean().optional(),
   }),
-  cachePolicy: toolCachePolicySchema,
+  cachePolicy: catalogCachePolicySchema,
   schemaHash: z.string(),
   enabled: z.boolean(),
 });
@@ -77,9 +81,24 @@ const parseEnvelope = (raw: string): StoredCacheEnvelope | null => {
   }
 };
 
+const normalizePositiveInt = (value: number): number | null => {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+
+  const floored = Math.floor(value);
+
+  if (floored < 1) {
+    return null;
+  }
+
+  return floored;
+};
+
 export const buildToolCacheKey = (input: BuildToolCacheKeyInput): string => {
   const prefix = input.prefix ?? DEFAULT_KEY_PREFIX;
-  const scopeHash = sha256Hex(input.scopeKey ?? "global").slice(0, 16);
+  const scopeRaw = input.scopeKey === undefined ? "global" : `scope:${input.scopeKey}`;
+  const scopeHash = sha256Hex(scopeRaw).slice(0, 16);
   const argsHash = sha256Hex(canonicalizeJson(input.args));
 
   return `${prefix}:tool:${input.toolId}:${input.schemaHash}:${scopeHash}:${argsHash}`;
@@ -100,14 +119,55 @@ export const createToolCache = (
   const customTagKey = (tag: string): string => `${keyPrefix}:tag:custom:${tag}`;
   const catalogKey = (endpointId: string): string => `${keyPrefix}:catalog:${endpointId}`;
 
-  const computeRedisTtlSeconds = (policy: ToolCachePolicy): number => {
-    if (policy.mode === "stale_while_revalidate") {
-      const staleWindow = policy.staleSeconds ?? policy.ttlSeconds;
-
-      return policy.ttlSeconds + staleWindow;
+  const invokeErrorCallback = (
+    handler: ((error: unknown, cacheKey: string) => void) | undefined,
+    error: unknown,
+    cacheKey: string,
+  ): void => {
+    if (!handler) {
+      return;
     }
 
-    return policy.ttlSeconds;
+    try {
+      handler(error, cacheKey);
+    } catch {
+      void error;
+    }
+  };
+
+  const reportBackgroundError = (error: unknown, cacheKey: string): void => {
+    invokeErrorCallback(options.onBackgroundError, error, cacheKey);
+  };
+
+  const reportCacheError = (error: unknown, cacheKey: string): void => {
+    invokeErrorCallback(options.onCacheError ?? options.onBackgroundError, error, cacheKey);
+  };
+
+  const computeRedisTtlSeconds = (policy: ToolCachePolicy): number | null => {
+    const ttl = normalizePositiveInt(policy.ttlSeconds);
+
+    if (ttl === null) {
+      return null;
+    }
+
+    if (policy.mode === "stale_while_revalidate") {
+      const rawStale = policy.staleSeconds ?? ttl;
+      const staleWindow = Number.isFinite(rawStale) ? Math.max(0, Math.floor(rawStale)) : 0;
+
+      return ttl + staleWindow;
+    }
+
+    return ttl;
+  };
+
+  const safeGet = async (key: string): Promise<string | null> => {
+    try {
+      return await backend.get(key);
+    } catch (error) {
+      reportCacheError(error, key);
+
+      return null;
+    }
   };
 
   const writeEntry = async (
@@ -120,10 +180,16 @@ export const createToolCache = (
       return;
     }
 
+    const ttlSeconds = normalizePositiveInt(policy.ttlSeconds);
+    const redisTtlSeconds = computeRedisTtlSeconds(policy);
+
+    if (ttlSeconds === null || redisTtlSeconds === null) {
+      return;
+    }
+
     const storedAtMs = now();
-    const freshUntilMs = storedAtMs + policy.ttlSeconds * 1000;
-    const staleWindow =
-      policy.mode === "stale_while_revalidate" ? (policy.staleSeconds ?? policy.ttlSeconds) : 0;
+    const freshUntilMs = storedAtMs + ttlSeconds * 1000;
+    const staleWindow = policy.mode === "stale_while_revalidate" ? redisTtlSeconds - ttlSeconds : 0;
     const staleUntilMs = freshUntilMs + staleWindow * 1000;
     const envelope: StoredCacheEnvelope = {
       result,
@@ -131,30 +197,38 @@ export const createToolCache = (
       freshUntilMs,
       staleUntilMs,
     };
-    const serialized = JSON.stringify(envelope);
-    const maxBytes = policy.maxPayloadBytes ?? defaultMaxPayloadBytes;
 
-    if (Buffer.byteLength(serialized, "utf8") > maxBytes) {
-      return;
-    }
+    try {
+      const serialized = JSON.stringify(envelope);
+      const maxBytes = policy.maxPayloadBytes ?? defaultMaxPayloadBytes;
 
-    const redisTtlSeconds = computeRedisTtlSeconds(policy);
-
-    await backend.setEx(cacheKey, serialized, redisTtlSeconds);
-
-    const tagKeys = [toolTagKey(toolId)];
-
-    if (policy.tags) {
-      for (const tag of policy.tags) {
-        tagKeys.push(customTagKey(tag));
+      if (Buffer.byteLength(serialized, "utf8") > maxBytes) {
+        return;
       }
-    }
 
-    const tagTtl = Math.max(redisTtlSeconds + 60, MIN_TAG_TTL_SECONDS);
+      await backend.setEx(cacheKey, serialized, redisTtlSeconds);
 
-    for (const tagKey of tagKeys) {
-      await backend.sadd(tagKey, [cacheKey]);
-      await backend.expire(tagKey, tagTtl);
+      const tagKeys = [toolTagKey(toolId)];
+
+      if (policy.tags) {
+        for (const tag of policy.tags) {
+          tagKeys.push(customTagKey(tag));
+        }
+      }
+
+      const desiredTagTtl = Math.max(redisTtlSeconds + 60, MIN_TAG_TTL_SECONDS);
+
+      for (const tagKey of tagKeys) {
+        await backend.sadd(tagKey, [cacheKey]);
+
+        const currentTtl = await backend.ttl(tagKey);
+
+        if (currentTtl < 0 || desiredTagTtl > currentTtl) {
+          await backend.expire(tagKey, desiredTagTtl);
+        }
+      }
+    } catch (error) {
+      reportCacheError(error, cacheKey);
     }
   };
 
@@ -163,19 +237,20 @@ export const createToolCache = (
       return;
     }
 
-    const task = (async () => {
-      try {
+    const task = Promise.resolve()
+      .then(async () => {
         const freshResult = await input.execute();
 
         await writeEntry(cacheKey, input.toolId, input.policy, freshResult);
-      } catch (error) {
-        if (options.onBackgroundError) {
-          options.onBackgroundError(error, cacheKey);
+      })
+      .catch((error: unknown) => {
+        reportBackgroundError(error, cacheKey);
+      })
+      .finally(() => {
+        if (revalidating.get(cacheKey) === task) {
+          revalidating.delete(cacheKey);
         }
-      } finally {
-        revalidating.delete(cacheKey);
-      }
-    })();
+      });
 
     revalidating.set(cacheKey, task);
   };
@@ -206,7 +281,7 @@ export const createToolCache = (
       return { result, cacheStatus: "bypass", cacheKey };
     }
 
-    const cachedRaw = await backend.get(cacheKey);
+    const cachedRaw = await safeGet(cacheKey);
 
     if (cachedRaw !== null) {
       const envelope = parseEnvelope(cachedRaw);
@@ -234,17 +309,19 @@ export const createToolCache = (
       return { result, cacheStatus: "miss", cacheKey };
     }
 
-    const flightPromise = (async () => {
-      try {
+    const flightPromise = Promise.resolve()
+      .then(async () => {
         const result = await input.execute();
 
         await writeEntry(cacheKey, input.toolId, input.policy, result);
 
         return result;
-      } finally {
-        inFlight.delete(cacheKey);
-      }
-    })();
+      })
+      .finally(() => {
+        if (inFlight.get(cacheKey) === flightPromise) {
+          inFlight.delete(cacheKey);
+        }
+      });
 
     inFlight.set(cacheKey, flightPromise);
 
@@ -255,9 +332,11 @@ export const createToolCache = (
 
   const invalidateByTagKey = async (tagKey: string): Promise<number> => {
     const members = await backend.smembers(tagKey);
-    const keysToDelete = [...members, tagKey];
+    const deletedEntries = members.length > 0 ? await backend.del(members) : 0;
 
-    return backend.del(keysToDelete);
+    await backend.del([tagKey]);
+
+    return deletedEntries;
   };
 
   const invalidateTool = async (toolId: string): Promise<number> =>
@@ -267,7 +346,8 @@ export const createToolCache = (
     invalidateByTagKey(customTagKey(tag));
 
   const getEndpointCatalog = async (endpointId: string): Promise<CanonicalTool[] | null> => {
-    const raw = await backend.get(catalogKey(endpointId));
+    const key = catalogKey(endpointId);
+    const raw = await safeGet(key);
 
     if (raw === null) {
       return null;
@@ -292,7 +372,19 @@ export const createToolCache = (
     tools: CanonicalTool[],
     ttlSeconds: number = defaultCatalogTtlSeconds,
   ): Promise<void> => {
-    await backend.setEx(catalogKey(endpointId), JSON.stringify(tools), ttlSeconds);
+    const normalizedTtl = normalizePositiveInt(ttlSeconds);
+
+    if (normalizedTtl === null) {
+      return;
+    }
+
+    const key = catalogKey(endpointId);
+
+    try {
+      await backend.setEx(key, JSON.stringify(tools), normalizedTtl);
+    } catch (error) {
+      reportCacheError(error, key);
+    }
   };
 
   const invalidateEndpointCatalog = async (endpointId: string): Promise<number> =>

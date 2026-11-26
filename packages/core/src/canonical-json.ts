@@ -34,10 +34,6 @@ const serializeValue = (value: unknown, seen: Set<object>): string | undefined =
     return undefined;
   }
 
-  if (hasToJson(value)) {
-    return serializeValue(value.toJSON(), seen);
-  }
-
   if (seen.has(value)) {
     throw new TypeError("Cannot canonicalize circular JSON structure.");
   }
@@ -45,6 +41,12 @@ const serializeValue = (value: unknown, seen: Set<object>): string | undefined =
   seen.add(value);
 
   try {
+    if (hasToJson(value)) {
+      const converted = value.toJSON();
+
+      return serializeValue(converted, seen);
+    }
+
     if (Array.isArray(value)) {
       const items: string[] = [];
 

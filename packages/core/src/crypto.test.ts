@@ -13,21 +13,24 @@ describe("createSecretVault", () => {
     expect(() => createSecretVault("   short-with-spaces   ")).toThrow();
   });
 
-  test("round-trips encrypted strings and typed JSON with unique IVs", () => {
+  test("round-trips empty strings, non-empty strings, and typed JSON with unique IVs", () => {
     const vault = createSecretVault(VALID_HEX_KEY);
     const first = vault.encrypt("top-secret-token");
     const second = vault.encrypt("top-secret-token");
+    const empty = vault.encrypt("");
 
     expect(first).not.toBe(second);
     expect(first).not.toContain("top-secret-token");
     expect(vault.decrypt(first)).toBe("top-secret-token");
     expect(vault.decrypt(second)).toBe("top-secret-token");
+    expect(vault.decrypt(empty)).toBe("");
 
     const secretsSchema = z.object({ headers: z.record(z.string(), z.string()) });
     const encryptedJson = vault.encryptJson({ headers: { Authorization: "Bearer xyz" } });
     const decrypted = vault.decryptJson(encryptedJson, (val) => secretsSchema.parse(val));
 
     expect(decrypted).toEqual({ headers: { Authorization: "Bearer xyz" } });
+    expect(() => vault.encryptJson(undefined)).toThrow(TypeError);
   });
 
   test("rejects tampered ciphertext, tampered auth tags, wrong keys, and invalid tokens", () => {
@@ -53,7 +56,7 @@ describe("createSecretVault", () => {
 });
 
 describe("API key generation and verification", () => {
-  test("generates unique prefixed keys and verifies hashes in constant time", () => {
+  test("generates unique prefixed keys and rejects mismatched or malformed hex hashes", () => {
     const first = generateApiKey();
     const second = generateApiKey();
 
@@ -61,6 +64,9 @@ describe("API key generation and verification", () => {
     expect(first.rawKey.startsWith(first.keyPrefix)).toBe(true);
     expect(verifyApiKeyHash(first.rawKey, first.keyHash)).toBe(true);
     expect(verifyApiKeyHash(second.rawKey, first.keyHash)).toBe(false);
+    expect(verifyApiKeyHash(first.rawKey, `${first.keyHash}zzzz`)).toBe(false);
+    expect(verifyApiKeyHash(first.rawKey, `${first.keyHash}\n`)).toBe(false);
+    expect(verifyApiKeyHash(first.rawKey, "g".repeat(64))).toBe(false);
     expect(verifyApiKeyHash(first.rawKey, "short-invalid-hash")).toBe(false);
   });
 });

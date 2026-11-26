@@ -21,7 +21,7 @@ describe("canonicalizeJson", () => {
     );
   });
 
-  test("rejects circular references while permitting shared acyclic references", () => {
+  test("rejects circular references including self-returning toJSON while permitting shared acyclic references", () => {
     const shared = { id: 1 };
 
     expect(canonicalizeJson({ first: shared, second: shared })).toBe(
@@ -32,7 +32,14 @@ describe("canonicalizeJson", () => {
 
     cyclic.self = cyclic;
 
+    const cyclicToJson = {
+      toJSON() {
+        return this;
+      },
+    };
+
     expect(() => canonicalizeJson(cyclic)).toThrow(TypeError);
+    expect(() => canonicalizeJson(cyclicToJson)).toThrow(TypeError);
   });
 
   test("computeSchemaHash changes when schema structure changes and ignores key order", () => {

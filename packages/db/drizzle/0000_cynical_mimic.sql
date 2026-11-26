@@ -155,11 +155,16 @@ ALTER TABLE "tool_executions" ADD CONSTRAINT "tool_executions_user_id_users_id_f
 ALTER TABLE "tool_sources" ADD CONSTRAINT "tool_sources_created_by_id_users_id_fk" FOREIGN KEY ("created_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "tools" ADD CONSTRAINT "tools_source_id_tool_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."tool_sources"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "accounts_user_id_idx" ON "accounts" USING btree ("user_id");--> statement-breakpoint
+CREATE INDEX "accounts_provider_account_idx" ON "accounts" USING btree ("provider_id","account_id");--> statement-breakpoint
 CREATE INDEX "api_keys_endpoint_id_idx" ON "api_keys" USING btree ("endpoint_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "endpoint_tools_endpoint_id_tool_id_idx" ON "endpoint_tools" USING btree ("endpoint_id","tool_id");--> statement-breakpoint
+CREATE INDEX "endpoint_tools_tool_id_idx" ON "endpoint_tools" USING btree ("tool_id");--> statement-breakpoint
 CREATE INDEX "sessions_user_id_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "tool_executions_created_at_idx" ON "tool_executions" USING btree ("created_at");--> statement-breakpoint
 CREATE INDEX "tool_executions_tool_id_idx" ON "tool_executions" USING btree ("tool_id");--> statement-breakpoint
+CREATE INDEX "tool_executions_source_id_idx" ON "tool_executions" USING btree ("source_id");--> statement-breakpoint
 CREATE INDEX "tool_executions_endpoint_id_idx" ON "tool_executions" USING btree ("endpoint_id");--> statement-breakpoint
+CREATE INDEX "tool_executions_api_key_id_idx" ON "tool_executions" USING btree ("api_key_id");--> statement-breakpoint
+CREATE INDEX "tool_executions_user_id_idx" ON "tool_executions" USING btree ("user_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "tools_source_id_name_idx" ON "tools" USING btree ("source_id","name");--> statement-breakpoint
 CREATE INDEX "verifications_identifier_idx" ON "verifications" USING btree ("identifier");

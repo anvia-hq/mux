@@ -1,44 +1,30 @@
 import { z } from "zod";
-import type { ToolCachePolicy } from "./types";
+import { createDefaultCachePolicy, toolCachePolicySchema } from "./cache/schema";
 
-const SLUG_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+const SLUG_PATTERN = /^(?!.*__)[a-z][a-z0-9_-]{0,63}$/;
 const HANDLER_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]{0,63}$/;
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/;
-const ENTRY_EXTENSION_PATTERN = /\.(?:ts|mts|js|mjs)$/;
+const SAFE_ENTRY_PATTERN =
+  /^(?:\.\/)?(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:ts|mts|js|mjs)$/;
+const RESERVED_HANDLER_NAMES = new Set(["__proto__", "constructor", "prototype"]);
 
 const isSafeRelativeEntry = (entry: string): boolean => {
-  if (entry.length === 0 || entry.startsWith("/") || entry.startsWith("\\")) {
+  if (!SAFE_ENTRY_PATTERN.test(entry)) {
     return false;
   }
 
-  if (entry.includes("\\") || entry.includes("\0")) {
-    return false;
-  }
-
-  if (!ENTRY_EXTENSION_PATTERN.test(entry)) {
-    return false;
-  }
-
-  const segments = entry.split("/");
+  const normalized = entry.startsWith("./") ? entry.slice(2) : entry;
+  const segments = normalized.split("/");
 
   for (const segment of segments) {
-    if (segment === "..") {
+    if (segment === "." || segment === ".." || segment.length === 0) {
       return false;
     }
   }
 
   return true;
 };
-
-export const toolCachePolicySchema = z.object({
-  mode: z.enum(["off", "ttl", "stale_while_revalidate"]).default("off"),
-  ttlSeconds: z.number().int().min(1).max(86_400).default(60),
-  staleSeconds: z.number().int().min(0).max(86_400).optional(),
-  maxPayloadBytes: z.number().int().min(1024).max(10_485_760).optional(),
-  tags: z.array(z.string().min(1).max(128)).max(20).optional(),
-  allowBypass: z.boolean().default(true),
-});
 
 export const jsonSchemaObjectSchema = z
   .record(z.string(), z.unknown())
@@ -47,9 +33,16 @@ export const jsonSchemaObjectSchema = z
   });
 
 export const pluginToolManifestSchema = z.object({
-  name: z.string().regex(SLUG_PATTERN, "Tool name must be a lowercase slug."),
+  name: z
+    .string()
+    .regex(SLUG_PATTERN, "Tool name must be a lowercase slug without double underscores."),
   description: z.string().min(1).max(1000),
-  handler: z.string().regex(HANDLER_PATTERN, "Handler must be a valid exported identifier."),
+  handler: z
+    .string()
+    .regex(HANDLER_PATTERN, "Handler must be a valid exported identifier.")
+    .refine((name) => !RESERVED_HANDLER_NAMES.has(name), {
+      message: "Handler name cannot be a reserved prototype property.",
+    }),
   readOnly: z.boolean().default(false),
   destructive: z.boolean().default(false),
   idempotent: z.boolean().default(false),
@@ -59,7 +52,9 @@ export const pluginToolManifestSchema = z.object({
 
 export const pluginManifestSchema = z
   .object({
-    name: z.string().regex(SLUG_PATTERN, "Plugin name must be a lowercase slug."),
+    name: z
+      .string()
+      .regex(SLUG_PATTERN, "Plugin name must be a lowercase slug without double underscores."),
     version: z.string().regex(SEMVER_PATTERN, "Plugin version must be valid semver."),
     description: z.string().max(1000).optional(),
     entry: z.string().refine(isSafeRelativeEntry, {
@@ -112,11 +107,7 @@ export type PluginManifest = z.infer<typeof pluginManifestSchema>;
 export const parsePluginManifest = (raw: unknown): PluginManifest =>
   pluginManifestSchema.parse(raw);
 
-export const createDefaultCachePolicy = (): ToolCachePolicy => ({
-  mode: "off",
-  ttlSeconds: 60,
-  allowBypass: true,
-});
-
 export const buildToolSlug = (sourceSlug: string, toolName: string): string =>
   `${sourceSlug}__${toolName}`;
+
+export { createDefaultCachePolicy, toolCachePolicySchema };

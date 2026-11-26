@@ -1,5 +1,5 @@
 import type { ToolCachePolicy } from "@mux/core/types";
-import { boolean, jsonb, pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { endpoints } from "./endpoints";
 import { tools } from "./tools";
 
@@ -20,5 +20,6 @@ export const endpointTools = pgTable(
   },
   (table) => [
     uniqueIndex("endpoint_tools_endpoint_id_tool_id_idx").on(table.endpointId, table.toolId),
+    index("endpoint_tools_tool_id_idx").on(table.toolId),
   ],
 );

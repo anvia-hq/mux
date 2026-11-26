@@ -35,6 +35,9 @@ export const toolExecutions = pgTable(
   (table) => [
     index("tool_executions_created_at_idx").on(table.createdAt),
     index("tool_executions_tool_id_idx").on(table.toolId),
+    index("tool_executions_source_id_idx").on(table.sourceId),
     index("tool_executions_endpoint_id_idx").on(table.endpointId),
+    index("tool_executions_api_key_id_idx").on(table.apiKeyId),
+    index("tool_executions_user_id_idx").on(table.userId),
   ],
 );
