@@ -1,0 +1,260 @@
+{
+  "name": "twelvedata",
+  "version": "1.0.0",
+  "description": "Twelve Data Core Market Data APIs (time series, cross rates, quote, price, EOD, and market movers)",
+  "entry": "./index.ts",
+  "secrets": ["TWELVEDATA_API_KEY"],
+  "timeoutMs": 15000,
+  "tools": [
+    {
+      "name": "time_series",
+      "description": "Get historical and intraday OHLCV time series data for a stock, ETF, forex pair, or cryptocurrency",
+      "handler": "timeSeries",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["interval"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "figi": { "type": "string", "minLength": 1 },
+          "isin": { "type": "string", "minLength": 1 },
+          "cusip": { "type": "string", "minLength": 1 },
+          "interval": {
+            "type": "string",
+            "enum": [
+              "1min",
+              "5min",
+              "15min",
+              "30min",
+              "45min",
+              "1h",
+              "2h",
+              "4h",
+              "5h",
+              "8h",
+              "1day",
+              "1week",
+              "1month"
+            ]
+          },
+          "exchange": { "type": "string" },
+          "mic_code": { "type": "string" },
+          "country": { "type": "string" },
+          "type": { "type": "string" },
+          "outputsize": { "type": "integer", "minimum": 1, "maximum": 5000 },
+          "format": { "type": "string", "enum": ["JSON", "CSV"] },
+          "delimiter": { "type": "string" },
+          "prepost": { "type": "boolean" },
+          "dp": { "type": "integer", "minimum": 0, "maximum": 11 },
+          "order": { "type": "string", "enum": ["ASC", "DESC"] },
+          "timezone": { "type": "string" },
+          "date": { "type": "string" },
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "previous_close": { "type": "boolean" },
+          "adjust": { "type": "string", "enum": ["none", "dividends", "splits", "all"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["twelvedata"]
+      }
+    },
+    {
+      "name": "time_series_cross",
+      "description": "Get historical cross-rate OHLC time series calculated between a base and quote instrument",
+      "handler": "timeSeriesCross",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["base", "quote", "interval"],
+        "properties": {
+          "base": { "type": "string", "minLength": 1 },
+          "base_type": { "type": "string" },
+          "base_exchange": { "type": "string" },
+          "base_mic_code": { "type": "string" },
+          "quote": { "type": "string", "minLength": 1 },
+          "quote_type": { "type": "string" },
+          "quote_exchange": { "type": "string" },
+          "quote_mic_code": { "type": "string" },
+          "interval": {
+            "type": "string",
+            "enum": [
+              "1min",
+              "5min",
+              "15min",
+              "30min",
+              "45min",
+              "1h",
+              "2h",
+              "4h",
+              "5h",
+              "8h",
+              "1day",
+              "1week",
+              "1month"
+            ]
+          },
+          "outputsize": { "type": "integer", "minimum": 1, "maximum": 5000 },
+          "format": { "type": "string", "enum": ["JSON", "CSV"] },
+          "delimiter": { "type": "string" },
+          "prepost": { "type": "boolean" },
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "adjust": { "type": "boolean" },
+          "dp": { "type": "integer", "minimum": 0, "maximum": 11 },
+          "timezone": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["twelvedata"]
+      }
+    },
+    {
+      "name": "quote",
+      "description": "Get real-time quote snapshot including OHLC, volume, price change, and 52-week range",
+      "handler": "quote",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "figi": { "type": "string", "minLength": 1 },
+          "isin": { "type": "string", "minLength": 1 },
+          "cusip": { "type": "string", "minLength": 1 },
+          "interval": {
+            "type": "string",
+            "enum": [
+              "1min",
+              "5min",
+              "15min",
+              "30min",
+              "45min",
+              "1h",
+              "2h",
+              "4h",
+              "5h",
+              "8h",
+              "1day",
+              "1week",
+              "1month"
+            ]
+          },
+          "exchange": { "type": "string" },
+          "mic_code": { "type": "string" },
+          "country": { "type": "string" },
+          "volume_time_period": { "type": "integer", "minimum": 1 },
+          "type": { "type": "string" },
+          "format": { "type": "string", "enum": ["JSON", "CSV"] },
+          "delimiter": { "type": "string" },
+          "prepost": { "type": "boolean" },
+          "eod": { "type": "boolean" },
+          "rolling_period": { "type": "integer", "minimum": 1 },
+          "dp": { "type": "integer", "minimum": 0, "maximum": 11 },
+          "timezone": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 30,
+        "tags": ["twelvedata"]
+      }
+    },
+    {
+      "name": "price",
+      "description": "Get the latest real-time market price for a financial instrument",
+      "handler": "latestPrice",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "figi": { "type": "string", "minLength": 1 },
+          "isin": { "type": "string", "minLength": 1 },
+          "cusip": { "type": "string", "minLength": 1 },
+          "exchange": { "type": "string" },
+          "mic_code": { "type": "string" },
+          "country": { "type": "string" },
+          "type": { "type": "string" },
+          "format": { "type": "string", "enum": ["JSON", "CSV"] },
+          "delimiter": { "type": "string" },
+          "prepost": { "type": "boolean" },
+          "dp": { "type": "integer", "minimum": 0, "maximum": 11 }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 15,
+        "tags": ["twelvedata"]
+      }
+    },
+    {
+      "name": "eod",
+      "description": "Get the End of Day (EOD) closing price and metadata for a financial instrument",
+      "handler": "endOfDayPrice",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "figi": { "type": "string", "minLength": 1 },
+          "isin": { "type": "string", "minLength": 1 },
+          "cusip": { "type": "string", "minLength": 1 },
+          "exchange": { "type": "string" },
+          "mic_code": { "type": "string" },
+          "country": { "type": "string" },
+          "type": { "type": "string" },
+          "date": { "type": "string" },
+          "prepost": { "type": "boolean" },
+          "dp": { "type": "integer", "minimum": 0, "maximum": 11 }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["twelvedata"]
+      }
+    },
+    {
+      "name": "market_movers",
+      "description": "Get a ranked list of top-gaining or top-losing assets for a market (Pro plan)",
+      "handler": "marketMovers",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["market"],
+        "properties": {
+          "market": {
+            "type": "string",
+            "enum": ["stocks", "etf", "mutual_funds", "forex", "crypto"]
+          },
+          "direction": { "type": "string", "enum": ["gainers", "losers"] },
+          "outputsize": { "type": "integer", "minimum": 1, "maximum": 50 },
+          "country": { "type": "string" },
+          "price_greater_than": { "type": "string" },
+          "dp": { "type": "string" }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["twelvedata"]
+      }
+    }
+  ]
+}

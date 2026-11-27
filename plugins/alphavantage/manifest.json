@@ -1,0 +1,268 @@
+{
+  "name": "alphavantage",
+  "version": "1.0.0",
+  "description": "Alpha Vantage Core Stock Data APIs (time series, quotes, symbol search, and market status)",
+  "entry": "./index.ts",
+  "secrets": ["ALPHAVANTAGE_API_KEY"],
+  "timeoutMs": 15000,
+  "tools": [
+    {
+      "name": "time_series_intraday",
+      "description": "Get current and historical intraday OHLCV time series for an equity, including optional extended hours (Premium)",
+      "handler": "timeSeriesIntraday",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol", "interval"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "interval": { "type": "string", "enum": ["1min", "5min", "15min", "30min", "60min"] },
+          "adjusted": { "type": "boolean" },
+          "extended_hours": { "type": "boolean" },
+          "month": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" },
+          "outputsize": { "type": "string", "enum": ["compact", "full"] },
+          "datatype": { "type": "string", "enum": ["json", "csv"] },
+          "entitlement": { "type": "string", "enum": ["realtime", "delayed"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_daily",
+      "description": "Get raw (as-traded) daily OHLCV time series for a global equity",
+      "handler": "timeSeriesDaily",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "outputsize": { "type": "string", "enum": ["compact", "full"] },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_daily_adjusted",
+      "description": "Get daily OHLCV time series with adjusted close and historical split/dividend events (Premium)",
+      "handler": "timeSeriesDailyAdjusted",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "outputsize": { "type": "string", "enum": ["compact", "full"] },
+          "datatype": { "type": "string", "enum": ["json", "csv"] },
+          "entitlement": { "type": "string", "enum": ["realtime", "delayed"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_weekly",
+      "description": "Get weekly OHLCV time series for a global equity",
+      "handler": "timeSeriesWeekly",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_weekly_adjusted",
+      "description": "Get weekly OHLCV time series with adjusted close and dividend events",
+      "handler": "timeSeriesWeeklyAdjusted",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_monthly",
+      "description": "Get monthly OHLCV time series for a global equity",
+      "handler": "timeSeriesMonthly",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "time_series_monthly_adjusted",
+      "description": "Get monthly OHLCV time series with adjusted close and dividend events",
+      "handler": "timeSeriesMonthlyAdjusted",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "global_quote",
+      "description": "Get the latest price and volume quote for a single ticker symbol",
+      "handler": "globalQuote",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] },
+          "entitlement": { "type": "string", "enum": ["realtime", "delayed"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "realtime_bulk_quotes",
+      "description": "Get realtime quotes for up to 100 US-traded symbols in a single request (Premium)",
+      "handler": "realtimeBulkQuotes",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 30,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "realtime_bulk_bid_ask_prices",
+      "description": "Get realtime bid and ask prices for up to 100 US-traded symbols in a single request (Premium)",
+      "handler": "realtimeBulkBidAskPrices",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["symbol"],
+        "properties": {
+          "symbol": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 30,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "symbol_search",
+      "description": "Search for stock symbols and companies matching a keyword query",
+      "handler": "symbolSearch",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "required": ["keywords"],
+        "properties": {
+          "keywords": { "type": "string", "minLength": 1 },
+          "datatype": { "type": "string", "enum": ["json", "csv"] }
+        },
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 300,
+        "tags": ["alphavantage"]
+      }
+    },
+    {
+      "name": "market_status",
+      "description": "Get current open or closed status of major global equity, forex, and crypto markets",
+      "handler": "marketStatus",
+      "readOnly": true,
+      "idempotent": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "cache": {
+        "mode": "ttl",
+        "ttlSeconds": 60,
+        "tags": ["alphavantage"]
+      }
+    }
+  ]
+}
